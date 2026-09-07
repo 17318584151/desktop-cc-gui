@@ -79,9 +79,23 @@ export function PillTabList({ children, className, ref, ...props }: PillTabListP
     const measure = () => {
       const selected = el.querySelector<HTMLElement>("[data-pill-selected]");
       if (!selected) return;
+      // Walk the offsetParent chain instead of reading the pill's offsetLeft
+      // directly: a pill may sit inside a positioned/transformed wrapper
+      // (e.g. a motion Reorder.Item mid-drag), which then becomes its
+      // offsetParent. offset* are layout values, so the thumb tracks the
+      // pill's slot and is never skewed by a drag transform.
+      let left = 0;
+      let top = 0;
+      let node: HTMLElement | null = selected;
+      while (node && node !== el) {
+        left += node.offsetLeft;
+        top += node.offsetTop;
+        node = node.offsetParent as HTMLElement | null;
+      }
+      if (node !== el) return; // detached or display:none mid-measure
       setThumb({
-        left: selected.offsetLeft,
-        top: selected.offsetTop,
+        left,
+        top,
         width: selected.offsetWidth,
         height: selected.offsetHeight,
         variant: selected.dataset.pillVariant === "gray" ? "gray" : "blue",
@@ -91,6 +105,9 @@ export function PillTabList({ children, className, ref, ...props }: PillTabListP
     const mo = new MutationObserver(measure);
     mo.observe(el, {
       attributes: true,
+      // Reorderable children (SortableEngineTabs) re-flow the DOM as the
+      // drag preview changes the order; re-measure so the thumb follows.
+      childList: true,
       subtree: true,
       attributeFilter: ["data-pill-selected"],
     });

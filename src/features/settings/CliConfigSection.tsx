@@ -1,29 +1,40 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import Ban from "lucide-react/dist/esm/icons/ban";
 import Globe from "lucide-react/dist/esm/icons/globe";
-import GripVertical from "lucide-react/dist/esm/icons/grip-vertical";
+import Download from "lucide-react/dist/esm/icons/download";
+import ArrowLeftRight from "lucide-react/dist/esm/icons/arrow-left-right";
+import EllipsisVertical from "lucide-react/dist/esm/icons/ellipsis-vertical";
+import FileText from "lucide-react/dist/esm/icons/file-text";
 import Pencil from "lucide-react/dist/esm/icons/pencil";
 import Plus from "lucide-react/dist/esm/icons/plus";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2";
-import { Button } from "@/components/base/buttons/button";
-import { IconButton } from "@/components/base/buttons/icon-button";
 import { Switch } from "@/components/base/switch/switch";
-import { PillTab, PillTabList } from "@/components/base/tabs/pill-tab";
+import { Button } from "@/components/base/buttons/button";
+import {
+  Dropdown,
+  DropdownItem,
+  DropdownPopover,
+  DropdownTrigger,
+} from "@/components/base/dropdown/dropdown";
 import {
   SettingsCard,
   SettingsSectionLabel,
 } from "@/components/application/settings/settings-rows";
-import { WorkspaceSortableList } from "@/components/application/ai-chat/workspace-sortable-list";
+import {
+  WorkspaceSortableList,
+  type RepoDragChrome,
+} from "@/components/application/ai-chat/workspace-sortable-list";
 import { ConfirmDialog } from "@/components/dialogs";
 import {
   CLI_DISPLAY_NAMES,
   EngineIcon,
   inferModelEngine,
 } from "@/components/foundations/icons/engine-icon";
-import { ipc, type CliConfig } from "@/lib/ipc";
+import { ipc, type CcSwitchStatus, type CliConfig } from "@/lib/ipc";
+import { pickFile } from "@/lib/platform";
+import { cx } from "@/utils/cx";
 import {
-  ENGINE_IDS,
   PSEUDO_DISABLED,
   PSEUDO_LOCAL,
   notifyCliConfigChanged,
@@ -33,75 +44,256 @@ import {
   type ProviderEntry,
 } from "./providers";
 import { ProviderDialog, type ProviderFormValue } from "./ProviderDialog";
+import { PiFamilyAuthSection } from "./PiFamilyAuthSection";
+import { SortableEngineTabs } from "./SortableEngineTabs";
 
-/** Same chrome as SettingsRow's container, but free-form content (drag
- *  handle + icon + name + controls instead of label/control). */
+/**
+ * CLI 配置 page — the BoardUI ai-chat "Tools" template language:
+ *   pill tabs (one per CLI, drag to reorder — SortableEngineTabs)
+ *   → 引擎设置 card (enable switch + 官方配置 row)
+ *   → 供应商渠道 card (avatar/switch/⋯-menu rows + drag sorting)
+ *   → empty state.
+ *
+ * Semantics (single source of truth is the backend's single `current`):
+ *   - Each row carries a Switch showing whether it is current; flipping a
+ *     switch on makes that channel current (single-select, radio-style).
+ *     Flipping the current custom channel off falls back to 官方配置; the
+ *     官方配置 switch can only be turned on, never off.
+ *   - 停用 is a per-CLI state (the enable switch), not a channel row.
+ *   - 官方配置 is the built-in fallback (the CLI's own config file) and
+ *     lives in the 引擎设置 card, next to the enable switch.
+ */
+/** Same chrome as SettingsRow's container, but free-form content. */
 const ROW =
-  "flex min-h-[52px] w-full items-center gap-2 py-2.5 pr-2.5 border-b border-separator-border last:border-b-0";
+  "flex min-h-[52px] w-full items-center gap-3 py-2.5 pr-2.5 border-b border-separator-border last:border-b-0";
 
-/** Channel brand mark: inferred from the model id, then the baseUrl host
- *  (e.g. api.moonshot.cn → kimi); globe when neither matches. */
-function BrandIcon({ entry }: { entry: ProviderEntry }) {
-  const brand = inferModelEngine(entry.model) ?? inferModelEngine(entry.baseUrl);
-  return brand ? (
-    <EngineIcon engine={brand} size={16} className="shrink-0 text-foreground-icon-primary" />
-  ) : (
-    <Globe className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
+/** Engines cc-switch manages — the import dropdown only shows on these tabs. */
+const CCS_IMPORT_ENGINES: readonly EngineId[] = ["claude", "codex", "grok"];
+
+type Health =
+  | { state: "idle" }
+  | { state: "testing" }
+  | { state: "ok"; ms: number }
+  | { state: "fail" };
+
+function Badge({ children }: { children: string }) {
+  return (
+    <span
+      className={cx(
+        "shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-none",
+        "bg-background-tertiary-default text-text-secondary",
+      )}
+    >
+      {children}
+    </span>
   );
 }
 
-/** Pinned non-channel rows: 官方配置 (CLI's own config file) and 停用. */
-function PseudoRow({
-  icon,
-  label,
-  description,
-  active,
-  disabled,
-  onToggle,
+/** host("https://api.moonshot.cn/anthropic") → "api.moonshot.cn". */
+function hostOf(url: string): string {
+  try {
+    return new URL(url.includes("://") ? url : `https://${url}`).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Tinted rounded square with the inferred brand mark; doubles as the row's drag
+ *  handle when `dragHandle` is set. */
+function ChannelAvatar({
+  entry,
+  fallbackEngine,
+  dragHandle,
 }: {
-  icon: ReactNode;
-  label: string;
-  description: string;
-  active: boolean;
-  disabled: boolean;
-  onToggle: (on: boolean) => void;
+  entry?: ProviderEntry;
+  fallbackEngine: EngineId;
+  /** Drag-handle wiring (label + pointer handler) from the sortable list. */
+  dragHandle?: { label: string; props: RepoDragChrome["dragHandleProps"] };
 }) {
+  const brand = entry
+    ? (inferModelEngine(entry.model) ?? inferModelEngine(entry.baseUrl))
+    : fallbackEngine;
   return (
-    <div className={ROW}>
-      <span className="flex size-4 shrink-0 items-center justify-center text-foreground-icon-secondary">
-        {icon}
+    <span
+      aria-label={dragHandle?.label}
+      title={dragHandle?.label}
+      {...(dragHandle?.props ?? {})}
+      onClick={dragHandle ? (e) => e.stopPropagation() : undefined}
+      className={cx("shrink-0", dragHandle && "cursor-grab touch-none")}>
+      <span className="flex size-9 items-center justify-center rounded-2lg bg-background-tertiary-default text-foreground-icon-primary">
+        {brand ? (
+          <EngineIcon engine={brand} size={16} />
+        ) : (
+          <Globe className="size-4" aria-hidden />
+        )}
       </span>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <p className="text-body-regular text-text-primary">{label}</p>
-        <p className="text-body-2-regular text-text-secondary">{description}</p>
-      </div>
-      <Switch
-        size="sm"
-        aria-label={label}
-        isSelected={active}
-        onChange={onToggle}
-        isDisabled={disabled}
+    </span>
+  );
+}
+
+/** One custom channel: click to activate, ⋯ menu for the rest. */
+function ChannelRow({
+  engine,
+  entry,
+  current,
+  health,
+  busy,
+  drag,
+  onToggle,
+  onEdit,
+  onDelete,
+  onTest,
+}: {
+  engine: EngineId;
+  entry: ProviderEntry;
+  current: boolean;
+  health: Health;
+  busy: boolean;
+  drag: RepoDragChrome | null;
+  /** on=true → make current; on=false (only possible when current) → fall back to 官方配置. */
+  onToggle: (on: boolean) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onTest: () => void;
+}) {
+  const { t } = useTranslation();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const fromCcSwitch = (entry.raw as Record<string, unknown>).source === "cc-switch";
+  const subtitle = useMemo(() => {
+    const parts = [
+      entry.remark,
+      entry.baseUrl && hostOf(entry.baseUrl),
+      entry.model,
+      health.state === "ok"
+        ? `${health.ms}ms`
+        : health.state === "fail"
+          ? t("settings.cliTestFail")
+          : "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }, [entry.remark, entry.baseUrl, entry.model, health, t]);
+
+  return (
+    <div
+      className={cx(ROW, "cursor-pointer")}
+      onClick={() => {
+        if (!busy && !current) onToggle(true);
+      }}
+    >
+      <ChannelAvatar
+        entry={entry}
+        fallbackEngine={engine}
+        // The avatar doubles as the drag handle: stopPropagation keeps a
+        // plain click (or the click after a drop) from activating the row.
+        dragHandle={
+          drag
+            ? {
+                label: t("settings.cliDrag"),
+                props: drag.dragHandleProps,
+              }
+            : undefined
+        }
       />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <p className="flex items-center gap-1.5 text-body-regular text-text-primary">
+          <span className="truncate">{entry.name}</span>
+          {fromCcSwitch && <Badge>cc-switch</Badge>}
+        </p>
+        {subtitle && (
+          <p className="truncate text-body-2-regular text-text-secondary">{subtitle}</p>
+        )}
+      </div>
+      {/* stopPropagation: action clicks must not re-activate the row.
+          Order mirrors the reference: switch → divider → edit → delete. */}
+      <span onClick={(e) => e.stopPropagation()}>
+        <Switch
+          size="sm"
+          aria-label={entry.name}
+          isSelected={current}
+          onChange={onToggle}
+          isDisabled={busy}
+        />
+      </span>
+      <span
+        aria-hidden
+        className="h-4 w-px shrink-0 bg-separator-border"
+        onClick={(e) => e.stopPropagation()}
+      />
+      <button
+        type="button"
+        aria-label={t("settings.cliEdit")}
+        title={t("settings.cliEdit")}
+        disabled={busy}
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+        className="flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary disabled:opacity-40"
+      >
+        <Pencil className="size-4" aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label={t("settings.cliDelete")}
+        title={t("settings.cliDelete")}
+        disabled={busy || current}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!current) onDelete();
+        }}
+        className="flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-text-error-primary disabled:opacity-40"
+      >
+        <Trash2 className="size-4" aria-hidden />
+      </button>
+      <span onClick={(e) => e.stopPropagation()}>
+        <Dropdown isOpen={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownTrigger
+            aria-label={t("settings.cliMore")}
+            className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover"
+          >
+            <EllipsisVertical className="size-4" aria-hidden />
+          </DropdownTrigger>
+          <DropdownPopover aria-label={entry.name} placement="bottom end" className="w-44">
+            {!current && (
+              <DropdownItem
+                className="px-2 py-1.5"
+                onSelect={() => {
+                  setMenuOpen(false);
+                  onToggle(true);
+                }}
+              >
+                {t("settings.cliSetCurrent")}
+              </DropdownItem>
+            )}
+            <DropdownItem
+              className="px-2 py-1.5"
+              onSelect={() => {
+                setMenuOpen(false);
+                onTest();
+              }}
+            >
+              {health.state === "testing" ? t("settings.cliTesting") : t("settings.cliTest")}
+            </DropdownItem>
+          </DropdownPopover>
+        </Dropdown>
+      </span>
     </div>
   );
 }
 
-/**
- * CLI 配置 page: engine pill tabs + the channel list of the selected engine.
- * Single-select semantics — the backend injects exactly one provider's env;
- * turning a row on makes it current, turning the current row off falls back
- * to 官方配置 (PSEUDO_LOCAL).
- */
 export function CliConfigSection() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<CliConfig | null>(null);
   const [engine, setEngine] = useState<EngineId>("claude");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** Add (no entry) or edit (with entry) dialog state. */
   const [dialog, setDialog] = useState<{ entry?: ProviderEntry } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ProviderEntry | null>(null);
-
+  const [ccStatus, setCcStatus] = useState<CcSwitchStatus | null>(null);
+  /** Per-channel connection probe results, keyed `${engine}:${id}`. */
+  const [health, setHealth] = useState<Record<string, Health>>({});
   useEffect(() => {
     let cancelled = false;
     ipc
@@ -112,6 +304,12 @@ export function CliConfigSection() {
       .catch((e) => {
         if (!cancelled) setError(String(e));
       });
+    ipc
+      .checkCcSwitch()
+      .then((s) => {
+        if (!cancelled && s.installed) setCcStatus(s);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -137,18 +335,19 @@ export function CliConfigSection() {
   const section = config?.[engine];
   // Unset current behaves as 官方配置 (resolve_provider_env: empty → no injection).
   const currentId = section?.current || PSEUDO_LOCAL;
+  const enabled = currentId !== PSEUDO_DISABLED;
   const entries = useMemo(() => providerEntries(engine, section), [engine, section]);
 
-  const onToggle = (id: string, on: boolean) => {
-    if (on) void mutate(() => ipc.setCurrentProvider(engine, id));
-    else if (currentId === id) void mutate(() => ipc.setCurrentProvider(engine, PSEUDO_LOCAL));
+  const activate = (id: string) => {
+    if (id !== currentId) void mutate(() => ipc.setCurrentProvider(engine, id));
   };
 
   const saveProvider = (value: ProviderFormValue) => {
+    // stripConventionEnv keeps unknown fields (source, customModels, …), so
+    // editing a cc-switch-imported channel preserves its origin marker.
     const base = dialog?.entry ? stripConventionEnv(engine, dialog.entry.raw) : {};
     const next: Record<string, unknown> = { ...base };
-    const fields: Record<string, string> = { ...value };
-    for (const [key, val] of Object.entries(fields)) {
+    for (const [key, val] of Object.entries({ ...value })) {
       const trimmed = val.trim();
       if (trimmed) next[key] = trimmed;
       else delete next[key];
@@ -165,6 +364,60 @@ export function CliConfigSection() {
     void mutate(() => ipc.deleteProvider(engine, id));
   };
 
+  const testConnection = async (entry: ProviderEntry) => {
+    const key = `${engine}:${entry.id}`;
+    if (!entry.baseUrl.trim()) {
+      setHealth((h) => ({ ...h, [key]: { state: "fail" } }));
+      return;
+    }
+    setHealth((h) => ({ ...h, [key]: { state: "testing" } }));
+    try {
+      const ms = await ipc.testProviderConnection(entry.baseUrl);
+      setHealth((h) => ({ ...h, [key]: { state: "ok", ms } }));
+    } catch {
+      setHealth((h) => ({ ...h, [key]: { state: "fail" } }));
+    }
+  };
+
+  /** Shared import→notice funnel. `target` is an engine id or "all" (banner). */
+  const syncCcSwitch = (target: string) =>
+    mutate(async () => {
+      const r = await ipc.importCcSwitch(target);
+      setCcStatus((s) => (s ? { ...s, changed: false } : s));
+      setNotice(
+        t("settings.cliSynced", {
+          added: r.added,
+          updated: r.updated,
+          removed: r.removed,
+        }),
+      );
+    });
+
+  const importCcSwitchFile = async () => {
+    const path = await pickFile(t("settings.cliImportFile"), [
+      { name: "cc-switch", extensions: ["db", "json"] },
+    ]);
+    if (!path) return;
+    void mutate(async () => {
+      const r = await ipc.importCcSwitchFromPath(path, engine);
+      setNotice(
+        t("settings.cliSynced", {
+          added: r.added,
+          updated: r.updated,
+          removed: r.removed,
+        }),
+      );
+    });
+  };
+
+  const dismissCcSwitch = () => {
+    if (!ccStatus) return;
+    void ipc.dismissCcSwitch(ccStatus.hash).catch(() => {});
+    setCcStatus({ ...ccStatus, changed: false });
+  };
+
+  const officialActive = currentId === PSEUDO_LOCAL;
+
   return (
     <div className="flex w-full flex-col gap-6">
       {error && (
@@ -172,121 +425,220 @@ export function CliConfigSection() {
           {t("common.error")}: {error}
         </p>
       )}
+      {notice && (
+        <p role="status" className="text-body-regular text-text-secondary">
+          {notice}
+        </p>
+      )}
       {!config && !error && (
         <p className="text-body-regular text-text-tertiary">{t("common.loading")}</p>
       )}
       {config && (
         <>
-          <PillTabList className="flex-wrap">
-            {ENGINE_IDS.map((id) => (
-              <PillTab
-                key={id}
-                variant="gray"
-                isSelected={engine === id}
-                onSelect={() => setEngine(id)}
-                icon={({ className }) => (
-                  <EngineIcon engine={id} size={16} className={className} />
-                )}
-              >
-                {CLI_DISPLAY_NAMES[id]}
-              </PillTab>
-            ))}
-          </PillTabList>
+          <SortableEngineTabs engine={engine} onSelect={setEngine} />
+
+          {ccStatus?.changed && (
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-border-button-default bg-background-secondary-default px-4 py-2.5">
+              <p className="flex items-center gap-2 text-body-regular text-text-primary">
+                <RefreshCw className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
+                <span>
+                  {t("settings.cliSyncTitle")}
+                  <span className="text-text-secondary">
+                    {" · "}
+                    {t("settings.cliSyncDetail", { count: ccStatus.providers })}
+                  </span>
+                </span>
+              </p>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void syncCcSwitch("all")}
+                  className="rounded-lg bg-accent-500 px-3 py-1 text-body-2-medium text-white disabled:opacity-50"
+                >
+                  {t("settings.cliSyncNow")}
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissCcSwitch}
+                  className="rounded-lg border border-border-button-default px-3 py-1 text-body-2-medium text-text-primary"
+                >
+                  {t("settings.cliSyncLater")}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex w-full flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <SettingsSectionLabel>{t("settings.cliChannels")}</SettingsSectionLabel>
-              <Button
-                size="small"
-                leadingIcon={Plus}
-                disabled={busy}
-                onClick={() => setDialog({})}
-              >
-                {t("settings.cliAdd")}
-              </Button>
-            </div>
+            <SettingsSectionLabel>{t("settings.cliEngineSection")}</SettingsSectionLabel>
             <SettingsCard>
-              <PseudoRow
-                icon={<EngineIcon engine={engine} size={16} />}
-                label={t("settings.cliOfficial")}
-                description={t("settings.cliOfficialDesc")}
-                active={currentId === PSEUDO_LOCAL}
-                disabled={busy}
-                onToggle={(on) => onToggle(PSEUDO_LOCAL, on)}
-              />
-              <PseudoRow
-                icon={<Ban className="size-4" aria-hidden />}
-                label={t("settings.cliDisabled")}
-                description={t("settings.cliDisabledDesc")}
-                active={currentId === PSEUDO_DISABLED}
-                disabled={busy}
-                onToggle={(on) => onToggle(PSEUDO_DISABLED, on)}
-              />
-              <WorkspaceSortableList
-                items={entries}
-                onReorder={(ids) => void mutate(() => ipc.reorderProviders(engine, ids))}
-                renderItem={(entry, drag) => (
-                  <div className={ROW}>
-                    {drag && (
-                      <button
-                        type="button"
-                        aria-label={t("settings.cliDrag")}
-                        {...drag.dragHandleProps}
-                        className="shrink-0 cursor-grab touch-none text-foreground-icon-secondary"
-                      >
-                        <GripVertical className="size-4" aria-hidden />
-                      </button>
-                    )}
-                    <BrandIcon entry={entry} />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <p className="truncate text-body-regular text-text-primary">{entry.name}</p>
-                      {(entry.model || entry.baseUrl) && (
-                        <p className="truncate text-body-2-regular text-text-secondary">
-                          {entry.model || entry.baseUrl}
-                        </p>
-                      )}
-                    </div>
-                    <Switch
-                      size="sm"
-                      aria-label={entry.name}
-                      isSelected={currentId === entry.id}
-                      onChange={(on) => onToggle(entry.id, on)}
-                      isDisabled={busy}
-                    />
-                    <IconButton
-                      icon={Pencil}
-                      size="small"
-                      aria-label={t("settings.cliEdit")}
-                      disabled={busy}
-                      onClick={() => setDialog({ entry })}
-                    />
-                    <IconButton
-                      icon={Trash2}
-                      size="small"
-                      aria-label={t("settings.cliDelete")}
-                      disabled={busy}
-                      onClick={() => setPendingDelete(entry)}
-                    />
-                  </div>
-                )}
-              />
-              {entries.length === 0 && (
-                <p className="py-2.5 pr-2.5 text-body-2-regular text-text-tertiary">
-                  {t("settings.cliEmpty")}
-                </p>
-              )}
+              <div className={ROW}>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <p className="text-body-regular text-text-primary">
+                    {t("settings.cliEnableTitle", { name: CLI_DISPLAY_NAMES[engine] })}
+                  </p>
+                  <p className="text-body-2-regular text-text-secondary">
+                    {t("settings.cliEnableDesc")}
+                  </p>
+                </div>
+                <Switch
+                  size="sm"
+                  aria-label={t("settings.cliEnableTitle", { name: CLI_DISPLAY_NAMES[engine] })}
+                  isSelected={enabled}
+                  onChange={(on) => void mutate(() => ipc.setEngineEnabled(engine, on))}
+                  isDisabled={busy}
+                />
+              </div>
+              {/* Built-in fallback row: the CLI's own config file. Radio-style:
+                  it can be turned on, never off. */}
+              <div
+                className={cx(ROW, "cursor-pointer")}
+                onClick={() => !busy && activate(PSEUDO_LOCAL)}
+              >
+                <ChannelAvatar fallbackEngine={engine} />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <p className="flex items-center gap-1.5 text-body-regular text-text-primary">
+                    <span className="truncate">{t("settings.cliOfficial")}</span>
+                    <Badge>{t("settings.cliBuiltin")}</Badge>
+                  </p>
+                  <p className="truncate text-body-2-regular text-text-secondary">
+                    {t("settings.cliOfficialDesc")}
+                  </p>
+                </div>
+                <span onClick={(e) => e.stopPropagation()}>
+                  <Switch
+                    size="sm"
+                    aria-label={t("settings.cliOfficial")}
+                    isSelected={officialActive}
+                    onChange={(on) => {
+                      if (on) activate(PSEUDO_LOCAL);
+                    }}
+                    isDisabled={busy}
+                  />
+                </span>
+              </div>
             </SettingsCard>
+          </div>
+
+          {(engine === "pi" || engine === "omp") && <PiFamilyAuthSection engine={engine} />}
+
+          <div className="flex w-full flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <SettingsSectionLabel>
+                {t("settings.cliChannels")}
+                <span className="ml-2 text-body-2-regular font-normal text-text-tertiary">
+                  {t("settings.cliChannelsHint")}
+                </span>
+              </SettingsSectionLabel>
+              <div className="flex shrink-0 items-center gap-2">
+                {CCS_IMPORT_ENGINES.includes(engine) && (
+                  <Dropdown>
+                    <DropdownTrigger
+                      aria-label={t("settings.cliImportEntry")}
+                      isDisabled={busy}
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-border-button-default bg-background-primary-default px-2 py-1.5 text-body-medium text-text-primary shadow-xs hover:bg-background-primary-hover hover:border-border-button-hover disabled:opacity-50"
+                    >
+                      <Download className="size-[18px] shrink-0" aria-hidden />
+                      <span className="inline-flex items-center px-0.5">
+                        {t("settings.cliImportEntry")}
+                      </span>
+                    </DropdownTrigger>
+                    <DropdownPopover
+                      aria-label={t("settings.cliImportEntry")}
+                      placement="bottom end"
+                      className="w-64"
+                    >
+                      <DropdownItem
+                        className="px-2 py-1.5"
+                        onSelect={() => void syncCcSwitch(engine)}
+                      >
+                        <ArrowLeftRight
+                          className="size-4 shrink-0 text-foreground-icon-secondary"
+                          aria-hidden
+                        />
+                        {t("settings.cliImportAuto")}
+                      </DropdownItem>
+                      <DropdownItem
+                        className="px-2 py-1.5"
+                        onSelect={() => void importCcSwitchFile()}
+                      >
+                        <FileText
+                          className="size-4 shrink-0 text-foreground-icon-secondary"
+                          aria-hidden
+                        />
+                        {t("settings.cliImportFile")}
+                      </DropdownItem>
+                    </DropdownPopover>
+                  </Dropdown>
+                )}
+                <Button
+                  size="small"
+                  leadingIcon={Plus}
+                  disabled={busy}
+                  onClick={() => setDialog({})}
+                >
+                  {t("settings.cliDialogAdd")}
+                </Button>
+              </div>
+            </div>
+
+            <div className="relative">
+              <SettingsCard>
+                <WorkspaceSortableList
+                  items={entries}
+                  onReorder={(ids) => void mutate(() => ipc.reorderProviders(engine, ids))}
+                  renderItem={(entry, drag) => (
+                    <ChannelRow
+                      engine={engine}
+                      entry={entry}
+                      current={currentId === entry.id}
+                      health={health[`${engine}:${entry.id}`] ?? { state: "idle" }}
+                      busy={busy}
+                      drag={drag}
+                      onToggle={(on) => activate(on ? entry.id : PSEUDO_LOCAL)}
+                      onEdit={() => setDialog({ entry })}
+                      onDelete={() => setPendingDelete(entry)}
+                      onTest={() => void testConnection(entry)}
+                    />
+                  )}
+                />
+              </SettingsCard>
+
+              {entries.length === 0 && (
+                <div className="mt-3 rounded-2xl border border-dashed border-border-button-default px-4 py-6 text-center">
+                  <p className="text-body-medium text-text-primary">
+                    {t("settings.cliEmptyTitle")}
+                  </p>
+                  <p className="mt-1 text-body-2-regular text-text-secondary">
+                    {t("settings.cliEmptyDesc")}
+                  </p>
+                </div>
+              )}
+
+              {!enabled && (
+                <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background-primary-default/70 backdrop-blur-[1px]">
+                  <p className="rounded-xl border border-border-button-default bg-background-primary-default px-4 py-2 text-body-2-medium text-text-secondary shadow-sm">
+                    {t("settings.cliDisabledOverlay")}
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </>
       )}
       {dialog && (
         <ProviderDialog
           engine={engine}
-          title={dialog.entry ? t("settings.cliDialogEdit") : t("settings.cliDialogAdd")}
+          title={
+            dialog.entry
+              ? t("settings.cliDialogEdit")
+              : t("settings.cliDialogAddEngine", { name: CLI_DISPLAY_NAMES[engine] })
+          }
           initial={
             dialog.entry
               ? {
                   name: dialog.entry.name,
+                  remark: dialog.entry.remark,
                   baseUrl: dialog.entry.baseUrl,
                   apiKey: dialog.entry.apiKey,
                   model: dialog.entry.model,

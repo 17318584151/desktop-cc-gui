@@ -31,6 +31,8 @@ git2 = "0.20"
 # the shipped .app at launch on any machine without that exact Homebrew install.
 openssl-sys = { version = "0.9", features = ["vendored"] }
 trash = "5"
+# .gitignore-aware directory walking for the @-mention file index.
+ignore = "0.4"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 zstd = "0.13"
@@ -44,6 +46,7 @@ libc = "0.2"
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 include_dir = "0.7"
+serde_yaml = "0.9"
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

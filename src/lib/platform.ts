@@ -71,3 +71,21 @@ export async function pickDirectory(title: string): Promise<string | null> {
   const path = Array.isArray(selected) ? selected[0] : selected;
   return path ?? null;
 }
+
+/**
+ * File picker: native dialog on desktop; on web there is no filesystem
+ * dialog, so fall back to typing the absolute path (same as pickDirectory).
+ */
+export async function pickFile(
+  title: string,
+  filters: { name: string; extensions: string[] }[],
+): Promise<string | null> {
+  if (isWeb) {
+    const entered = window.prompt(title);
+    const trimmed = entered?.trim();
+    return trimmed ? trimmed : null;
+  }
+  const selected = await openDialog({ multiple: false, title, filters });
+  const path = Array.isArray(selected) ? selected[0] : selected;
+  return path ?? null;
+}

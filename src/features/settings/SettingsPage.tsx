@@ -31,8 +31,8 @@ export default function SettingsPage() {
         label: t("settings.title"),
         items: [
           { key: "general", label: t("settings.general"), icon: Settings },
-          { key: "webAccess", label: t("settings.webAccess"), icon: Smartphone },
           { key: "cliConfig", label: t("settings.cliConfig"), icon: SquareTerminal },
+          { key: "webAccess", label: t("settings.webAccess"), icon: Smartphone },
           { key: "about", label: t("settings.about"), icon: Info },
         ],
       },

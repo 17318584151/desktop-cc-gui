@@ -151,7 +151,7 @@ export function MessageAnchorRail({
                     ? PROXIMITY_WIDTHS[previewDistance]
                     : "w-[13px]",
                   isActive
-                    ? "bg-accent-400"
+                    ? "bg-text-primary"
                     : previewDistance === 0
                       ? "bg-text-secondary"
                       : "bg-separator-border-strong",

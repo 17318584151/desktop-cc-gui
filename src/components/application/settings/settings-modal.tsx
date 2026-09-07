@@ -13,10 +13,10 @@ import { cx } from "@/utils/cx";
  * The shell is content-agnostic: nav groups, page titles, and page bodies
  * come in as props so feature code owns the actual settings.
  *
- * Shell (1:1 with Figma):
+ * Shell (1:1 with Figma except the panel size — user asked for a larger modal):
  *   backdrop  overlay-backdrop scrim token.
- *   panel     871×614 (max-height 614), radius/3xl (24px), shadow/xs.
- *   rail      274px, bg background/secondary, 1px right border, p 10 —
+ *   panel     1120×720 (capped at viewport − 64px), radius/3xl (24px), shadow/xs.
+ *   rail      254px, bg background/secondary, 1px right border, p 10 —
  *             same group/item recipe as the board-team dropdown menus
  *             (label pl-8, items p-8 radius/2lg icon-20 + body-medium),
  *             selected row bg background/secondary/hover.
@@ -110,7 +110,7 @@ export function SettingsModal({
         <Dialog
           aria-label={ariaLabel}
           className={cx(
-            "relative flex h-[614px] max-h-[calc(100dvh-32px)] w-[871px] max-w-[calc(100vw-32px)]",
+            "relative flex h-[720px] max-h-[calc(100dvh-64px)] w-[1120px] max-w-[calc(100vw-64px)] flex-col md:flex-row",
             // overflow-CLIP, not hidden: hidden boxes are still programmatically
             // scrollable, so focusing a switch's hidden input in a row clipped
             // by the inner scroller made the browser scroll-reveal it through
@@ -122,17 +122,17 @@ export function SettingsModal({
           {/* Nav rail — the board-team dropdown group/item recipe */}
           <nav
             aria-label={ariaLabel}
-            className="flex w-[274px] shrink-0 flex-col gap-5 overflow-y-auto border-r border-separator-border bg-background-secondary-default p-2.5"
+            className="flex w-full shrink-0 flex-row gap-5 overflow-x-auto border-b border-separator-border bg-background-secondary-default p-2.5 md:w-[254px] md:flex-col md:gap-5 md:overflow-x-visible md:overflow-y-auto md:border-r md:border-b-0"
           >
             {groups.map((group, groupIndex) => (
               <div
                 key={group.label ?? groupIndex}
-                className="flex w-full flex-col gap-1.5 pt-1"
+                className="flex w-full flex-row md:flex-col gap-1.5 pt-1"
               >
                 {group.label && (
-                  <span className="pl-2 text-body-medium text-text-secondary">{group.label}</span>
+                  <span className="hidden pl-2 text-body-medium text-text-secondary md:block">{group.label}</span>
                 )}
-                <div className="flex w-full flex-col gap-1">
+                <div className="flex w-full flex-row gap-1 md:flex-col">
                   {group.items.map((item) => {
                     const selected = item.key === page;
                     return (
@@ -145,7 +145,7 @@ export function SettingsModal({
                           setContentScrolled(false);
                         }}
                         className={cx(
-                          "flex w-full cursor-pointer items-center gap-2 rounded-2lg p-2 text-left",
+                          "flex w-auto shrink-0 cursor-pointer items-center gap-1.5 rounded-2lg p-1.5 text-left md:w-full md:gap-2 md:p-2",
                           "outline-none transition-colors duration-150 ease focus-visible:ring-2 focus-visible:ring-border-focus-ring",
                           selected
                             ? "bg-background-secondary-hover"
@@ -153,7 +153,7 @@ export function SettingsModal({
                         )}
                       >
                         <item.icon
-                          className="size-5 shrink-0 text-foreground-icon-secondary"
+                          className="size-4 shrink-0 text-foreground-icon-secondary md:size-5"
                           aria-hidden
                         />
                         <span
@@ -173,8 +173,8 @@ export function SettingsModal({
           </nav>
 
           {/* Content pane — fixed title row, scrollable page below */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex shrink-0 items-center justify-between px-8 pt-8 pb-3">
+          <div className="flex min-w-0 min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-center justify-between px-4 pt-4 pb-3 md:px-8 md:pt-8">
               <h2 className="text-title-3-medium text-text-primary">
                 {titles[page] ?? page}
               </h2>
@@ -194,7 +194,7 @@ export function SettingsModal({
             </div>
             <div className="relative min-h-0 flex-1">
               <div
-                className="h-full overflow-y-auto px-8 pb-8"
+                className="h-full overflow-y-auto px-4 pb-4 md:px-8 md:pb-8"
                 onScroll={(e) => setContentScrolled(e.currentTarget.scrollTop > 0)}
               >
                 {renderPage(page)}

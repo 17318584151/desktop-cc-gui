@@ -60,7 +60,7 @@ const TreeRow = memo(function TreeRow({
           ? "bg-background-primary-active text-text-primary"
           : "text-text-primary",
       )}
-      style={{ paddingLeft: 8 + node.depth * 14 }}
+      style={{ paddingLeft: 14 + node.depth * 14 }}
     >
       <button
         type="button"

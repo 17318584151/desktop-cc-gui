@@ -6,6 +6,9 @@ use std::sync::Arc;
 const MAX_READ_BYTES: usize = 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_SEARCH_RESULTS: usize = 200;
+/// @-mention file index: bounds the walk on monster trees (the gitignore
+/// filter drops build output, the cap is the last line of defense).
+const MAX_INDEX_ENTRIES: usize = 20_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +34,14 @@ pub struct SearchHit {
     pub path: String,
     pub line: usize,
     pub text: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileIndexEntry {
+    /// Workspace-relative path, "/" separators (the frontend re-joins it
+    /// with the root — absolute paths would double the IPC payload).
+    pub rel: String,
+    pub is_dir: bool,
 }
 
 fn mtime_ms(meta: &std::fs::Metadata) -> i64 {
@@ -325,6 +336,61 @@ pub async fn search_text(
 ) -> Result<Vec<SearchHit>, String> {
     let db = Arc::clone(db.inner());
     tauri::async_runtime::spawn_blocking(move || search_text_blocking(&db, &path, &query))
+        .await
+        .map_err(|e| e.to_string())?
+}
+/// Sync body of `list_file_index`: full-tree walk for the composer's
+/// @-mention picker. Gitignore-aware via the `ignore` crate (ripgrep's
+/// walker): .gitignore/.git/info/exclude/global excludes are honored even
+/// outside a git repo (require_git(false)); hidden files are skipped and
+/// node_modules/target are dropped even when a repo forgot to ignore them.
+fn list_file_index_blocking(
+    db: &crate::db::Db,
+    path: &str,
+) -> Result<Vec<FileIndexEntry>, String> {
+    let root = ensure_allowed(path, db)?;
+    let mut out: Vec<FileIndexEntry> = Vec::new();
+    let walker = ignore::WalkBuilder::new(&root)
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .require_git(false)
+        .follow_links(false)
+        .filter_entry(|e| {
+            !(e.file_type().is_some_and(|t| t.is_dir())
+                && (e.file_name() == "node_modules" || e.file_name() == "target"))
+        })
+        .build();
+    for entry in walker {
+        let Ok(entry) = entry else { continue };
+        let p = entry.path();
+        if p == root {
+            continue;
+        }
+        let rel = p
+            .strip_prefix(&root)
+            .unwrap_or(p)
+            .to_string_lossy()
+            .replace('\\', "/");
+        out.push(FileIndexEntry {
+            rel,
+            is_dir: entry.file_type().is_some_and(|t| t.is_dir()),
+        });
+        if out.len() >= MAX_INDEX_ENTRIES {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn list_file_index(
+    db: tauri::State<'_, Arc<crate::db::Db>>,
+    path: String,
+) -> Result<Vec<FileIndexEntry>, String> {
+    let db = Arc::clone(db.inner());
+    tauri::async_runtime::spawn_blocking(move || list_file_index_blocking(&db, &path))
         .await
         .map_err(|e| e.to_string())?
 }

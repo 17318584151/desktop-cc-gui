@@ -86,7 +86,7 @@ export function AppStatusBar() {
     "flex size-5 cursor-pointer items-center justify-center rounded text-foreground-icon-tertiary transition-colors hover:bg-background-tertiary-hover hover:text-foreground-icon-secondary";
 
   return (
-    <div className="flex h-7 shrink-0 items-center justify-end border-t border-separator-border bg-background-primary-default px-3 text-caption-1-medium text-text-tertiary select-none">
+    <div className="flex h-7 shrink-0 items-center justify-end border-t border-separator-border bg-background-primary-default px-3 text-caption-1-medium text-text-tertiary select-none max-md:hidden">
       <div className="flex min-w-0 items-center gap-3">
         <span
           className="flex items-center gap-1"

@@ -2,6 +2,7 @@ pub mod claude;
 pub mod codex;
 pub mod dsh;
 pub mod pi_family;
+pub mod pi_family_auth;
 pub mod grok;
 pub mod images;
 pub mod kimi;
@@ -326,6 +327,9 @@ pub struct SendResult {
 pub struct EngineInfo {
     pub id: String,
     pub available: bool,
+    /// False when the user disabled this CLI in settings; the UI hides it
+    /// from pickers and history lists rather than erroring on launch.
+    pub enabled: bool,
     pub supports_images: bool,
 }
 
@@ -351,6 +355,7 @@ fn engine_bin(settings: &crate::settings::AppSettings, engine_id: &str) -> Strin
 #[tauri::command]
 pub fn list_engines() -> Vec<EngineInfo> {
     let settings = crate::settings::read_settings().unwrap_or_default();
+    let config = crate::config::read_config().unwrap_or_default();
     crate::config::ENGINES
         .iter()
         .map(|id| {
@@ -364,6 +369,10 @@ pub fn list_engines() -> Vec<EngineInfo> {
             EngineInfo {
                 id: id.to_string(),
                 available,
+                enabled: config
+                    .section(id)
+                    .and_then(|s| s.current.as_deref())
+                    != Some(crate::config::DISABLED_PROVIDER_ID),
                 supports_images: engine.supports_images(),
             }
         })

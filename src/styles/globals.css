@@ -63,6 +63,14 @@
   color: var(--color-text-tertiary);
   pointer-events: none;
 }
+/* Ghost-text history completion: painted after the caret; pseudo-element,
+ * so it never enters the DOM/extractText and stays non-editable. */
+.composer-editable[data-completion-suffix]::after {
+  content: attr(data-completion-suffix);
+  color: var(--color-text-tertiary);
+  opacity: 0.6;
+  pointer-events: none;
+}
 .composer-file-tag {
   display: inline-flex;
   align-items: center;

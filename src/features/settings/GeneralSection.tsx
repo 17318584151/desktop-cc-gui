@@ -10,6 +10,7 @@ import {
 } from "@/components/application/settings/settings-rows";
 import { ipc, type AppSettings } from "@/lib/ipc";
 import { applyTheme } from "./theme";
+import { PromptHistoryManager, PromptHistoryToggleRow } from "./PromptHistorySettings";
 import { useChatStore } from "@/features/chat/store";
 
 export const LANGUAGE_STORAGE_KEY = "ccgui-next.language";
@@ -22,16 +23,13 @@ const THREAD_LIMIT_MAX = 30;
 const THREAD_LIMIT_DEFAULT = 5;
 
 /** General page: appearance (theme/language/thread limit) + behavior
- *  (composer send shortcut, terminal shell override). */
+ *  (composer send shortcut). */
 export function GeneralSection() {
   const { t, i18n } = useTranslation();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Raw digits while editing the thread limit; null = show the saved value.
   const [limitText, setLimitText] = useState<string | null>(null);
-  // Raw text while editing the shell path; null = show the saved value.
-  const [shellText, setShellText] = useState<string | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     ipc
@@ -116,27 +114,6 @@ export function GeneralSection() {
     useChatStore.getState().setSendShortcut(composerSendShortcut);
     void save({ composerSendShortcut });
   };
-
-  // Empty means "auto-detect"; the backend validates the path as a spawn
-  // target and rejects it (with an error) when it doesn't resolve.
-  const commitShellPath = () => {
-    if (settings && shellText !== null) {
-      const terminalShellPath = shellText.trim() || null;
-      if (terminalShellPath !== (settings.terminalShellPath ?? null)) {
-        setSettings({ ...settings, terminalShellPath });
-        void save({ terminalShellPath });
-      }
-    }
-    setShellText(null);
-  };
-  const onShellPathKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commitShellPath();
-      (e.target as HTMLElement).blur();
-    }
-  };
-
   return (
     <div className="flex w-full flex-col gap-6">
       {error && (
@@ -208,21 +185,11 @@ export function GeneralSection() {
                 <SelectItem id="cmdEnter">{t("settings.sendShortcutCmdEnter")}</SelectItem>
               </Select>
             </SettingsRow>
-            <SettingsRow label={t("settings.terminalShell")}>
-              <Input
-                aria-label={t("settings.terminalShell")}
-                size="small"
-                className="w-[240px]"
-                placeholder={t("settings.terminalShellPlaceholder")}
-                value={shellText ?? settings.terminalShellPath ?? ""}
-                onChange={setShellText}
-                onBlur={commitShellPath}
-                onKeyDown={onShellPathKeyDown}
-              />
-            </SettingsRow>
+            <PromptHistoryToggleRow />
           </SettingsCard>
         </div>
       )}
+      {settings && <PromptHistoryManager />}
     </div>
   );
 }

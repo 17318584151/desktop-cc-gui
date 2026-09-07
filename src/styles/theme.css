@@ -249,7 +249,7 @@
    * lighter of the two and the button steps the other way. */
   --color-ai-chat-composer-add-background:       var(--color-neutral-100);
   --color-ai-chat-composer-add-hover-background: var(--color-neutral-200);
-  --color-agent-progress-ring:                     var(--color-neutral-700);
+  --color-agent-progress-ring:                     var(--color-white);
   --color-button-ghost-background:                var(--color-accent-100);
   --color-button-ghost-hover:                     var(--color-accent-200);
   --color-button-ghost-active:                    var(--color-accent-300);
@@ -390,7 +390,7 @@
   --color-background-quaternary-error:   color-mix(in srgb, var(--color-red-900) 35%, transparent);
   --color-ai-chat-composer-add-background:       var(--color-neutral-700);
   --color-ai-chat-composer-add-hover-background: var(--color-neutral-600);
-  --color-agent-progress-ring:                     color-mix(in srgb, var(--color-white) 50%, transparent);
+  --color-agent-progress-ring:                     var(--color-neutral-600);
   --color-button-ghost-background:                var(--color-accent-900);
   --color-button-ghost-hover:                     var(--color-accent-800);
   --color-button-ghost-active:                    var(--color-accent-700);

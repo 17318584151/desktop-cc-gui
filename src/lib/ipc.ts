@@ -50,6 +50,9 @@ export interface Workspace {
 export interface EngineInfo {
   id: string;
   available: boolean;
+  /** False when the user disabled this CLI in settings — hidden from the
+   * picker and history lists; running sessions are unaffected. */
+  enabled: boolean;
   supportsImages: boolean;
 }
 /** One entry of an engine's model catalog (`--list-models` probe). */
@@ -83,6 +86,22 @@ export interface SendResult {
 export interface ProviderSection {
   providers: Record<string, unknown>;
   current: string | null;
+  /** Provider parked when the engine was disabled via the enable switch. */
+  disabledFrom?: string | null;
+}
+export interface CcSwitchStatus {
+  installed: boolean;
+  changed: boolean;
+  providers: number;
+  hash: string;
+  modifiedMs: number;
+}
+
+export interface CcSwitchImportResult {
+  added: number;
+  updated: number;
+  skipped: number;
+  removed: number;
 }
 
 export interface CliConfig {
@@ -134,6 +153,12 @@ export interface SearchHit {
   line: number;
   text: string;
 }
+/** One entry of the workspace file index (`list_file_index`). */
+export interface FileIndexEntry {
+  /** Workspace-relative path, "/" separators. */
+  rel: string;
+  isDir: boolean;
+}
 
 export interface GitFileEntry {
   path: string;
@@ -171,6 +196,43 @@ export interface WebAccessInfo {
 // Shared in-flight/cached app-settings promise: startup, the settings page
 // and the chat store all read the same settings, so fetch once.
 let settingsPromise: Promise<AppSettings> | null = null;
+// ---- pi-family (pi/omp) provider auth & custom providers (供应商认证) ----
+
+export type PiFamilyAuthState = "configured" | "none";
+export type PiFamilyKeySource = "literal" | "command" | "envRef";
+
+export interface PiFamilyAuthProviderSnapshot {
+  id: string;
+  envVar: string | null;
+  state: PiFamilyAuthState;
+  maskedKey?: string;
+  keySource?: PiFamilyKeySource;
+}
+
+export interface PiFamilyAuthListResult {
+  store: { path: string; kind: "authJson" | "sqlite"; exists: boolean };
+  providers: PiFamilyAuthProviderSnapshot[];
+  /** Provider ids holding an active OAuth credential (raw store ids — pi
+   * lands ChatGPT subscription logins under `openai-codex`). */
+  oauthProviders: string[];
+}
+
+export interface PiFamilyCustomProviderSummary {
+  id: string;
+  name: string | null;
+  baseUrl: string | null;
+  api: string | null;
+  modelCount: number;
+  hasApiKey: boolean;
+}
+
+export interface PiFamilyModelsConfigReadResult {
+  file: { path: string; format: "json" | "yaml"; exists: boolean };
+  text: string | null;
+  template: string;
+  providers: PiFamilyCustomProviderSummary[];
+  parseError: string | null;
+}
 
 export const ipc = {
   // config
@@ -183,6 +245,29 @@ export const ipc = {
     invoke<void>("set_current_provider", { engine, id }),
   reorderProviders: (engine: string, ids: string[]) =>
     invoke<void>("reorder_providers", { engine, ids }),
+  setEngineEnabled: (engine: string, enabled: boolean) =>
+    invoke<void>("set_engine_enabled", { engine, enabled }),
+  // pi/omp provider auth (auth.json for pi, agent.db auth_credentials for omp)
+  piFamilyAuthList: (engine: string) =>
+    invoke<PiFamilyAuthListResult>("pi_family_auth_list", { engine }),
+  piFamilyAuthSetApiKey: (engine: string, providerId: string, key: string) =>
+    invoke<void>("pi_family_auth_set_api_key", { engine, providerId, key }),
+  piFamilyAuthDeleteCredential: (engine: string, providerId: string) =>
+    invoke<void>("pi_family_auth_delete_credential", { engine, providerId }),
+  // pi/omp custom providers (models.json for pi, models.yml for omp)
+  piFamilyModelsConfigRead: (engine: string) =>
+    invoke<PiFamilyModelsConfigReadResult>("pi_family_models_config_read", { engine }),
+  piFamilyModelsConfigWrite: (engine: string, text: string) =>
+    invoke<void>("pi_family_models_config_write", { engine, text }),
+  // cc-switch interop
+  checkCcSwitch: () => invoke<CcSwitchStatus>("check_cc_switch"),
+  dismissCcSwitch: (hash: string) => invoke<void>("dismiss_cc_switch", { hash }),
+  importCcSwitch: (engine: string) =>
+    invoke<CcSwitchImportResult>("import_cc_switch", { engine }),
+  importCcSwitchFromPath: (path: string, engine: string) =>
+    invoke<CcSwitchImportResult>("import_cc_switch_from_path", { path, engine }),
+  testProviderConnection: (url: string) =>
+    invoke<number>("test_provider_connection", { url }),
   // settings
   getAppSettings: () =>
     (settingsPromise ??= invoke<AppSettings>("get_app_settings").catch((e) => {
@@ -257,6 +342,9 @@ export const ipc = {
   trashItem: (path: string) => invoke<void>("trash_item", { path }),
   searchText: (path: string, query: string) =>
     invoke<SearchHit[]>("search_text", { path, query }),
+  /** Whole-tree file index for the composer @-mention picker (relative
+   * paths; backend caps at 20k entries). */
+  listFileIndex: (path: string) => invoke<FileIndexEntry[]>("list_file_index", { path }),
   // git
   gitStatus: (path: string) => invoke<GitStatus>("git_status", { path }),
   gitDiff: (path: string, file: string, staged: boolean) =>

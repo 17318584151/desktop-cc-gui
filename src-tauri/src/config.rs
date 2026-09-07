@@ -16,6 +16,10 @@ pub struct ProviderSection {
     pub providers: serde_json::Map<String, Value>,
     #[serde(default)]
     pub current: Option<String>,
+    /// Provider that was current when the engine was disabled via the
+    /// enable switch, restored on re-enable. Absent while enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_from: Option<String>,
 }
 
 /// Per-engine config sections: engine ids double as field names, so the
@@ -254,6 +258,20 @@ pub fn get_cli_config() -> Result<CliConfig, String> {
     read_config()
 }
 
+/// Lock-free core of mutate_section: callers that already hold the
+/// ConfigStore lock (cc_switch's multi-engine import) use this directly.
+pub(crate) fn mutate_section_unlocked(
+    engine: &str,
+    mutate: impl FnOnce(&mut ProviderSection) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut config = read_config()?;
+    let section = config
+        .section_mut(engine)
+        .ok_or_else(|| format!("unknown engine: {engine}"))?;
+    mutate(section)?;
+    write_config(&config)
+}
+
 /// Lock the store, apply `mutate` to one engine's section, persist. A
 /// `mutate` error aborts before the write, leaving the config untouched.
 fn mutate_section(
@@ -262,12 +280,7 @@ fn mutate_section(
     mutate: impl FnOnce(&mut ProviderSection) -> Result<(), String>,
 ) -> Result<(), String> {
     let _guard = store.0.lock().map_err(|e| e.to_string())?;
-    let mut config = read_config()?;
-    let section = config
-        .section_mut(engine)
-        .ok_or_else(|| format!("unknown engine: {engine}"))?;
-    mutate(section)?;
-    write_config(&config)
+    mutate_section_unlocked(engine, mutate)
 }
 
 #[tauri::command]
@@ -293,6 +306,33 @@ pub fn delete_provider(
         section.providers.remove(&id);
         if section.current.as_deref() == Some(id.as_str()) {
             section.current = None;
+        }
+        Ok(())
+    })
+}
+
+/// Enable-switch semantics: disabling remembers the current provider in
+/// `disabled_from` and parks `current` on `__disabled__`; enabling restores
+/// it (falling back to 官方配置 when nothing was remembered or the remembered
+/// provider was deleted in between).
+#[tauri::command]
+pub fn set_engine_enabled(
+    store: tauri::State<'_, ConfigStore>,
+    engine: String,
+    enabled: bool,
+) -> Result<(), String> {
+    mutate_section(&store, &engine, |section| {
+        if enabled {
+            if section.current.as_deref() == Some(DISABLED_PROVIDER_ID) {
+                let restore = section
+                    .disabled_from
+                    .take()
+                    .filter(|id| id != DISABLED_PROVIDER_ID && section.providers.contains_key(id));
+                section.current = Some(restore.unwrap_or_else(|| LOCAL_PROVIDER_ID.to_string()));
+            }
+        } else if section.current.as_deref() != Some(DISABLED_PROVIDER_ID) {
+            section.disabled_from = section.current.clone();
+            section.current = Some(DISABLED_PROVIDER_ID.to_string());
         }
         Ok(())
     })

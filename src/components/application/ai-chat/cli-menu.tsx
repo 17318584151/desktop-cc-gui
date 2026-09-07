@@ -366,6 +366,14 @@ function EngineFlyout({
           m.id.toLowerCase().includes(normalizedQuery),
       )
     : models;
+  // Pin the active model to the top so the current pick is always the first
+  // row; search results keep the original order.
+  const orderedModels = normalizedQuery
+    ? filteredModels
+    : [...filteredModels].sort(
+        (a, b) =>
+          Number(b.id === selectedModelId) - Number(a.id === selectedModelId),
+      );
 
   return (
     <div className={FLYOUT_CLASSES}>
@@ -393,7 +401,7 @@ function EngineFlyout({
           role="radiogroup"
           aria-label={t("chat.modelPicker")}
         >
-          {filteredModels.map((model) => (
+          {orderedModels.map((model) => (
             <ModelRow
               key={model.id || "__default__"}
               option={model}
@@ -402,7 +410,7 @@ function EngineFlyout({
               onPick={onPickModel}
             />
           ))}
-          {filteredModels.length === 0 && (
+          {orderedModels.length === 0 && (
             <span className="p-2 text-body-medium text-text-tertiary">
               {t("chat.noMatchingModels")}
             </span>

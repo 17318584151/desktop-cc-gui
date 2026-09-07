@@ -389,6 +389,28 @@ struct ReorderProvidersArgs {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SetEngineEnabledArgs {
+    engine: String,
+    enabled: bool,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HashArgs {
+    hash: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportCcSwitchFromPathArgs {
+    path: String,
+    engine: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UrlArgs {
+    url: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UpdateSettingsArgs {
     settings: crate::settings::AppSettings,
 }
@@ -571,6 +593,32 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
             let a: ReorderProvidersArgs = parse_args(&raw)?;
             ser(crate::config::reorder_providers(app.state(), a.engine, a.ids))
         }
+        "set_engine_enabled" => {
+            let a: SetEngineEnabledArgs = parse_args(&raw)?;
+            ser(crate::config::set_engine_enabled(app.state(), a.engine, a.enabled))
+        }
+        // cc-switch interop
+        "check_cc_switch" => ser(crate::cc_switch::check_cc_switch().await),
+        "dismiss_cc_switch" => {
+            let a: HashArgs = parse_args(&raw)?;
+            ser(crate::cc_switch::dismiss_cc_switch(a.hash))
+        }
+        "import_cc_switch" => {
+            let a: EngineArgs = parse_args(&raw)?;
+            ser(crate::cc_switch::import_cc_switch(app.state(), a.engine))
+        }
+        "import_cc_switch_from_path" => {
+            let a: ImportCcSwitchFromPathArgs = parse_args(&raw)?;
+            ser(crate::cc_switch::import_cc_switch_from_path(
+                app.state(),
+                a.path,
+                a.engine,
+            ))
+        }
+        "test_provider_connection" => {
+            let a: UrlArgs = parse_args(&raw)?;
+            ser(crate::cc_switch::test_provider_connection(a.url).await)
+        }
         // settings
         "get_app_settings" => ser(crate::settings::get_app_settings()),
         "update_app_settings" => {
@@ -677,6 +725,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         "search_text" => {
             let a: SearchTextArgs = parse_args(&raw)?;
             ser(crate::files::search_text(app.state(), a.path, a.query).await)
+        }
+        "list_file_index" => {
+            let a: PathArgs = parse_args(&raw)?;
+            ser(crate::files::list_file_index(app.state(), a.path).await)
         }
         // git
         "git_status" => {

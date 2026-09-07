@@ -5,6 +5,7 @@ import { listenEngineEvents, listenSessionsChanged } from "@/lib/events";
 import { errorText } from "@/lib/errors";
 import { writeStored } from "@/lib/storage";
 import { subscribeTauriEvent } from "@/hooks/use-tauri-event";
+import { CLI_CONFIG_CHANGED_EVENT } from "@/features/settings/providers";
 import {
   ENGINE_PREF_KEY,
   persistTabs,
@@ -39,6 +40,14 @@ export type { QueuedMessage, SessionState } from "./store/stream";
 
 /** Unlisteners for the module-scope event subscriptions set up in init. */
 const eventTeardowns: Array<() => void> = [];
+/** History lists hide sessions of CLIs the user disabled in settings. An
+ * empty engines list means listEngines failed — keep sessions rather than
+ * blanking the sidebar. */
+function visibleSessions(sessions: SessionMeta[], engines: EngineInfo[]): SessionMeta[] {
+  if (engines.length === 0) return sessions;
+  const enabled = new Set(engines.filter((e) => e.enabled).map((e) => e.id));
+  return sessions.filter((s) => enabled.has(s.engine));
+}
 
 export interface ChatStore {
   workspaces: Workspace[];
@@ -75,6 +84,10 @@ export interface ChatStore {
 
   init: () => Promise<void>;
   refreshSessions: () => Promise<void>;
+  /** Re-read engines + sessions after CLI config changes (enable switch,
+   * channel edits): refreshes the picker's enabled set and re-filters the
+   * history list, migrating the engine pref off a disabled CLI. */
+  refreshEngines: () => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
   addWorkspace: (path: string) => Promise<void>;
   reorderWorkspaces: (ids: string[]) => Promise<void>;
@@ -297,6 +310,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
     void sendPrompt(tab, head.text, head.images);
   }
 
+  /** Migrate the engine pref off a CLI that is gone or disabled in
+   * settings. All CLIs disabled: leave the pref alone — the composer shows
+   * the "no CLI enabled" placeholder instead of a misleading fallback. */
+  function ensureUsableEngine(engines: EngineInfo[]) {
+    const usable = engines.filter((e) => e.enabled);
+    if (usable.length === 0 || usable.some((e) => e.id === get().activeEngine)) return;
+    get().setActiveEngine(usable.find((e) => e.available)?.id ?? usable[0].id);
+  }
+
   return {
     workspaces: [],
     sessions: [],
@@ -333,16 +355,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
         ),
         subscribeTauriEvent(() => listenSessionsChanged(() => void get().refreshSessions())),
       );
+      // Settings' CLI enable switch / channel edits: re-filter history and
+      // picker options without a restart.
+      const onCliConfigChanged = () => void get().refreshEngines();
+      window.addEventListener(CLI_CONFIG_CHANGED_EVENT, onCliConfigChanged);
+      eventTeardowns.push(() =>
+        window.removeEventListener(CLI_CONFIG_CHANGED_EVENT, onCliConfigChanged),
+      );
       const [workspaces, sessions, engines] = await Promise.all([
         ipc.listWorkspaces().catch(() => [] as Workspace[]),
         ipc.listSessions().catch(() => [] as SessionMeta[]),
         ipc.listEngines().catch(() => [] as EngineInfo[]),
       ]);
-      set({ workspaces, sessions, engines });
-      // Migrate a persisted engine pref whose engine no longer exists.
-      if (engines.length > 0 && !engines.some((e) => e.id === get().activeEngine)) {
-        get().setActiveEngine(engines.find((e) => e.available)?.id ?? engines[0].id);
-      }
+      set({ workspaces, sessions: visibleSessions(sessions, engines), engines });
+      ensureUsableEngine(engines);
       // Restore persisted tabs; drop ones whose workspace/session is gone.
       const restoredTabs = readPersistedTabs().filter(
         (t) =>
@@ -375,7 +401,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     refreshSessions: async () => {
       const sessions = await ipc.listSessions().catch(() => null);
-      if (sessions) set({ sessions });
+      if (sessions) set({ sessions: visibleSessions(sessions, get().engines) });
+    },
+
+    refreshEngines: async () => {
+      const [engines, sessions] = await Promise.all([
+        ipc.listEngines().catch(() => null),
+        ipc.listSessions().catch(() => null),
+      ]);
+      if (!engines) return;
+      set({
+        engines,
+        ...(sessions ? { sessions: visibleSessions(sessions, engines) } : {}),
+      });
+      ensureUsableEngine(engines);
     },
 
     refreshWorkspaces: async () => {

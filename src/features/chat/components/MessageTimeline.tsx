@@ -74,12 +74,25 @@ function toolTypeKey(text: string): string {
   return "toolTypeTool";
 }
 
-/** File chip for a tool call's target path. Glob patterns and path-less
- * calls get no chip — a pattern is not a file you can open. */
+/** File chip for a tool call's target path. Glob patterns, URLs, and
+ * path-less calls get no chip — a pattern is not a file you can open, and a
+ * URL's last segment (search targets like `artifact://0` → "0") would render
+ * as a meaningless folder chip. */
 function fileChipFor(path: string | null | undefined): TaskListChip | null {
-  if (!path || /[*?{}[\]]/.test(path)) return null;
-  const name = path.split(/[\\/]/).pop() ?? "";
-  if (!name) return null;
+  if (!path || /[*?{}[\]]/.test(path) || path.includes("://")) return null;
+  // Read selectors (`file.ts:301-591:raw`, `img.svg:img`) are read modifiers,
+  // not part of the file name — strip trailing `:` segments that are line
+  // ranges or selector keywords. (Windows drive `C:` survives: its segment
+  // starts with a backslash path, not a digit/keyword.)
+  const segments = path.split(":");
+  while (segments.length > 1) {
+    const last = segments[segments.length - 1];
+    if (/^\d/.test(last) || last === "raw" || last === "img" || last === "conflicts") {
+      segments.pop();
+    } else break;
+  }
+  const name = segments.join(":").split(/[\\/]/).pop() ?? "";
+  if (!name || name === "." || name === "..") return null;
   // Same heuristic as the composer file tags: extension-less = folder.
   const isDir = !name.includes(".");
   return {

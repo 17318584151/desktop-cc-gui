@@ -1,4 +1,34 @@
 import { getFileTreeIconSvg } from "@/features/files/fileIcons";
+/** An active `@` autocomplete trigger at the caret: `start` is the offset
+ * of the `@` itself, `query` is the text typed after it. */
+export interface MentionTrigger {
+  start: number;
+  query: string;
+}
+
+/**
+ * Find the `@` mention trigger spanning the caret, if any. A trigger is an
+ * `@` preceded by start-of-text or whitespace, followed by the query: no
+ * whitespace and no further `@` between it and the caret. Chips flatten to
+ * their `@path` mention but always carry a trailing space (and the chip
+ * itself is atomic), so a caret behind an inserted chip never re-triggers.
+ */
+export function findMentionTrigger(text: string, caret: number): MentionTrigger | null {
+  if (caret <= 0 || caret > text.length) return null;
+  let start = caret - 1;
+  while (start >= 0) {
+    const ch = text[start];
+    if (ch === "@" || /\s/.test(ch)) break;
+    start--;
+  }
+  if (start < 0 || text[start] !== "@") return null;
+  // `x@y` (emails, handles) is not a mention trigger.
+  if (start > 0 && !/\s/.test(text[start - 1])) return null;
+  const query = text.slice(start + 1, caret);
+  // Bound the query so a huge whitespace-free run never feeds the matcher.
+  if (query.length > 128) return null;
+  return { start, query };
+}
 
 /**
  * Inline file-tag ("chip") support for the composer's contentEditable field,

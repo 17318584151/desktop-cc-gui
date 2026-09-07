@@ -107,7 +107,7 @@ export function HeaderOpenActions({ workspacePath }: { workspacePath: string }) 
           title={t("openApp.openIn", { target: target.label })}
           aria-label={t("openApp.openIn", { target: target.label })}
           onClick={() => void openTarget(target)}
-          className={ICON_BUTTON_CLASSES}
+          className={cx(ICON_BUTTON_CLASSES, "max-md:hidden")}
         >
           <img src={OPEN_APP_ICONS[target.id]} alt="" aria-hidden className="size-4" />
         </button>
@@ -153,6 +153,9 @@ export function HeaderOpenActions({ workspacePath }: { workspacePath: string }) 
                   className={cx(
                     "flex items-center gap-1 rounded-2lg pr-1.5",
                     target.id === selectedId && "bg-background-secondary-default",
+                    // External-app targets are desktop-only; mobile keeps the
+                    // terminal row below.
+                    "max-md:hidden",
                   )}
                 >
                   <button

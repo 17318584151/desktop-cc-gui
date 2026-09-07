@@ -1,9 +1,32 @@
 /** Shared provider model for the CLI config section. */
 
 import type { ProviderSection } from "@/lib/ipc";
+import { readStoredJson, writeStored } from "@/lib/storage";
 
 export const ENGINE_IDS = ["claude", "kimi", "grok", "codex", "pi", "omp", "dsh"] as const;
 export type EngineId = (typeof ENGINE_IDS)[number];
+const ENGINE_ORDER_KEY = "ccgui-next.cliEngineOrder:v1";
+
+/**
+ * Tab order of the CLI 配置 engine switcher. Pure UI preference →
+ * localStorage, like theme/language/enginePref. Stored ids not in
+ * ENGINE_IDS are dropped; engines missing from the stored list (new ones,
+ * or a corrupt value) append in ENGINE_IDS order.
+ */
+export function readEngineOrder(): EngineId[] {
+  const known = new Set<string>(ENGINE_IDS);
+  const stored = readStoredJson(ENGINE_ORDER_KEY, (value): EngineId[] | null =>
+    Array.isArray(value)
+      ? [...new Set(value.filter((id): id is EngineId => known.has(id as string)))]
+      : null,
+  );
+  const base = stored ?? [];
+  return [...base, ...ENGINE_IDS.filter((id) => !base.includes(id))];
+}
+
+export function writeEngineOrder(order: readonly EngineId[]): void {
+  writeStored(ENGINE_ORDER_KEY, JSON.stringify(order));
+}
 
 export const PSEUDO_LOCAL = "__local_settings_json__";
 export const PSEUDO_DISABLED = "__disabled__";
@@ -88,6 +111,7 @@ export interface ProviderEntry {
   /** Map key — the id `set_current_provider` expects. */
   id: string;
   name: string;
+  remark: string;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -107,6 +131,7 @@ export function providerEntries(
     return {
       id,
       name: asString(o.name).trim() || id,
+      remark: asString(o.remark),
       baseUrl: asString(o.baseUrl),
       apiKey: asString(o.apiKey),
       model: providerModel(engine, raw),

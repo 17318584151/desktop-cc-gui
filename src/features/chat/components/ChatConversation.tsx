@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import {
   Composer,
@@ -10,16 +11,22 @@ import { mentionToken } from "@/components/application/ai-chat/file-tags";
 import { MessageQueue } from "@/components/application/ai-chat/message-queue";
 import { AddMenu } from "@/components/application/ai-chat/add-menu";
 import {
+  PermissionMenu,
+  type ComposerPermission,
+} from "@/components/application/ai-chat/permission-menu";
+import {
   CliMenu,
   type EffortLevel,
   type ModelOption,
 } from "@/components/application/ai-chat/cli-menu";
 import type { ContextSegment } from "@/components/application/agent-limits/agent-limits-card";
 import { useChatStore, sessionKey, type ActiveSession, type QueuedMessage } from "../store";
+import { recordPrompt } from "../prompt-history";
 import { parseUsage } from "../usage";
 import { MessageTimeline } from "./MessageTimeline";
 import { ImageLightbox } from "./MessageImages";
 import { useGitStore } from "@/features/git/store";
+import { errorText } from "@/lib/errors";
 import { ipc, type CliConfig, type EngineCatalog, type EngineInfo, type Workspace } from "@/lib/ipc";
 import { CLI_CONFIG_CHANGED_EVENT, isPseudoProvider, providerModel, type EngineId } from "@/features/settings/providers";
 import { EmptyState } from "@/components/base/empty-state";
@@ -44,7 +51,7 @@ interface UsageBreakdown {
   parts: { kind: UsagePartKind; tokens: number }[];
 }
 
-function usageBreakdown(usage: unknown): UsageBreakdown | null {
+function usageBreakdown(usage: unknown, maxTokens: number): UsageBreakdown | null {
   const u = parseUsage(usage);
   if (!u) return null;
   const parts = [
@@ -54,7 +61,7 @@ function usageBreakdown(usage: unknown): UsageBreakdown | null {
     { kind: "cacheWrite" as const, tokens: u.cacheWrite },
   ].filter((p) => p.tokens > 0);
   return {
-    pct: Math.min(100, Math.round((u.total / CONTEXT_WINDOW_TOKENS) * 100)),
+    pct: Math.min(100, Math.round((u.total / maxTokens) * 100)),
     parts: parts.length ? parts : [{ kind: "total", tokens: u.total }],
   };
 }
@@ -109,6 +116,7 @@ export const ChatConversation = memo(function ChatConversation({
   composerInputRef: React.RefObject<ComposerInputHandle | null>;
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const key = active ? sessionKey(active.engine, active.sessionId, active.workspacePath) : "";
   // Key-scoped, LOW-frequency slices only: streaming flips at turn start/end,
   // queue/error/usage change on discrete actions. The per-flush messages
@@ -160,8 +168,30 @@ export const ChatConversation = memo(function ChatConversation({
   const branch = useGitStore((s) =>
     active ? s.statusByWorkspace[active.workspacePath]?.branch : undefined,
   );
+  const branches = useGitStore((s) =>
+    active ? s.branchesByWorkspace[active.workspacePath] : undefined,
+  );
+  // Branch list feeds the status-bar switcher; refresh on workspace change.
+  useEffect(() => {
+    if (active?.workspacePath) void useGitStore.getState().loadBranches(active.workspacePath);
+  }, [active?.workspacePath]);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const handleBranchSelect = useCallback(
+    (name: string) => {
+      if (!active) return;
+      setBranchError(null);
+      void useGitStore
+        .getState()
+        .checkout(active.workspacePath, name)
+        .catch((err: unknown) => setBranchError(errorText(err)));
+    },
+    [active],
+  );
 
   const [images, setImages] = useState<string[]>([]);
+  // Permission mode is UI-only until engines consume it; kept here so the
+  // selection survives session switches and is reachable for future wiring.
+  const [permission, setPermission] = useState<ComposerPermission>("auto");
   /** Composer attachment chip lightbox: preview URL + display name. */
   const [zoomImage, setZoomImage] = useState<{ src: string; name: string } | null>(null);
   /** path → { preview-url, display name } for attachment chip thumbnails.
@@ -231,7 +261,18 @@ export const ChatConversation = memo(function ChatConversation({
     };
   }, [engines, catalogs]);
 
-  const usage = useMemo(() => usageBreakdown(sessionUsage), [sessionUsage]);
+  // The catalog's context window beats the 200k assumption when the
+  // selected model reports one.
+  const contextMax =
+    (catalogs[activeEngine]?.models ?? []).find((m) => m.id === models[activeEngine])
+      ?.contextWindow || CONTEXT_WINDOW_TOKENS;
+
+  // Same denominator as the breakdown card (contextMax), so the ring pill
+  // and the card never disagree.
+  const usage = useMemo(
+    () => usageBreakdown(sessionUsage, contextMax),
+    [sessionUsage, contextMax],
+  );
   const engineInfo = engines.find((e) => e.id === activeEngine);
   const supportsImages = engineInfo?.supportsImages ?? false;
   // Per-engine model lists for the CLI menu flyouts: the backend catalog
@@ -313,12 +354,6 @@ export const ChatConversation = memo(function ChatConversation({
     if (Object.keys(updates).length > 0) void pinModels(updates);
   }, [engines, models, modelsByEngine, catalogs, knownIdsByEngine, pinModels]);
 
-  // The catalog's context window beats the 200k assumption when the
-  // selected model reports one.
-  const contextMax =
-    (catalogs[activeEngine]?.models ?? []).find((m) => m.id === models[activeEngine])
-      ?.contextWindow || CONTEXT_WINDOW_TOKENS;
-
   const contextSegments: ContextSegment[] | undefined = useMemo(
     () =>
       usage?.parts.map((p) => ({
@@ -364,6 +399,7 @@ export const ChatConversation = memo(function ChatConversation({
   const submit = useCallback(
     (value: string) => {
       if (!active || (!value.trim() && images.length === 0)) return;
+      recordPrompt(value);
       setDraft(key, "");
       clearImages();
       // A turn is in flight: park the message in the session's queue; the
@@ -389,17 +425,24 @@ export const ChatConversation = memo(function ChatConversation({
 
   const handleDraftChange = useCallback((v: string) => setDraft(key, v), [key, setDraft]);
   const handleStop = useCallback(() => void interrupt(), [interrupt]);
+  // Disabled-in-settings CLIs leave the picker entirely; the greyed-out
+  // state stays reserved for CLIs whose binary is not installed.
   const cliOptions = useMemo(
     () =>
-      engines.map((e) => ({
-        id: e.id,
-        label: t(`settings.engines.${e.id}`),
-        available: e.available,
-        disabled: !e.available,
-        disabledReason: t("chat.engineNotInstalled"),
-      })),
+      engines
+        .filter((e) => e.enabled)
+        .map((e) => ({
+          id: e.id,
+          label: t(`settings.engines.${e.id}`),
+          available: e.available,
+          disabled: !e.available,
+          disabledReason: t("chat.engineNotInstalled"),
+        })),
     [engines, t],
   );
+  // Every CLI is switched off in settings: swap the picker for a placeholder
+  // that deep-links to the CLI config page.
+  const noEnabledEngines = engines.length > 0 && cliOptions.length === 0;
   const handleModelChange = useCallback(
     (engine: string, m: string) => void setModel(engine, m),
     [setModel],
@@ -427,19 +470,31 @@ export const ChatConversation = memo(function ChatConversation({
     [supportsImages, t],
   );
   const cliMenu = useMemo(
-    () => (
-      <CliMenu
-        options={cliOptions}
-        value={activeEngine}
-        onChange={setActiveEngine}
-        modelsByEngine={modelsByEngine}
-        models={models}
-        onModelChange={handleModelChange}
-        efforts={efforts}
-        onEffortChange={handleEffortChange}
-      />
-    ),
+    () =>
+      noEnabledEngines ? (
+        <button
+          type="button"
+          onClick={() => navigate("/settings?page=cliConfig")}
+          className="flex cursor-pointer items-center rounded-md px-1.5 py-1 text-body-2-medium whitespace-nowrap text-text-tertiary transition-colors duration-150 ease hover:text-text-primary"
+        >
+          {t("chat.noEngineEnabled")}
+        </button>
+      ) : (
+        <CliMenu
+          options={cliOptions}
+          value={activeEngine}
+          onChange={setActiveEngine}
+          modelsByEngine={modelsByEngine}
+          models={models}
+          onModelChange={handleModelChange}
+          efforts={efforts}
+          onEffortChange={handleEffortChange}
+        />
+      ),
     [
+      noEnabledEngines,
+      navigate,
+      t,
       cliOptions,
       activeEngine,
       setActiveEngine,
@@ -449,6 +504,10 @@ export const ChatConversation = memo(function ChatConversation({
       efforts,
       handleEffortChange,
     ],
+  );
+  const permissionMenu = useMemo(
+    () => <PermissionMenu value={permission} onChange={setPermission} />,
+    [permission],
   );
 
   return (
@@ -475,6 +534,11 @@ export const ChatConversation = memo(function ChatConversation({
         {imageError && (
           <div className="rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary">
             {imageError}
+          </div>
+        )}
+        {branchError && (
+          <div className="rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary">
+            {branchError}
           </div>
         )}
         {images.length > 0 && (
@@ -529,15 +593,19 @@ export const ChatConversation = memo(function ChatConversation({
           sendShortcut={sendShortcut === "cmdEnter" ? "cmdEnter" : "enter"}
           onStop={handleStop}
           streaming={streaming}
-          disabled={!active || (!draft.trim() && images.length === 0)}
+          disabled={!active || noEnabledEngines || (!draft.trim() && images.length === 0)}
           inputRef={composerInputRef}
           addMenu={addMenu}
           cliMenu={cliMenu}
+          permissionMenu={permissionMenu}
           onPasteImages={supportsImages ? pasteImages : undefined}
+          workspacePath={active?.workspacePath}
         />
         <div className="mx-auto w-full max-w-3xl">
           <StatusBar
             branch={branch}
+            branches={branches}
+            onBranchSelect={handleBranchSelect}
             folders={statusFolders}
             selectedFolder={active ? folderName(active.workspacePath) : undefined}
             onFolderSelect={handleFolderSelect}

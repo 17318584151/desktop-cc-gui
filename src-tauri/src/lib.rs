@@ -1,4 +1,5 @@
 pub mod config;
+pub mod cc_switch;
 pub mod db;
 pub mod engine;
 pub mod event_sink;
@@ -100,6 +101,13 @@ pub fn run() {
             config::delete_provider,
             config::set_current_provider,
             config::reorder_providers,
+            config::set_engine_enabled,
+            // cc-switch interop
+            cc_switch::check_cc_switch,
+            cc_switch::dismiss_cc_switch,
+            cc_switch::import_cc_switch,
+            cc_switch::import_cc_switch_from_path,
+            cc_switch::test_provider_connection,
             // settings
             settings::get_app_settings,
             settings::update_app_settings,
@@ -108,6 +116,11 @@ pub fn run() {
             engine::interrupt_session,
             engine::list_engines,
             engine::models::list_engine_models,
+            engine::pi_family_auth::pi_family_auth_list,
+            engine::pi_family_auth::pi_family_auth_set_api_key,
+            engine::pi_family_auth::pi_family_auth_delete_credential,
+            engine::pi_family_auth::pi_family_models_config_read,
+            engine::pi_family_auth::pi_family_models_config_write,
             engine::images::save_pasted_image,
             engine::images::import_attachments,
             // history
@@ -129,6 +142,7 @@ pub fn run() {
             files::rename_item,
             files::trash_item,
             files::search_text,
+            files::list_file_index,
             // git
             git::git_status,
             git::git_diff,
