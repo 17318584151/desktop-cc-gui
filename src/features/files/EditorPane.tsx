@@ -212,17 +212,18 @@ function FileEditor({ path, content }: { path: string; content: FileContent }) {
 
   // Cmd/Ctrl+S saves from anywhere while this editor is mounted. The listener
   // subscribes once; refs keep it reading the latest save/dirty/saving so it
-  // isn't re-attached on every keystroke. Render-time ref writes are the
-  // "latest ref" pattern here: the only reader is the keydown handler, which
-  // fires after commit.
+  // isn't re-attached on every keystroke. The refs sync after commit; the
+  // only reader is the keydown handler, which always fires post-commit.
   const saveRef = useRef(save);
-  saveRef.current = save;
   const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
   const savingRef = useRef(saving);
-  savingRef.current = saving;
   const activeRef = useRef(isActiveTab);
-  activeRef.current = isActiveTab;
+  useEffect(() => {
+    saveRef.current = save;
+    dirtyRef.current = dirty;
+    savingRef.current = saving;
+    activeRef.current = isActiveTab;
+  });
   useEffect(() => {
     if (readOnly) return;
     const onKey = (e: KeyboardEvent) => {

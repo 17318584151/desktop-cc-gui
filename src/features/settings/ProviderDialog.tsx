@@ -7,10 +7,8 @@ import X from "lucide-react/dist/esm/icons/x";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { ModalShell } from "@/components/dialogs";
-import {
-  EngineIcon,
-  inferModelEngine,
-} from "@/components/foundations/icons/engine-icon";
+import { inferModelEngine } from "@/components/foundations/icons/engine-brands";
+import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { cx } from "@/utils/cx";
 import type { EngineId } from "./providers";
 

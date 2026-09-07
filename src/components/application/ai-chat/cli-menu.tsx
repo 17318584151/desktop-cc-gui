@@ -14,12 +14,14 @@ import {
   SliderThumb as AriaSliderThumb,
   SliderTrack as AriaSliderTrack,
 } from "react-aria-components";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 import { menuPopoverSurface } from "@/components/base/dropdown/menu-styles";
-import { CLI_DISPLAY_NAMES, EngineIcon, inferModelEngine } from "@/components/foundations/icons/engine-icon";
+import { CLI_DISPLAY_NAMES, inferModelEngine } from "@/components/foundations/icons/engine-brands";
+import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { cx } from "@/utils/cx";
 import { usePopoverState } from "@/utils/use-dismiss-on-outside-press";
 import { FlameOverlay } from "./effort-flame";
+import { EFFORT_LEVELS } from "./effort-levels";
 
 /**
  * Board UI → "ai_chat" dropdowns (nodes 4035:6313 / 4035:6925), adapted to
@@ -31,8 +33,6 @@ import { FlameOverlay } from "./effort-flame";
  *   Board UI node 4035:6925). */
 
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
-
-export const EFFORT_LEVELS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 
 /** CLI picker panel: shadcn-style menu (reference: desktop-cc-gui's
  *  ModelSelect) — 8px radius, 4px padding, hairline separators between rows,
@@ -92,7 +92,7 @@ function EffortTicks({
   return (
     <div className="absolute inset-x-[9px] top-[7px] flex h-[13px] items-center justify-between">
       {EFFORT_LEVELS.map((level, i) => (
-        <motion.span
+        <m.span
           key={level}
           aria-hidden
           animate={
@@ -308,7 +308,7 @@ function FlyoutEffortSection({
       <span className="pl-2 text-body-medium text-text-secondary">
         {t("chat.effort")}{" "}
         {/* Keyed on the value so each change remounts and blurs in. */}
-        <motion.span
+        <m.span
           key={effort}
           initial={{ opacity: 0, filter: "blur(4px)" }}
           animate={{ opacity: 1, filter: "blur(0px)" }}
@@ -316,7 +316,7 @@ function FlyoutEffortSection({
           className="inline-block text-text-primary"
         >
           {t(EFFORT_LABEL_KEYS[effort])}
-        </motion.span>
+        </m.span>
       </span>
       <div className="flex w-full items-center justify-between px-2 pt-2 pb-[3px]">
         <span className="text-body-2-medium whitespace-nowrap text-text-secondary">

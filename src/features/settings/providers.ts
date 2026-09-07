@@ -85,10 +85,11 @@ export function stripConventionEnv(engine: EngineId, raw: unknown): Record<strin
   const keys = ENV_CONVENTION_KEYS[engine];
   const o = raw && typeof raw === "object" ? { ...(raw as Record<string, unknown>) } : {};
   if (!keys) return o;
+  const keySet = new Set(keys);
   const strip = (env: unknown): Record<string, unknown> | undefined => {
     if (!env || typeof env !== "object") return undefined;
     const rest = Object.fromEntries(
-      Object.entries(env as Record<string, unknown>).filter(([k]) => !keys.includes(k)),
+      Object.entries(env as Record<string, unknown>).filter(([k]) => !keySet.has(k)),
     );
     return Object.keys(rest).length > 0 ? rest : undefined;
   };

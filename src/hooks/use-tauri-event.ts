@@ -27,6 +27,8 @@ export function subscribeTauriEvent(subscribe: () => Promise<UnlistenFn>): () =>
  */
 export function useTauriEvent(subscribe: () => Promise<UnlistenFn>): void {
   const subscribeRef = useRef(subscribe);
-  subscribeRef.current = subscribe;
+  useEffect(() => {
+    subscribeRef.current = subscribe;
+  });
   useEffect(() => subscribeTauriEvent(() => subscribeRef.current()), []);
 }

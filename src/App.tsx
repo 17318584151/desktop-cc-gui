@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
+import { LazyMotion, domAnimation } from "motion/react";
 import { HashRouter, Route, Routes } from "react-router-dom";
 import ChatPage from "@/features/chat/ChatPage";
 import { bindSystemThemeSync, bindThemeChangePersistence } from "@/features/settings/theme";
@@ -23,21 +24,23 @@ export default function App() {
   }, []);
 
   return (
-    <HashRouter>
-      {/* ChatPage stays mounted on every route; /settings only adds the
-          modal overlay on top, so opening/closing settings never rebuilds
-          the chat tree. */}
-      <ChatPage />
-      <Routes>
-        <Route
-          path="/settings"
-          element={
-            <Suspense fallback={null}>
-              <SettingsPage />
-            </Suspense>
-          }
-        />
-      </Routes>
-    </HashRouter>
+    <LazyMotion features={domAnimation}>
+      <HashRouter>
+        {/* ChatPage stays mounted on every route; /settings only adds the
+            modal overlay on top, so opening/closing settings never rebuilds
+            the chat tree. */}
+        <ChatPage />
+        <Routes>
+          <Route
+            path="/settings"
+            element={
+              <Suspense fallback={null}>
+                <SettingsPage />
+              </Suspense>
+            }
+          />
+        </Routes>
+      </HashRouter>
+    </LazyMotion>
   );
 }

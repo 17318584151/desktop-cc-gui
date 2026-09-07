@@ -113,8 +113,7 @@ export function MessageAnchorRail({
   };
 
   return (
-    <div
-      role="navigation"
+    <nav
       aria-label={navigationLabel}
       onMouseLeave={() => setPreviewAnchorId(null)}
       className="pointer-events-none absolute top-[66px] bottom-4 left-3 z-10 flex w-[52px] flex-col items-start gap-0.5"
@@ -182,6 +181,6 @@ export function MessageAnchorRail({
           </div>
         );
       })}
-    </div>
+    </nav>
   );
 }

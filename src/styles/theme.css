@@ -178,6 +178,7 @@
   --color-text-disabled-danger: var(--color-red-300);
   --color-text-placeholder:     var(--color-neutral-400);
   --color-text-error-primary:   var(--color-red-500);
+  --color-text-warning-primary: var(--color-orange-600);
   --color-input-disabled-text:  var(--color-neutral-300);
   --color-text-white:           var(--color-white);
 
@@ -194,6 +195,7 @@
   --color-background-tertiary-default:  var(--color-neutral-200);
   --color-background-tertiary-hover:    var(--color-neutral-300);
   --color-background-tertiary-error:    var(--color-red-100);
+  --color-background-tertiary-warning:  var(--color-orange-100);
   /* Figma background/quaternary/default — first used by the Storage
    * dropzone's upload-icon disc (node 4106:26587). */
   --color-background-quaternary-default: var(--color-neutral-300);
@@ -370,6 +372,7 @@
   --color-text-tertiary: var(--color-neutral-500);
   --color-text-disabled: var(--color-neutral-700);
   --color-text-error-primary: var(--color-red-300);
+  --color-text-warning-primary: var(--color-orange-300);
   --color-input-disabled-text: color-mix(in srgb, var(--color-neutral-500) 40%, transparent);
 
   /* Background */
@@ -385,6 +388,7 @@
   --color-background-tertiary-default:  var(--color-neutral-800);
   --color-background-tertiary-hover:    var(--color-neutral-700);
   --color-background-tertiary-error:    color-mix(in srgb, var(--color-red-950) 40%, transparent);
+  --color-background-tertiary-warning:  color-mix(in srgb, var(--color-orange-950) 40%, transparent);
   --color-background-quaternary-default: var(--color-neutral-700);
   --color-background-quaternary-hover:   var(--color-neutral-600);
   --color-background-quaternary-error:   color-mix(in srgb, var(--color-red-900) 35%, transparent);
@@ -512,6 +516,7 @@
   --color-text-disabled-danger: var(--color-text-disabled-danger);
   --color-text-placeholder:     var(--color-text-placeholder);
   --color-text-error-primary:   var(--color-text-error-primary);
+  --color-text-warning-primary: var(--color-text-warning-primary);
   --color-input-disabled-text:  var(--color-input-disabled-text);
   --color-text-white:           var(--color-text-white);
 
@@ -527,6 +532,7 @@
   --color-background-tertiary-default:  var(--color-background-tertiary-default);
   --color-background-tertiary-hover:    var(--color-background-tertiary-hover);
   --color-background-tertiary-error:    var(--color-background-tertiary-error);
+  --color-background-tertiary-warning:  var(--color-background-tertiary-warning);
   --color-background-quaternary-default: var(--color-background-quaternary-default);
   --color-background-quaternary-hover:   var(--color-background-quaternary-hover);
   --color-background-quaternary-error:   var(--color-background-quaternary-error);

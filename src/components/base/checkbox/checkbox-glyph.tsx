@@ -1,14 +1,6 @@
 import { cx } from "@/utils/cx";
-
-export type CheckboxSize = "sm" | "md";
-
-export const checkboxSizes: Record<
-  CheckboxSize,
-  { box: string; glyph: string; label: string; gap: string }
-> = {
-  md: { box: "size-4", glyph: "size-4", label: "text-body-medium", gap: "gap-2" },
-  sm: { box: "size-3.5", glyph: "size-3.5", label: "text-body-2-medium", gap: "gap-1.5" },
-};
+import { checkboxSizes } from "./checkbox-sizes";
+import type { CheckboxSize } from "./checkbox-sizes";
 
 export interface CheckboxGlyphState {
   isSelected: boolean;
@@ -59,7 +51,7 @@ export function CheckboxGlyph({
           <path d="M4.5 8H8H11.5" stroke="white" strokeWidth="2" strokeLinecap="round" />
         ) : isSelected ? (
           <path
-            d="M4 7.7002L6.64645 10.3466C6.84171 10.5419 7.15829 10.5419 7.35355 10.3466L12 5.7002"
+            d="M4 7.7L6.65 10.35C6.84 10.54 7.16 10.54 7.35 10.35L12 5.7"
             stroke="white"
             strokeWidth="2"
             strokeLinecap="round"

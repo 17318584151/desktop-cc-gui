@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button as AriaButton,
@@ -83,7 +83,7 @@ export function HeaderOpenActions({ workspacePath }: { workspacePath: string }) 
       closeMenu();
       void openTarget(target);
     },
-    [openTarget],
+    [closeMenu, openTarget],
   );
 
   const togglePinned = useCallback((id: string) => {
@@ -94,24 +94,30 @@ export function HeaderOpenActions({ workspacePath }: { workspacePath: string }) 
     });
   }, []);
 
-  const terminalPinned = pinnedIds.includes(TERMINAL_ACTION_ID);
+  // Set form of pinnedIds: lookups below run once per target per render.
+  const pinnedIdSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+
+  const terminalPinned = pinnedIdSet.has(TERMINAL_ACTION_ID);
   const terminalLabel = t("openApp.terminal");
   const showInHeaderLabel = t("openApp.showInHeader");
 
   return (
     <div className="flex items-center gap-0.5 px-1.5">
-      {OPEN_APP_TARGETS.filter((target) => pinnedIds.includes(target.id)).map((target) => (
-        <button
-          key={target.id}
-          type="button"
-          title={t("openApp.openIn", { target: target.label })}
-          aria-label={t("openApp.openIn", { target: target.label })}
-          onClick={() => void openTarget(target)}
-          className={cx(ICON_BUTTON_CLASSES, "max-md:hidden")}
-        >
-          <img src={OPEN_APP_ICONS[target.id]} alt="" aria-hidden className="size-4" />
-        </button>
-      ))}
+      {OPEN_APP_TARGETS.flatMap((target) => {
+        if (!pinnedIdSet.has(target.id)) return [];
+        return [
+          <button
+            key={target.id}
+            type="button"
+            title={t("openApp.openIn", { target: target.label })}
+            aria-label={t("openApp.openIn", { target: target.label })}
+            onClick={() => void openTarget(target)}
+            className={cx(ICON_BUTTON_CLASSES, "max-md:hidden")}
+          >
+            <img src={OPEN_APP_ICONS[target.id]} alt="" aria-hidden className="size-4" />
+          </button>,
+        ];
+      })}
       {terminalPinned && (
         <button
           type="button"
@@ -175,7 +181,7 @@ export function HeaderOpenActions({ workspacePath }: { workspacePath: string }) 
                   </button>
                   <Checkbox
                     size="sm"
-                    isSelected={pinnedIds.includes(target.id)}
+                    isSelected={pinnedIdSet.has(target.id)}
                     onChange={() => togglePinned(target.id)}
                     aria-label={showInHeaderLabel}
                   />

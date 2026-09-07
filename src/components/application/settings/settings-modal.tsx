@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ComponentType, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import X from "lucide-react/dist/esm/icons/x";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { cx } from "@/utils/cx";
@@ -72,16 +72,25 @@ export function SettingsModal({
   renderPage,
 }: SettingsModalProps) {
   const firstKey = groups[0]?.items[0]?.key ?? "general";
-  const [page, setPage] = useState<string>(defaultPage ?? firstKey);
+  /** Page the modal resets to on open. */
+  const openPage = defaultPage ?? firstKey;
+  const [page, setPage] = useState<string>(openPage);
 
   // Top fade over the scrolling page so rows dissolve under the title row
   // instead of cutting sharply (same recipe as the medical alerts feed).
   const [contentScrolled, setContentScrolled] = useState(false);
 
-  // Reset to the default page each time the modal opens.
+  // Reset to the default page each time the modal opens. defaultPage/firstKey
+  // only matter at the open transition, so the effect stays keyed on isOpen
+  // and reads the latest target through a ref — listing them as deps would
+  // reset the page mid-session if the host recomputed groups/defaultPage.
+  const openPageRef = useRef(openPage);
   useEffect(() => {
-    if (isOpen) setPage(defaultPage ?? firstKey);
-  }, [isOpen]); // defaultPage/firstKey only matter at the open transition
+    openPageRef.current = openPage;
+  }, [openPage]);
+  useEffect(() => {
+    if (isOpen) setPage(openPageRef.current);
+  }, [isOpen]);
 
   return (
     <ModalOverlay

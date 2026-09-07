@@ -45,7 +45,10 @@ const eventTeardowns: Array<() => void> = [];
  * blanking the sidebar. */
 function visibleSessions(sessions: SessionMeta[], engines: EngineInfo[]): SessionMeta[] {
   if (engines.length === 0) return sessions;
-  const enabled = new Set(engines.filter((e) => e.enabled).map((e) => e.id));
+  const enabled = new Set<string>();
+  for (const e of engines) {
+    if (e.enabled) enabled.add(e.id);
+  }
   return sessions.filter((s) => enabled.has(s.engine));
 }
 
@@ -712,14 +715,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // Registry is keyed by native session id once known; before that the
       // run id routes. Try both.
       if (active.sessionId) await ipc.interruptSession(active.sessionId).catch(() => false);
+      const deadRunIds: string[] = [];
       for (const [runId, routed] of runRouting) {
-        if (routed === key) {
-          await ipc.interruptSession(runId).catch(() => false);
-          // The run is dead: drop its routing entry so the map cannot grow
-          // forever. (A late done event would also remove it.)
-          runRouting.delete(runId);
-        }
+        if (routed === key) deadRunIds.push(runId);
       }
+      // Independent kills, one IPC call per routed run — fired together.
+      await Promise.all(deadRunIds.map((runId) => ipc.interruptSession(runId).catch(() => false)));
+      // The runs are dead: drop their routing entries so the map cannot grow
+      // forever. (A late done event would also remove them.)
+      for (const runId of deadRunIds) runRouting.delete(runId);
       // Settle locally: chunks already received stay on screen as ordinary
       // rows even if the backend's done event never arrives (kill missed).
       const pending = drainPending(key);

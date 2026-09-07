@@ -2,12 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  RiGitMergeLine,
-  RiRouteLine,
-  RiShieldCheckLine,
-  RiSpeedUpFill,
-} from "@remixicon/react";
+import { RiSpeedUpFill } from "@remixicon/react";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
@@ -16,6 +11,7 @@ import {
 } from "react-aria-components";
 import { cx } from "@/utils/cx";
 import { useDismissOnOutsidePress, useTriggerToggle } from "@/utils/use-dismiss-on-outside-press";
+import { COMPOSER_PERMISSIONS } from "./composer-permissions";
 
 /**
  * Ported from Board UI → "new composer with permissions dropdown" (node
@@ -41,35 +37,6 @@ export interface ComposerPermissionOption {
   /** Figma draws the branch and route glyphs mirrored on the vertical axis. */
   flip?: boolean;
 }
-
-export const COMPOSER_PERMISSIONS: ComposerPermissionOption[] = [
-  {
-    id: "auto",
-    labelKey: "permissionAuto",
-    descriptionKey: "permissionAutoDesc",
-    icon: RiSpeedUpFill,
-  },
-  {
-    id: "manual",
-    labelKey: "permissionManual",
-    descriptionKey: "permissionManualDesc",
-    icon: RiGitMergeLine,
-    flip: true,
-  },
-  {
-    id: "plan",
-    labelKey: "permissionPlan",
-    descriptionKey: "permissionPlanDesc",
-    icon: RiRouteLine,
-    flip: true,
-  },
-  {
-    id: "bypass",
-    labelKey: "permissionBypass",
-    descriptionKey: "permissionBypassDesc",
-    icon: RiShieldCheckLine,
-  },
-];
 
 /* Non-modal like every other composer menu: React Aria's popovers lock page
  * scroll by default, and the reflow that causes shunts sticky layout the

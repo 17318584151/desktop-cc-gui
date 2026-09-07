@@ -157,7 +157,7 @@ export const en: Messages = {
     cliOfficialDesc: "Use the CLI's own config file",
     cliEngineSection: "Engine Settings",
     cliEnableTitle: "Enable {{name}}",
-    cliEnableDesc: "While disabled, no new sessions can be started for this CLI. Running sessions are unaffected.",
+    cliEnableDesc: "While disabled, this CLI is hidden from the CLI picker and its history is not rendered.",
     cliChannelsHint: "Click a row to switch · applies to new sessions",
     cliBuiltin: "Built-in",
     cliAddChannelDesc: "Start from a preset, or enter a custom Base URL / Key",

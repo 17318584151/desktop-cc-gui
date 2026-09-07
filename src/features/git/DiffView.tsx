@@ -119,8 +119,8 @@ export function DiffView({
           </div>
         ) : (
           <div className="py-1">
-            {lines.map((line, i) => (
-              <DiffLine key={i} line={line} />
+            {lines.map((line) => (
+              <DiffLine key={`${line.oldNo ?? ""}-${line.newNo ?? ""}-${line.text}`} line={line} />
             ))}
           </div>
         )}

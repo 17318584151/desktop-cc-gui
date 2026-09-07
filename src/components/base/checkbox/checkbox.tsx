@@ -4,8 +4,9 @@ import type { ReactNode, Ref } from "react";
 import { Checkbox as AriaCheckbox } from "react-aria-components";
 import type { CheckboxProps as AriaCheckboxProps } from "react-aria-components";
 import { cx } from "@/utils/cx";
-import { CheckboxGlyph, checkboxSizes } from "./checkbox-glyph";
-import type { CheckboxSize } from "./checkbox-glyph";
+import { CheckboxGlyph } from "./checkbox-glyph";
+import { checkboxSizes } from "./checkbox-sizes";
+import type { CheckboxSize } from "./checkbox-sizes";
 
 /**
  * Figma source: Board UI → Checkbox (node 3699:2557 family; used in

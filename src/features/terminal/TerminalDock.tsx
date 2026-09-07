@@ -139,26 +139,33 @@ export function TerminalDock({ workspacePath }: { workspacePath: string }) {
             return (
               <div
                 key={tab.id}
-                role="tab"
-                aria-selected={selected}
-                tabIndex={selected ? 0 : -1}
-                onClick={() => selectTab(workspacePath, tab.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    selectTab(workspacePath, tab.id);
-                  }
-                }}
+                role="presentation"
                 className={cx(
-                  "group flex h-6 cursor-pointer items-center gap-1 rounded-md px-2 text-caption-1-medium transition-colors",
+                  "group flex h-6 cursor-pointer items-center gap-1 rounded-md pr-2 text-caption-1-medium transition-colors",
                   selected
                     ? "bg-background-secondary-hover text-text-primary"
                     : "text-text-tertiary hover:bg-background-secondary-hover hover:text-text-secondary",
                 )}
               >
-                <span className="whitespace-nowrap">
-                  {t("terminal.tabTitle", { index: index + 1 })}
-                </span>
+                {/* Selection lives on the tab; the close button sits beside
+                    it so no focusable control nests inside the tab. */}
+                <div
+                  role="tab"
+                  aria-selected={selected}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => selectTab(workspacePath, tab.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      selectTab(workspacePath, tab.id);
+                    }
+                  }}
+                  className="flex min-w-0 flex-1 cursor-pointer items-center pl-2"
+                >
+                  <span className="whitespace-nowrap">
+                    {t("terminal.tabTitle", { index: index + 1 })}
+                  </span>
+                </div>
                 <button
                   type="button"
                   title={t("terminal.closeTerminal")}

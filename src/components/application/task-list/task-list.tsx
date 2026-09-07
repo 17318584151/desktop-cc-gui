@@ -71,8 +71,8 @@ export function StepRow({
     <LogRow first={first} last={last} reduce={reduce}>
       <span className="block py-1 break-words text-body-regular text-text-secondary">
         {active ? <ShimmerText>{step.label}</ShimmerText> : step.label}
-        {step.chips?.map((chip, index) => (
-          <Chip key={`${chip.label}-${index}`} chip={chip} />
+        {step.chips?.map((chip) => (
+          <Chip key={chip.label} chip={chip} />
         ))}
       </span>
     </LogRow>

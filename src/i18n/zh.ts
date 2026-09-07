@@ -154,7 +154,7 @@ export const zh = {
     cliOfficialDesc: "使用该 CLI 自身的配置文件",
     cliEngineSection: "引擎设置",
     cliEnableTitle: "启用 {{name}}",
-    cliEnableDesc: "停用后不可在应用内发起该 CLI 的新会话，进行中的会话不受影响。",
+    cliEnableDesc: "停用后该 CLI 不会出现在 CLI 选择页面，该 CLI 的历史记录也不会渲染。",
     cliChannelsHint: "点击行即切换 · 对新会话生效",
     cliBuiltin: "内置",
     cliAddChannelDesc: "从预设模板快速创建，或自定义 Base URL / Key",

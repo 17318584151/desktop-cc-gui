@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 import { cx } from "@/utils/cx";
+import { formatTokens } from "./format-tokens";
 
 /** Series colours: explicit `color` (+ optional `activeColor`) wins;
  * otherwise the `chart-n` token palette cycles in an order that keeps
@@ -92,14 +93,6 @@ export interface AgentLimitsCardProps {
     managePlan: string;
   };
   className?: string;
-}
-
-/** 482_800 → "482.8k", 96_000 → "96k", 1_000_000 → "1M", 314 → "314". */
-export function formatTokens(n: number) {
-  const short = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
-  if (n >= 1_000_000) return `${short(n / 1_000_000)}M`;
-  if (n >= 1_000) return `${short(n / 1_000)}k`;
-  return String(n);
 }
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -194,7 +187,7 @@ export function AgentLimitsCard({
 
       <AnimatePresence initial={false}>
         {expanded && (
-          <motion.div
+          <m.div
             key="breakdown"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
@@ -255,7 +248,7 @@ export function AgentLimitsCard({
                         </button>
                         <AnimatePresence initial={false}>
                           {open && (
-                            <motion.div
+                            <m.div
                               key="items"
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: "auto", opacity: 1 }}
@@ -276,7 +269,7 @@ export function AgentLimitsCard({
                                   </div>
                                 ))}
                               </div>
-                            </motion.div>
+                            </m.div>
                           )}
                         </AnimatePresence>
                       </div>
@@ -285,7 +278,7 @@ export function AgentLimitsCard({
                 </div>
               )}
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
 

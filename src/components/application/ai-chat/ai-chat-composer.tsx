@@ -152,9 +152,16 @@ export function Composer({
     left: number;
   } | null>(null);
 
+  // Workspace switch closes the picker: render-time adjustment via prev-prop
+  // comparison instead of a cascading effect setState.
+  const [prevWorkspacePath, setPrevWorkspacePath] = useState(workspacePath);
+  if (prevWorkspacePath !== workspacePath) {
+    setPrevWorkspacePath(workspacePath);
+    setMention(null);
+  }
+
   // Prefetch the file index on workspace switch, so the first `@` is instant.
   useEffect(() => {
-    setMention(null);
     if (workspacePath) useMentionIndexStore.getState().ensure(workspacePath);
   }, [workspacePath]);
 
@@ -270,15 +277,22 @@ export function Composer({
   });
 
   // External value changes (draft restore on tab switch, clear on submit):
-  // rebuild the DOM from text; our own emissions are already in the DOM.
+  // the effect below rebuilds the DOM from text, which invalidates any live
+  // trigger range — reset the picker via prev-prop comparison (render-time
+  // adjustment, no cascading effect setState). Own emissions are already in
+  // the DOM and skip both paths through lastEmittedRef.
+  const [prevValue, setPrevValue] = useState(value);
+  if (value !== prevValue) {
+    setPrevValue(value);
+    if ((value ?? "") !== lastEmittedRef.current) setMention(null);
+  }
+
   useEffect(() => {
     const v = value ?? "";
     if (v === lastEmittedRef.current) return;
     lastEmittedRef.current = v;
     const el = editableRef.current;
     if (el) el.innerHTML = htmlFromText(v);
-    // The rebuilt DOM invalidates any live trigger range.
-    setMention(null);
   }, [value]);
 
   // Expose the field handle (focus + mention insertion from the file tree).
@@ -415,10 +429,12 @@ export function Composer({
             if (!disabled && el) onSubmit?.(extractText(el));
           }}
           onPaste={(event) => {
-            const files = Array.from(event.clipboardData?.items ?? [])
-              .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-              .map((item) => item.getAsFile())
-              .filter((file): file is File => !!file);
+            const files: File[] = [];
+            for (const item of Array.from(event.clipboardData?.items ?? [])) {
+              if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+              const file = item.getAsFile();
+              if (file) files.push(file);
+            }
             if (files.length > 0 && onPasteImages) {
               // Image payload: the host turns the files into attachments.
               event.preventDefault();

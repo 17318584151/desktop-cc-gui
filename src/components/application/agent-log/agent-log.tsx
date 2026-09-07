@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { motion } from "motion/react";
+import { m } from "motion/react";
 import { cx } from "@/utils/cx";
+import { REVEAL_FADE_VAR, UNIT_ANIMATE, UNIT_INITIAL, UNIT_TRANSITION } from "./agent-log-motion";
 
 /**
  * Agent Log — the shared machinery behind a streaming agent transcript.
@@ -21,25 +22,6 @@ import { cx } from "@/utils/cx";
 
 /* --------------------------------------------------------------- motion */
 
-export const SOFT_EASE = [0.22, 1, 0.36, 1] as const;
-
-/**
- * Each unit blurs in as it lands: 6px of blur and a 4px lift resolving over
- * 0.42s, the same language the AI Chat thread uses for a streaming line. The
- * height runs a touch shorter on the soft curve so the row has finished making
- * space slightly before the text finishes sharpening — the container settles
- * first, then the words arrive, which is what reads as smooth rather than as a
- * jump.
- *
- * Growing a row from height 0 means `overflow-hidden` cuts a hard line through
- * the text while it emerges. `--bui-reveal-fade` softens that edge: the row is
- * masked with a gradient whose solid portion ends that many pixels short of the
- * bottom, and the reveal animates it to 0, at which point the mask is a no-op
- * and nothing pops. The fade is longer than a text line, so a row is always
- * faintest exactly where it is being clipped.
- */
-const REVEAL_FADE_VAR = "--bui-reveal-fade";
-
 // The transparent stop sits just past the box: with both stops at exactly 100%
 // the gradient is degenerate and browsers soften the final pixel row, which
 // shows up as breaks in the guide where one row meets the next.
@@ -48,30 +30,6 @@ const REVEAL_GRADIENT = `linear-gradient(to bottom, #000 calc(100% - var(${REVEA
 const REVEAL_MASK: CSSProperties = {
   WebkitMaskImage: REVEAL_GRADIENT,
   maskImage: REVEAL_GRADIENT,
-};
-
-export const UNIT_INITIAL = {
-  opacity: 0,
-  height: 0,
-  y: 4,
-  filter: "blur(6px)",
-  [REVEAL_FADE_VAR]: "22px",
-};
-
-export const UNIT_ANIMATE = {
-  opacity: 1,
-  height: "auto",
-  y: 0,
-  filter: "blur(0px)",
-  [REVEAL_FADE_VAR]: "0px",
-};
-
-export const UNIT_TRANSITION = {
-  height: { duration: 0.38, ease: SOFT_EASE },
-  opacity: { duration: 0.42, ease: SOFT_EASE },
-  filter: { duration: 0.42, ease: SOFT_EASE },
-  y: { duration: 0.42, ease: SOFT_EASE },
-  [REVEAL_FADE_VAR]: { duration: 0.44, ease: SOFT_EASE },
 };
 
 /**
@@ -175,7 +133,7 @@ export function RowConnector({
         fill="none"
         className="absolute top-0 left-0"
       >
-        <motion.path
+        <m.path
           d={BRANCH_PATH}
           stroke="currentColor"
           strokeWidth="1"
@@ -185,7 +143,7 @@ export function RowConnector({
         />
       </svg>
       {!last && (
-        <motion.span
+        <m.span
           className="absolute left-0 w-px origin-top bg-current"
           style={{ top: BRANCH_Y - BRANCH_RADIUS, bottom: 0 }}
           initial={reduce ? false : { scaleY: 0 }}
@@ -216,7 +174,7 @@ export function LogRow({
 }) {
   const mask = useRevealMask(reduce);
   return (
-    <motion.li
+    <m.li
       initial={reduce ? false : UNIT_INITIAL}
       animate={UNIT_ANIMATE}
       transition={UNIT_TRANSITION}
@@ -225,6 +183,6 @@ export function LogRow({
     >
       <RowConnector first={first} last={last} reduce={reduce} />
       {children}
-    </motion.li>
+    </m.li>
   );
 }

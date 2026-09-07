@@ -15,7 +15,7 @@ export function ChevronDownSmall(props: IconProps) {
   return (
     <svg viewBox="0 0 16 16" fill="none" aria-hidden {...props}>
       <path
-        d="M4 7L7.29289 10.2929C7.68342 10.6834 8.31658 10.6834 8.70711 10.2929L12 7"
+        d="M4 7L7.29 10.29C7.68 10.68 8.32 10.68 8.71 10.29L12 7"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"

@@ -21,7 +21,9 @@ export function useDismissOnOutsidePress(
   // in a ref so the listener below attaches/detaches only when `isOpen`
   // actually changes, not on every render while open.
   const latestRef = useRef({ onDismiss, refs });
-  latestRef.current = { onDismiss, refs };
+  useEffect(() => {
+    latestRef.current = { onDismiss, refs };
+  });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -60,18 +62,25 @@ export function useTriggerToggle(
   useEffect(() => {
     if (!isOpen) return;
 
+    let safetyTimer: number | undefined;
     const handlePointerDown = (event: PointerEvent) => {
       if (!triggerRef.current?.contains(event.target as Node)) return;
       suppressReopenRef.current = true;
       // Safety valve: only the very next open within this click may be
       // swallowed; never leave a stale suppression behind.
-      setTimeout(() => {
+      safetyTimer = window.setTimeout(() => {
         suppressReopenRef.current = false;
       }, 400);
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
-    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      clearTimeout(safetyTimer);
+      // Suppression only matters while open; never carry a stale one into
+      // the next open.
+      suppressReopenRef.current = false;
+    };
   }, [isOpen, triggerRef]);
 
   return (next: boolean) => {

@@ -11,6 +11,14 @@ import { CliConfigSection } from "./CliConfigSection";
 import { AboutSection } from "./AboutSection";
 import { WebAccessSection } from "./WebAccessSection";
 
+/** Unknown page params fall back to General. */
+const renderPage = (key: string) => {
+  if (key === "about") return <AboutSection />;
+  if (key === "webAccess") return <WebAccessSection />;
+  if (key === "cliConfig") return <CliConfigSection />;
+  return <GeneralSection />;
+};
+
 /**
  * Settings route: overlay for the BoardUI settings modal. ChatPage itself is mounted once
  * by App on every route, so opening and closing settings never rebuilds
@@ -49,14 +57,6 @@ export default function SettingsPage() {
     }),
     [t],
   );
-
-  // Unknown page params fall back to General.
-  const renderPage = (key: string) => {
-    if (key === "about") return <AboutSection />;
-    if (key === "webAccess") return <WebAccessSection />;
-    if (key === "cliConfig") return <CliConfigSection />;
-    return <GeneralSection />;
-  };
 
   return (
     <SettingsModal

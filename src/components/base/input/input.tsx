@@ -3,6 +3,7 @@
 import {
   createContext,
   useContext,
+  useMemo,
   type ComponentType,
   type ReactNode,
   type Ref,
@@ -83,8 +84,13 @@ export function TextField({
   children,
   ...props
 }: TextFieldProps) {
+  const contextValue = useMemo(
+    () => ({ size, fieldClassName, inputClassName }),
+    [size, fieldClassName, inputClassName],
+  );
+
   return (
-    <TextFieldContext.Provider value={{ size, fieldClassName, inputClassName }}>
+    <TextFieldContext.Provider value={contextValue}>
       <AriaTextField
         {...props}
         data-input-size={size}

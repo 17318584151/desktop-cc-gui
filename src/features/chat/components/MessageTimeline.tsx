@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
-import { motion, useReducedMotion } from "motion/react";
+import { m, useReducedMotion } from "motion/react";
 import Copy from "lucide-react/dist/esm/icons/copy";
 import Check from "lucide-react/dist/esm/icons/check";
 import Brain from "lucide-react/dist/esm/icons/brain";
@@ -10,7 +10,7 @@ import type { Message } from "@/lib/ipc";
 import type { SessionState } from "../store";
 import { parseUsage } from "../usage";
 import { cx } from "@/utils/cx";
-import { SOFT_EASE } from "@/components/application/agent-log/agent-log";
+import { SOFT_EASE } from "@/components/application/agent-log/agent-log-motion";
 import { StepRow, type TaskListChip, type TaskListStep } from "@/components/application/task-list/task-list";
 import { getFileTreeIconSvg } from "@/features/files/fileIcons";
 import { AgentThinking } from "@/components/application/agent-thinking/agent-thinking";
@@ -62,7 +62,8 @@ function buildAnchorRows(rows: TimelineRow[]): AnchorRow[] {
 /** Classify a tool-call label (tool name or shell command) into a type chip. */
 function toolTypeKey(text: string): string {
   const tokens = text.toLowerCase().split(/[^a-z_]+/).filter(Boolean);
-  const has = (...names: string[]) => tokens.some((tok) => names.includes(tok));
+  const tokenSet = new Set(tokens);
+  const has = (...names: string[]) => names.some((name) => tokenSet.has(name));
   if (has("web_search", "websearch", "web", "fetch", "browse")) return "toolTypeWeb";
   if (has("bash", "sh", "shell", "zsh", "terminal", "run_command")) return "toolTypeShell";
   if (has("read", "cat", "view", "read_file", "open_file")) return "toolTypeRead";
@@ -245,19 +246,19 @@ function markToolKeys(seen: Set<string>, processId: number, items: ProcessItem[]
 }
 
 type ProcessSection =
-  | { type: "thinking"; text: string; live?: boolean }
-  | { type: "tools"; calls: { text: string; path: string | null; index: number }[] };
+  | { type: "thinking"; text: string; live?: boolean; firstIndex: number }
+  | { type: "tools"; calls: { text: string; path: string | null; index: number }[]; firstIndex: number };
 
 function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
   const sections: ProcessSection[] = [];
   items.forEach((item, index) => {
     if (item.type === "thinking") {
-      sections.push({ type: "thinking", text: item.text, live: item.live });
+      sections.push({ type: "thinking", text: item.text, live: item.live, firstIndex: index });
     } else {
       const last = sections[sections.length - 1];
       const call = { text: item.text, path: item.path ?? null, index };
       if (last?.type === "tools") last.calls.push(call);
-      else sections.push({ type: "tools", calls: [call] });
+      else sections.push({ type: "tools", calls: [call], firstIndex: index });
     }
   });
   return sections;
@@ -293,7 +294,7 @@ const TimelineRowView = memo(function TimelineRowView({
   workspacePath,
   turnLive,
   autoExpand,
-  seenRef,
+  seenTools,
 }: {
   row: TimelineRow;
   workspacePath: string;
@@ -302,7 +303,7 @@ const TimelineRowView = memo(function TimelineRowView({
   /** True on the timeline's last process row: it rides open until a newer
    * one appears, and stays open once the turn settles. */
   autoExpand: boolean;
-  seenRef: { current: Set<string> };
+  seenTools: Set<string>;
 }) {
   // Every process run — thinking, tools, or both — folds into the same
   // collapsed summary line ("思考 N 次 工具调用 M 次 >"); expanding shows
@@ -314,7 +315,7 @@ const TimelineRowView = memo(function TimelineRowView({
         autoExpand={autoExpand}
         turnLive={turnLive}
         processId={row.firstSeq}
-        seenRef={seenRef}
+        seenTools={seenTools}
       />
     );
   }
@@ -441,7 +442,7 @@ function ThinkingSurface({
 /** A run of middle steps (thinking + tool calls) between chat bubbles: one
  * collapsed summary line ("思考 N 次 工具调用 M 次 >").
  * Expanding shows every step in order — thinking as railed sections, tool
- * sub-runs as tree rows. The wrapper stays mounted and collapses by height so
+ * sub-runs as tree rows. The wrapper stays mounted and collapses by transform so
  * AnimatePresence cannot swallow each StepRow's blur-in; historical bodies
  * unmount while collapsed so the virtualizer does not keep every SVG tree. */
 const ProcessDisclosure = memo(function ProcessDisclosure({
@@ -449,7 +450,7 @@ const ProcessDisclosure = memo(function ProcessDisclosure({
   autoExpand = false,
   turnLive = false,
   processId,
-  seenRef,
+  seenTools,
 }: {
   items: ProcessItem[];
   autoExpand?: boolean;
@@ -458,40 +459,38 @@ const ProcessDisclosure = memo(function ProcessDisclosure({
    * settles instead. */
   turnLive?: boolean;
   processId: number;
-  seenRef: { current: Set<string> };
+  seenTools: Set<string>;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(autoExpand);
   // Once the user clicks the header, their choice wins over the auto
   // expand/collapse driven by newer rows appearing below.
-  const overriddenRef = useRef(false);
-  const prevAutoRef = useRef(autoExpand);
-  const prevLiveRef = useRef(turnLive);
-  useEffect(() => {
-    const prevAuto = prevAutoRef.current;
-    prevAutoRef.current = autoExpand;
-    const prevLive = prevLiveRef.current;
-    prevLiveRef.current = turnLive;
-    if (autoExpand && autoExpand !== prevAuto) {
+  const [overridden, setOverridden] = useState(false);
+  // React-blessed adjust-during-render: previous prop values live in state,
+  // so a prop change settles in the same commit that observed it — no
+  // one-frame paint of the stale expanded value.
+  const [prev, setPrev] = useState({ auto: autoExpand, live: turnLive });
+  if (prev.auto !== autoExpand || prev.live !== turnLive) {
+    setPrev({ auto: autoExpand, live: turnLive });
+    if (autoExpand && !prev.auto) {
       // Became the latest row: open it and hand control back to automation.
-      overriddenRef.current = false;
+      setOverridden(false);
       setExpanded(true);
-      return;
+    } else if (!autoExpand && !turnLive) {
+      const superseded = prev.auto;
+      const turnJustSettled = prev.live;
+      if ((superseded || turnJustSettled) && !overridden) {
+        setExpanded(false);
+      }
     }
-    if (autoExpand || turnLive) return;
-    const superseded = autoExpand !== prevAuto;
-    const turnJustSettled = prevLive && !turnLive;
-    if ((superseded || turnJustSettled) && !overriddenRef.current) {
-      setExpanded(false);
-    }
-  }, [autoExpand, turnLive]);
+  }
   const reduceMotion = useReducedMotion() ?? false;
   // Mark after paint, not at animation complete: a virtualizer remount
   // mid-entrance must skip the replay. New keys still play on this first
   // paint because the set is read before this effect runs.
   useLayoutEffect(() => {
-    markToolKeys(seenRef.current, processId, items);
-  }, [items, processId, seenRef]);
+    markToolKeys(seenTools, processId, items);
+  }, [items, processId, seenTools]);
   const thinkingCount = items.filter((item) => item.type === "thinking").length;
   const toolCount = items.length - thinkingCount;
   // A lone thinking block skips the "思考 1 次" summary: the header is the
@@ -515,7 +514,7 @@ const ProcessDisclosure = memo(function ProcessDisclosure({
         type="button"
         aria-expanded={expanded}
         onClick={() => {
-          overriddenRef.current = true;
+          setOverridden(true);
           setExpanded((v) => !v);
         }}
         className="flex w-full cursor-pointer flex-col text-left"
@@ -529,36 +528,37 @@ const ProcessDisclosure = memo(function ProcessDisclosure({
           />
         </span>
       </button>
-      {/* Height-animate in place rather than through AnimatePresence: a presence
+      {/* Scale-animate in place rather than through AnimatePresence: a presence
           context with initial={false} silently cancels each StepRow's blur-in.
           initial={false} here only pins THIS element's first paint, so a
           virtualized remount of an already-open row does not flash shut. */}
-      <motion.div
+      <m.div
         initial={false}
-        animate={{ height: expanded ? "auto" : 0, opacity: expanded ? 1 : 0 }}
+        animate={{ scaleY: expanded ? 1 : 0, opacity: expanded ? 1 : 0 }}
         transition={
           reduceMotion
             ? { duration: 0 }
             : {
-                height: { duration: 0.3, ease: SOFT_EASE },
+                scaleY: { duration: 0.3, ease: SOFT_EASE },
                 opacity: { duration: 0.22, ease: "easeOut" },
               }
         }
-        className="overflow-hidden"
+        style={{ transformOrigin: "top" }}
+        className={cx("overflow-hidden", !expanded && "h-0")}
         aria-hidden={!expanded}
       >
         {showBody ? (
           <div className="mt-2 flex flex-col gap-3">
-            {sections.map((section, i) =>
+            {sections.map((section) =>
               section.type === "thinking" ? (
-                <ThinkingSurface key={i} text={section.text} title={singleThinking ? undefined : t("chat.thinkingProcess")} live={section.live} />
+                <ThinkingSurface key={section.firstIndex} text={section.text} title={singleThinking ? undefined : t("chat.thinkingProcess")} live={section.live} />
               ) : (
-                <ul key={i} className="ml-2 flex flex-col">
+                <ul key={section.firstIndex} className="ml-2 flex flex-col">
                   {section.calls.map((call, j) => {
                     const play =
                       expanded &&
                       !reduceMotion &&
-                      !seenRef.current.has(toolEntranceKey(processId, call.index));
+                      !seenTools.has(toolEntranceKey(processId, call.index));
                     return (
                       <FrozenStepRow
                         key={call.index}
@@ -580,7 +580,7 @@ const ProcessDisclosure = memo(function ProcessDisclosure({
             )}
           </div>
         ) : null}
-      </motion.div>
+      </m.div>
     </div>
   );
 });
@@ -645,11 +645,11 @@ export const MessageTimeline = memo(function MessageTimeline({
   // not replay height 0→auto. Do not lock an empty set — loading failure
   // and load-earlier both flip `session.loading`, and an empty new chat
   // must still animate the first live tools.
-  const seenToolRef = useRef<Set<string>>(new Set());
-  const primedRef = useRef(false);
-  if (!primedRef.current && rows.length > 0) {
-    for (const key of collectToolKeys(rows)) seenToolRef.current.add(key);
-    primedRef.current = true;
+  const [seenTools] = useState(() => new Set<string>());
+  const [primed, setPrimed] = useState(false);
+  if (!primed && rows.length > 0) {
+    for (const key of collectToolKeys(rows)) seenTools.add(key);
+    setPrimed(true);
   }
   // Key of the last process row — the one that stays expanded by default.
   const lastProcessKey = useMemo(() => {
@@ -759,7 +759,9 @@ export const MessageTimeline = memo(function MessageTimeline({
   // client, adapted to the virtualizer: row offsets replace DOM queries) ---
   const [activeAnchorId, setActiveAnchorId] = useState<string | null>(null);
   const anchorsRef = useRef(anchors);
-  anchorsRef.current = anchors;
+  useEffect(() => {
+    anchorsRef.current = anchors;
+  });
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -863,14 +865,16 @@ export const MessageTimeline = memo(function MessageTimeline({
 
   // Top sentinel: load earlier pages, preserving the first visible item.
   // Refs hold the latest rows/handler so the observer effect does not need
-  // to re-subscribe per flush. The render-time writes are the standard
-  // "latest ref" pattern: the only readers are observer/rAF callbacks that
-  // fire after commit, never render itself.
+  // to re-subscribe per flush. The writes run in an effect declared
+  // before the observer effect below, so every commit refreshes the refs
+  // before any observer/rAF callback can read them.
   const loadingRef = useRef(false);
   const itemsRef = useRef(rows);
-  itemsRef.current = rows;
   const onLoadEarlierRef = useRef(onLoadEarlier);
-  onLoadEarlierRef.current = onLoadEarlier;
+  useEffect(() => {
+    itemsRef.current = rows;
+    onLoadEarlierRef.current = onLoadEarlier;
+  });
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -957,7 +961,7 @@ export const MessageTimeline = memo(function MessageTimeline({
                     workspacePath={workspacePath}
                     turnLive={turnLive}
                     autoExpand={rowKey(rows[item.index]) === lastProcessKey}
-                    seenRef={seenToolRef}
+                    seenTools={seenTools}
                   />
                 )}
               </div>

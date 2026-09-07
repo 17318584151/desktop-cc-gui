@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { m } from "motion/react";
 
 /**
  * Max-effort celebration for the effort slider (used by cli-menu):
@@ -244,7 +244,7 @@ function PixelationOverlay() {
   }, []);
 
   return (
-    <motion.div
+    <m.div
       aria-hidden
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -255,7 +255,7 @@ function PixelationOverlay() {
       {/* accent-300 wash bleeding in from the right, under the pixel noise */}
       <div className="absolute inset-0 bg-gradient-to-l from-accent-300/90 via-accent-300/30 to-transparent" />
       <canvas ref={canvasRef} className="absolute inset-0 size-full" />
-    </motion.div>
+    </m.div>
   );
 }
 
@@ -348,7 +348,7 @@ export function FlameOverlay() {
   if (webglFailed) return <PixelationOverlay />;
 
   return (
-    <motion.div
+    <m.div
       aria-hidden
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -361,6 +361,6 @@ export function FlameOverlay() {
       <div className="absolute inset-0 rounded-lg bg-effort-flame-wash" />
       <Starfield />
       <canvas ref={canvasRef} className="absolute inset-0 size-full" />
-    </motion.div>
+    </m.div>
   );
 }

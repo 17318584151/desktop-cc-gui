@@ -1,9 +1,7 @@
-import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import FileImage from "lucide-react/dist/esm/icons/file-image";
 import { ipc } from "@/lib/ipc";
 import { fileName } from "@/features/files/store";
-import { useEscapeClose } from "@/hooks/use-escape-close";
 
 /** Full-screen image preview: backdrop click or Escape closes. */
 export function ImageLightbox({
@@ -15,27 +13,43 @@ export function ImageLightbox({
   name: string;
   onClose: () => void;
 }) {
-  useEscapeClose(true, onClose);
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
-  // Portal to document.body: the timeline's virtual rows are transformed
-  // (translateY), and a transformed ancestor makes `position: fixed` resolve
-  // against it instead of the viewport — the overlay would be trapped inside
-  // the message row.
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
+  // A modal <dialog> renders in the top layer, so no portal is needed to
+  // escape the timeline's transformed virtual rows (a transformed ancestor
+  // traps position: fixed). Escape closes natively (close event); the
+  // mousedown listener keeps the press-anywhere-to-close behavior, including
+  // presses on the image itself. The ref holds the latest handler so the
+  // listener subscribes once instead of per render.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (!dialog.open) dialog.showModal();
+    const close = () => onCloseRef.current();
+    dialog.addEventListener("mousedown", close);
+    dialog.addEventListener("close", close);
+    return () => {
+      dialog.removeEventListener("mousedown", close);
+      dialog.removeEventListener("close", close);
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
       aria-label={name}
-      className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-overlay-backdrop"
-      onMouseDown={onClose}
+      className="fixed inset-0 z-50 flex h-full max-h-none w-full max-w-none cursor-zoom-out items-center justify-center bg-overlay-backdrop"
     >
       <img
         src={src}
         alt={name}
         className="h-full w-full cursor-zoom-out object-contain"
       />
-    </div>,
-    document.body,
+    </dialog>
   );
 }
 

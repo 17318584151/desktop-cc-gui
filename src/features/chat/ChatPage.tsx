@@ -441,17 +441,20 @@ export default function ChatPage() {
       label: w.name,
       defaultOpen: index === 0,
       threadLimit,
-      threads: sorted
-        .filter((s) => s.workspacePath === w.path)
-        .map((s) => ({
-          id: `${s.engine}/${s.sessionId}`,
-          label: s.customTitle || s.title || s.sessionId.slice(0, 8),
-          engine: s.engine,
-          time: relativeTime(s.updatedAt),
-          pinned: s.pinned,
-          streaming: streamingById.get(`${s.engine}/${s.sessionId}`) ?? false,
-          unseen: unseen[`${s.engine}/${s.sessionId}`] ?? false,
-        })),
+      threads: sorted.flatMap((s) => {
+        if (s.workspacePath !== w.path) return [];
+        return [
+          {
+            id: `${s.engine}/${s.sessionId}`,
+            label: s.customTitle || s.title || s.sessionId.slice(0, 8),
+            engine: s.engine,
+            time: relativeTime(s.updatedAt),
+            pinned: s.pinned,
+            streaming: streamingById.get(`${s.engine}/${s.sessionId}`) ?? false,
+            unseen: unseen[`${s.engine}/${s.sessionId}`] ?? false,
+          },
+        ];
+      }),
     }));
   }, [workspaces, sessions, threadLimit, threadStreaming, unseen, i18n.language]);
 

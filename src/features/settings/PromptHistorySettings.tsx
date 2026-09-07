@@ -67,31 +67,28 @@ export function PromptHistoryManager() {
       <SettingsSectionLabel>{t("settings.promptHistoryManage")}</SettingsSectionLabel>
       <SettingsCard>
         <div
-          role="button"
-          tabIndex={0}
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              setOpen((o) => !o);
-            }
-          }}
           className={cx(
             "flex min-h-[52px] w-full cursor-pointer items-center justify-between gap-4 py-2.5 pr-2.5",
             open && entries.length > 0 && "border-b border-separator-border",
           )}
         >
-          <div className="flex min-w-0 items-center gap-1.5">
+          {/* The toggle is its own button so the clear-all action stays a
+              sibling control instead of nesting inside it. */}
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+          >
             {open ? (
               <ChevronDown className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
             ) : (
               <ChevronRight className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
             )}
-            <p className="text-body-regular text-text-primary">
+            <span className="text-body-regular text-text-primary">
               {t("settings.promptHistoryManageTitle", { count: entries.length })}
-            </p>
-          </div>
+            </span>
+          </button>
           {entries.length > 0 && (
             <button
               type="button"

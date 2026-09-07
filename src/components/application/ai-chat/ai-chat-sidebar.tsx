@@ -115,47 +115,52 @@ function ThreadItem({
   const { t } = useTranslation();
   return (
     <div
-      role="button"
-      tabIndex={tabIndex}
-      aria-current={isSelected ? "page" : undefined}
-      onClick={() => id && onSelect?.(id)}
-      onKeyDown={(event) => event.key === "Enter" && id && onSelect?.(id)}
       className={cx(
         "group flex w-full cursor-pointer items-center gap-2.5 rounded-2lg py-[5px] pr-2 pl-9 transition-colors duration-150 ease",
         isSelected ? "bg-background-secondary-hover" : "hover:bg-background-secondary-hover",
       )}
     >
-      {engine && (
-        <EngineIcon
-          engine={engine}
-          size={12}
-          className="size-3 shrink-0 text-foreground-icon-secondary"
-        />
-      )}
-      {streaming ? (
-        <span
-          className="sidebar-thread-status sidebar-thread-status-processing"
-          role="status"
-          aria-label={t("chat.sessionRunning")}
-          title={t("chat.sessionRunning")}
-        />
-      ) : unseen ? (
-        <span
-          className="sidebar-thread-status sidebar-thread-status-unseen"
-          aria-label={t("chat.sessionUnseen")}
-          title={t("chat.sessionUnseen")}
-        />
-      ) : null}
-      <span className="min-w-0 flex-1 truncate text-body-2-medium text-text-secondary">
-        {pinned && (
-          <Pin
-            fill="currentColor"
-            className="mr-1 inline size-3 text-foreground-icon-secondary"
-            aria-hidden
+      {/* The row body is the button; hover actions sit beside it so no
+          control nests inside another. */}
+      <button
+        type="button"
+        tabIndex={tabIndex}
+        aria-current={isSelected ? "page" : undefined}
+        onClick={() => id && onSelect?.(id)}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
+      >
+        {engine && (
+          <EngineIcon
+            engine={engine}
+            size={12}
+            className="size-3 shrink-0 text-foreground-icon-secondary"
           />
         )}
-        {label}
-      </span>
+        {streaming ? (
+          <span
+            className="sidebar-thread-status sidebar-thread-status-processing"
+            role="status"
+            aria-label={t("chat.sessionRunning")}
+            title={t("chat.sessionRunning")}
+          />
+        ) : unseen ? (
+          <span
+            className="sidebar-thread-status sidebar-thread-status-unseen"
+            aria-label={t("chat.sessionUnseen")}
+            title={t("chat.sessionUnseen")}
+          />
+        ) : null}
+        <span className="min-w-0 flex-1 truncate text-body-2-medium text-text-secondary">
+          {pinned && (
+            <Pin
+              fill="currentColor"
+              className="mr-1 inline size-3 text-foreground-icon-secondary"
+              aria-hidden
+            />
+          )}
+          {label}
+        </span>
+      </button>
       {id && onAction && (
         <span className="hidden shrink-0 items-center gap-1.5 group-hover:inline-flex">
           <button
@@ -294,16 +299,6 @@ function RepoHeaderRow({
   const collapseLabel = expanded ? t("chat.collapseWorkspace") : t("chat.expandWorkspace");
   return (
     <div
-      role="button"
-      tabIndex={0}
-      aria-expanded={expanded}
-      onClick={onToggleOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggleOpen();
-        }
-      }}
       className="group flex w-full cursor-pointer items-center gap-2 rounded-2lg p-2 transition-colors duration-150 ease hover:bg-background-secondary-hover"
     >
       <button
@@ -353,9 +348,18 @@ function RepoHeaderRow({
           </span>
         )}
       </button>
-      <span className="truncate text-body-2-medium whitespace-nowrap text-text-secondary">
-        {repo.label}
-      </span>
+      {/* Row body toggles as its own button, keeping the folder/drag handle
+          and hover actions as sibling controls instead of nested ones. */}
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggleOpen}
+        className="flex min-w-0 flex-1 cursor-pointer items-center text-left"
+      >
+        <span className="truncate text-body-2-medium whitespace-nowrap text-text-secondary">
+          {repo.label}
+        </span>
+      </button>
       {hasHoverActions && (
         <span className="ml-auto hidden shrink-0 items-center gap-1.5 group-hover:inline-flex">
           {repo.id && onNewSession && (

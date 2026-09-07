@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState } from "react";
+import type { IDisposable, Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import { ipc } from "@/lib/ipc";
-import { loadXterm } from "./xterm-loader";
+import { loadXterm, type XtermModules } from "./xterm-loader";
 import { TERMINAL_FONT_FAMILY, terminalTheme } from "./appearance";
 import {
   ensureTerminalOutputListener,
@@ -23,119 +24,133 @@ export const TerminalView = memo(function TerminalView({ id, cwd }: { id: string
   const { t } = useTranslation();
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [xterm, setXterm] = useState<XtermModules | null>(null);
+
+  // xterm loads lazily on mount; the module-level promise caches the load,
+  // so this resolves immediately for every tab after the first.
+  useEffect(() => {
+    let cancelled = false;
+    ensureTerminalOutputListener();
+    void loadXterm()
+      .then((modules) => {
+        if (!cancelled) setXterm(modules);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
-    let disposed = false;
-    let teardown: (() => void) | null = null;
+    if (!host || !xterm) return;
+    let resizeTimer: number | undefined;
+    let termRef: Terminal | null = null;
+    let inputDisposable: IDisposable | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let themeObserver: MutationObserver | null = null;
+    try {
+      const { Terminal, FitAddon, WebglAddon } = xterm;
+      const term = new Terminal({
+        fontFamily: TERMINAL_FONT_FAMILY,
+        fontSize: 12,
+        cursorBlink: true,
+        scrollback: 5000,
+        theme: terminalTheme(),
+        // Option-as-meta so word jumps (⌥←/⌥→) reach readline on macOS.
+        macOptionIsMeta: true,
+      });
+      termRef = term;
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(host);
+      try {
+        // GPU renderer; falls back to canvas when WebGL is unavailable.
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        term.loadAddon(webgl);
+      } catch {
+        // Canvas renderer remains active.
+      }
 
-    ensureTerminalOutputListener();
-    void loadXterm()
-      .then(({ Terminal, FitAddon, WebglAddon }) => {
-        if (disposed) return;
-        let resizeTimer: number | undefined;
-        const term = new Terminal({
-          fontFamily: TERMINAL_FONT_FAMILY,
-          fontSize: 12,
-          cursorBlink: true,
-          scrollback: 5000,
-          theme: terminalTheme(),
-          // Option-as-meta so word jumps (⌥←/⌥→) reach readline on macOS.
-          macOptionIsMeta: true,
-        });
-        const fit = new FitAddon();
-        term.loadAddon(fit);
-        term.open(host);
+      const backlog = terminalBacklog(id);
+      if (backlog) term.write(backlog);
+      setTerminalWriter(id, (data) => term.write(data));
+
+      const openSession = () =>
+        ipc
+          .terminalOpen({ id, cwd, cols: term.cols, rows: term.rows })
+          .then(() => {
+            markTerminalOpened(id);
+            setError(null);
+          })
+          .catch((e: unknown) => setError(String(e)));
+
+      const safeFit = () => {
         try {
-          // GPU renderer; falls back to canvas when WebGL is unavailable.
-          const webgl = new WebglAddon();
-          webgl.onContextLoss(() => webgl.dispose());
-          term.loadAddon(webgl);
+          fit.fit();
         } catch {
-          // Canvas renderer remains active.
+          // Zero-size host mid-layout; the next ResizeObserver tick refits.
         }
+      };
+      safeFit();
+      void openSession();
 
-        const backlog = terminalBacklog(id);
-        if (backlog) term.write(backlog);
-        setTerminalWriter(id, (data) => term.write(data));
-
-        const openSession = () =>
-          ipc
-            .terminalOpen({ id, cwd, cols: term.cols, rows: term.rows })
-            .then(() => {
-              markTerminalOpened(id);
-              setError(null);
-            })
-            .catch((e: unknown) => setError(String(e)));
-
-        const safeFit = () => {
-          try {
-            fit.fit();
-          } catch {
-            // Zero-size host mid-layout; the next ResizeObserver tick refits.
-          }
-        };
-        safeFit();
-        void openSession();
-
-        const inputDisposable = term.onData((data) => {
-          const write = () =>
-            ipc.terminalWrite(id, data).catch((e: unknown) => {
-              // Shell exited (exit/Ctrl-D): respawn, then deliver the input.
-              if (String(e).includes("Terminal session not found")) {
-                markTerminalClosed(id);
-                void openSession().then(() =>
-                  ipc.terminalWrite(id, data).catch(() => {}),
-                );
-              }
-            });
-          if (hasTerminalSession(id)) void write();
-          else void openSession().then(write);
-        });
-
-        const resizeObserver = new ResizeObserver(() => {
-          safeFit();
-          // Fit every frame so the canvas tracks the drag; the PTY resize
-          // itself waits for the drag to settle (one IPC per frame stalled
-          // the backend and made resizing feel sticky).
-          clearTimeout(resizeTimer);
-          resizeTimer = window.setTimeout(() => {
-            resizeTimer = undefined;
-            if (hasTerminalSession(id)) {
-              void ipc.terminalResize(id, term.cols, term.rows).catch(() => {});
+      inputDisposable = term.onData((data) => {
+        const write = () =>
+          ipc.terminalWrite(id, data).catch((e: unknown) => {
+            // Shell exited (exit/Ctrl-D): respawn, then deliver the input.
+            if (String(e).includes("Terminal session not found")) {
+              markTerminalClosed(id);
+              void openSession().then(() =>
+                ipc.terminalWrite(id, data).catch(() => {}),
+              );
             }
-          }, 150);
-        });
-        resizeObserver.observe(host);
-
-        // Follow app theme flips (the dark class on <html>).
-        const themeObserver = new MutationObserver(() => {
-          term.options.theme = terminalTheme();
-        });
-        themeObserver.observe(document.documentElement, {
-          attributes: true,
-          attributeFilter: ["class"],
-        });
-
-        teardown = () => {
-          inputDisposable.dispose();
-          resizeObserver.disconnect();
-          clearTimeout(resizeTimer);
-          themeObserver.disconnect();
-          setTerminalWriter(id, null);
-          term.dispose();
-        };
-      })
-      .catch((e: unknown) => {
-        if (!disposed) setError(String(e));
+          });
+        if (hasTerminalSession(id)) void write();
+        else void openSession().then(write);
       });
 
+      resizeObserver = new ResizeObserver(() => {
+        safeFit();
+        // Fit every frame so the canvas tracks the drag; the PTY resize
+        // itself waits for the drag to settle (one IPC per frame stalled
+        // the backend and made resizing feel sticky).
+        clearTimeout(resizeTimer);
+        resizeTimer = window.setTimeout(() => {
+          resizeTimer = undefined;
+          if (hasTerminalSession(id)) {
+            void ipc.terminalResize(id, term.cols, term.rows).catch(() => {});
+          }
+        }, 150);
+      });
+      resizeObserver.observe(host);
+
+      // Follow app theme flips (the dark class on <html>).
+      themeObserver = new MutationObserver(() => {
+        term.options.theme = terminalTheme();
+      });
+      themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    } catch (e: unknown) {
+      setError(String(e));
+    }
+
     return () => {
-      disposed = true;
-      teardown?.();
+      clearTimeout(resizeTimer);
+      inputDisposable?.dispose();
+      resizeObserver?.disconnect();
+      themeObserver?.disconnect();
+      if (termRef) {
+        setTerminalWriter(id, null);
+        termRef.dispose();
+      }
     };
-  }, [id, cwd]);
+  }, [xterm, id, cwd]);
 
   return (
     <div className="relative min-h-0 flex-1 bg-background-full">

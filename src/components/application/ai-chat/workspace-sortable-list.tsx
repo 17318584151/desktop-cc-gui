@@ -76,7 +76,9 @@ function SortableRow<T extends { id?: string }>({
   // Keep the latest callback reachable from the pointer handlers without
   // re-binding window listeners on every render.
   const endDragRef = useRef(endDrag);
-  endDragRef.current = endDrag;
+  useEffect(() => {
+    endDragRef.current = endDrag;
+  });
 
   const dragHandleProps = useMemo<RepoDragChrome["dragHandleProps"]>(() => {
     if (!canReorder) return null;

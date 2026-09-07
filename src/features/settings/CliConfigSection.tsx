@@ -26,14 +26,12 @@ import {
   type RepoDragChrome,
 } from "@/components/application/ai-chat/workspace-sortable-list";
 import { ConfirmDialog } from "@/components/dialogs";
-import {
-  CLI_DISPLAY_NAMES,
-  EngineIcon,
-  inferModelEngine,
-} from "@/components/foundations/icons/engine-icon";
+import { CLI_DISPLAY_NAMES, inferModelEngine } from "@/components/foundations/icons/engine-brands";
+import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { ipc, type CcSwitchStatus, type CliConfig } from "@/lib/ipc";
 import { pickFile } from "@/lib/platform";
 import { cx } from "@/utils/cx";
+import ccSwitchIcon from "@/assets/model-icons/cc-switch.png";
 import {
   PSEUDO_DISABLED,
   PSEUDO_LOCAL,
@@ -76,12 +74,21 @@ type Health =
   | { state: "ok"; ms: number }
   | { state: "fail" };
 
-function Badge({ children }: { children: string }) {
+function Badge({
+  children,
+  tone = "default",
+}: {
+  children: string;
+  /** "warning" = orange, used for the cc-switch origin pill. */
+  tone?: "default" | "warning";
+}) {
   return (
     <span
       className={cx(
         "shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-none",
-        "bg-background-tertiary-default text-text-secondary",
+        tone === "warning"
+          ? "bg-background-tertiary-warning text-text-warning-primary"
+          : "bg-background-tertiary-default text-text-secondary",
       )}
     >
       {children}
@@ -110,24 +117,36 @@ function ChannelAvatar({
   /** Drag-handle wiring (label + pointer handler) from the sortable list. */
   dragHandle?: { label: string; props: RepoDragChrome["dragHandleProps"] };
 }) {
+  const fromCcSwitch =
+    entry != null &&
+    (entry.raw as Record<string, unknown>).source === "cc-switch";
   const brand = entry
     ? (inferModelEngine(entry.model) ?? inferModelEngine(entry.baseUrl))
     : fallbackEngine;
-  return (
-    <span
-      aria-label={dragHandle?.label}
-      title={dragHandle?.label}
-      {...(dragHandle?.props ?? {})}
-      onClick={dragHandle ? (e) => e.stopPropagation() : undefined}
-      className={cx("shrink-0", dragHandle && "cursor-grab touch-none")}>
-      <span className="flex size-9 items-center justify-center rounded-2lg bg-background-tertiary-default text-foreground-icon-primary">
-        {brand ? (
-          <EngineIcon engine={brand} size={16} />
-        ) : (
-          <Globe className="size-4" aria-hidden />
-        )}
-      </span>
+  const avatar = (
+    <span className="flex size-9 items-center justify-center rounded-2lg bg-background-tertiary-default text-foreground-icon-primary">
+      {fromCcSwitch ? (
+        <img src={ccSwitchIcon} alt="" className="size-5" aria-hidden />
+      ) : brand ? (
+        <EngineIcon engine={brand} size={16} />
+      ) : (
+        <Globe className="size-4" aria-hidden />
+      )}
     </span>
+  );
+  // Plain avatar: static span. With a drag handle it becomes a real button —
+  // same reorder-grip pattern as the workspace sidebar.
+  if (!dragHandle) return <span className="shrink-0">{avatar}</span>;
+  return (
+    <button
+      type="button"
+      aria-label={dragHandle.label}
+      title={dragHandle.label}
+      {...(dragHandle.props ?? {})}
+      onClick={(e) => e.stopPropagation()}
+      className="shrink-0 cursor-grab touch-none">
+      {avatar}
+    </button>
   );
 }
 
@@ -175,9 +194,20 @@ function ChannelRow({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={cx(ROW, "cursor-pointer")}
       onClick={() => {
         if (!busy && !current) onToggle(true);
+      }}
+      onKeyDown={(e) => {
+        // Ignore keys from nested controls (switch, edit, …): they handle
+        // their own Enter/Space and must not also activate the row.
+        if (e.target !== e.currentTarget) return;
+        if ((e.key === "Enter" || e.key === " ") && !busy && !current) {
+          e.preventDefault();
+          onToggle(true);
+        }
       }}
     >
       <ChannelAvatar
@@ -197,7 +227,7 @@ function ChannelRow({
       <div className="flex min-w-0 flex-1 flex-col">
         <p className="flex items-center gap-1.5 text-body-regular text-text-primary">
           <span className="truncate">{entry.name}</span>
-          {fromCcSwitch && <Badge>cc-switch</Badge>}
+          {fromCcSwitch && <Badge tone="warning">cc-switch</Badge>}
         </p>
         {subtitle && (
           <p className="truncate text-body-2-regular text-text-secondary">{subtitle}</p>
@@ -318,15 +348,17 @@ export function CliConfigSection() {
   // Mutations go through one funnel: run → tell the chat tree → re-read.
   // Re-reading after each write keeps the UI on the backend's persisted
   // state (map order, current) instead of drifting on optimistic copies.
-  const mutate = useCallback(async (fn: () => Promise<unknown>) => {
+  const mutate = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
     setBusy(true);
     try {
-      await fn();
+      const result = await fn();
       notifyCliConfigChanged();
       setConfig(await ipc.getCliConfig());
       setError(null);
+      return result;
     } catch (e) {
       setError(String(e));
+      return undefined;
     } finally {
       setBusy(false);
     }
@@ -379,35 +411,36 @@ export function CliConfigSection() {
     }
   };
 
-  /** Shared import→notice funnel. `target` is an engine id or "all" (banner). */
-  const syncCcSwitch = (target: string) =>
-    mutate(async () => {
-      const r = await ipc.importCcSwitch(target);
-      setCcStatus((s) => (s ? { ...s, changed: false } : s));
-      setNotice(
-        t("settings.cliSynced", {
-          added: r.added,
-          updated: r.updated,
-          removed: r.removed,
-        }),
-      );
-    });
+  /** Shared import→notice funnel. `target` is an engine id or "all" (banner).
+   *  setState happens in the handler, not inside the `mutate` callback (React
+   *  treats updater-style callbacks as pure and may invoke them twice). */
+  const syncCcSwitch = async (target: string) => {
+    const r = await mutate(() => ipc.importCcSwitch(target));
+    if (!r) return;
+    setCcStatus((s) => (s ? { ...s, changed: false } : s));
+    setNotice(
+      t("settings.cliSynced", {
+        added: r.added,
+        updated: r.updated,
+        removed: r.removed,
+      }),
+    );
+  };
 
   const importCcSwitchFile = async () => {
     const path = await pickFile(t("settings.cliImportFile"), [
       { name: "cc-switch", extensions: ["db", "json"] },
     ]);
     if (!path) return;
-    void mutate(async () => {
-      const r = await ipc.importCcSwitchFromPath(path, engine);
-      setNotice(
-        t("settings.cliSynced", {
-          added: r.added,
-          updated: r.updated,
-          removed: r.removed,
-        }),
-      );
-    });
+    const r = await mutate(() => ipc.importCcSwitchFromPath(path, engine));
+    if (!r) return;
+    setNotice(
+      t("settings.cliSynced", {
+        added: r.added,
+        updated: r.updated,
+        removed: r.removed,
+      }),
+    );
   };
 
   const dismissCcSwitch = () => {
@@ -492,8 +525,17 @@ export function CliConfigSection() {
               {/* Built-in fallback row: the CLI's own config file. Radio-style:
                   it can be turned on, never off. */}
               <div
+                role="button"
+                tabIndex={0}
                 className={cx(ROW, "cursor-pointer")}
                 onClick={() => !busy && activate(PSEUDO_LOCAL)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if ((e.key === "Enter" || e.key === " ") && !busy) {
+                    e.preventDefault();
+                    activate(PSEUDO_LOCAL);
+                  }
+                }}
               >
                 <ChannelAvatar fallbackEngine={engine} />
                 <div className="flex min-w-0 flex-1 flex-col">

@@ -66,6 +66,11 @@ const Row = memo(function Row({
       role="option"
       aria-selected={active}
       data-active={active || undefined}
+      // Keyboard focus stays in the composer by design (keys are forwarded
+      // through menuRef); tabIndex={-1} keeps the option programmatically
+      // focusable without joining the tab order, and Enter/Space mirror the
+      // click for any AT that does move focus here.
+      tabIndex={-1}
       // Keep the contentEditable selection: the composer closes the menu when
       // the caret leaves the trigger, and focus must not move mid-click.
       onMouseDown={(e) => e.preventDefault()}
@@ -73,6 +78,12 @@ const Row = memo(function Row({
         if (!active) onHover(index);
       }}
       onClick={() => onSelect(entry)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(entry);
+        }
+      }}
       className={cx(MENU_ITEM, active && MENU_ITEM_ACTIVE)}
     >
       <span
@@ -119,8 +130,13 @@ export function FileMentionMenu({
   );
 
   const [activeIndex, setActiveIndex] = useState(0);
-  // New query/root → highlight the top match again.
-  useEffect(() => setActiveIndex(0), [query, root]);
+  // New query/root → highlight the top match again: render-time adjustment
+  // via prev-prop comparison instead of a cascading effect.
+  const [prevScope, setPrevScope] = useState({ query, root });
+  if (prevScope.query !== query || prevScope.root !== root) {
+    setPrevScope({ query, root });
+    setActiveIndex(0);
+  }
   const active = items.length > 0 ? Math.min(activeIndex, items.length - 1) : -1;
 
   // Keep the highlighted row in view while arrowing.

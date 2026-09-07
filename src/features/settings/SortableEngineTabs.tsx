@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import { Reorder } from "motion/react";
 import { PillTab, PillTabList } from "@/components/base/tabs/pill-tab";
-import { CLI_DISPLAY_NAMES, EngineIcon } from "@/components/foundations/icons/engine-icon";
+import { CLI_DISPLAY_NAMES } from "@/components/foundations/icons/engine-brands";
+import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { cx } from "@/utils/cx";
 import { readEngineOrder, writeEngineOrder, type EngineId } from "./providers";
 

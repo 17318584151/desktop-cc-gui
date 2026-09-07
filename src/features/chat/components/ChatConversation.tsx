@@ -429,15 +429,18 @@ export const ChatConversation = memo(function ChatConversation({
   // state stays reserved for CLIs whose binary is not installed.
   const cliOptions = useMemo(
     () =>
-      engines
-        .filter((e) => e.enabled)
-        .map((e) => ({
-          id: e.id,
-          label: t(`settings.engines.${e.id}`),
-          available: e.available,
-          disabled: !e.available,
-          disabledReason: t("chat.engineNotInstalled"),
-        })),
+      engines.flatMap((e) => {
+        if (!e.enabled) return [];
+        return [
+          {
+            id: e.id,
+            label: t(`settings.engines.${e.id}`),
+            available: e.available,
+            disabled: !e.available,
+            disabledReason: t("chat.engineNotInstalled"),
+          },
+        ];
+      }),
     [engines, t],
   );
   // Every CLI is switched off in settings: swap the picker for a placeholder

@@ -1,0 +1,7 @@
+# Supply-chain hardening (react-doctor/require-pnpm-hardening).
+# Delay installs of package versions published less than 7 days ago so
+# malicious releases can be caught and unpublished before we pick them up.
+minimumReleaseAge: 10080
+# Refuse resolutions whose trust signals (provenance/signatures) weaken
+# between updates.
+trustPolicy: no-downgrade

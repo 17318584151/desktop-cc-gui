@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ComponentPropsWithoutRef,
   PointerEvent as ReactPointerEvent,
@@ -106,7 +106,9 @@ export function useResizableComposer({
 } {
   const [size, setSize] = useState<SizeState>(readInitialSize);
   const sizeRef = useRef<SizeState>(size);
-  sizeRef.current = size;
+  useEffect(() => {
+    sizeRef.current = size;
+  }, [size]);
 
   const [isResizing, setIsResizing] = useState(false);
   const startRef = useRef<{
@@ -434,10 +436,7 @@ export function useResizableComposer({
     };
   }, [clearPendingExpandResizeUnlock, clearPendingTransition, editableRef]);
 
-  const manualHeightPx = useMemo(
-    () => (size.isCollapsed ? null : size.wrapperHeightPx),
-    [size.isCollapsed, size.wrapperHeightPx],
-  );
+  const manualHeightPx = size.isCollapsed ? null : size.wrapperHeightPx;
 
   return {
     isResizing,
