@@ -1,6 +1,5 @@
 use super::{images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
 use serde_json::Value;
-use std::collections::HashMap;
 use tokio::process::Command;
 
 /// pi and omp are the same CLI protocol (omp is a fork of pi): identical
@@ -36,12 +35,7 @@ impl Engine for PiFamilyEngine {
         true
     }
 
-    fn build_command(
-        &self,
-        req: &SendRequest,
-        _env: &HashMap<String, String>,
-        bin: &str,
-    ) -> Result<BuiltCommand, String> {
+    fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
         cmd.arg("--print");
         cmd.arg("--mode");

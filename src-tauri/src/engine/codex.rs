@@ -1,6 +1,5 @@
 use super::{images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
 use serde_json::Value;
-use std::collections::HashMap;
 use tokio::process::Command;
 
 /// Codex one-shot: `codex exec --json` (verified against codex CLI live).
@@ -17,12 +16,7 @@ impl Engine for CodexEngine {
         true // -i/--image FILE
     }
 
-    fn build_command(
-        &self,
-        req: &SendRequest,
-        _env: &HashMap<String, String>,
-        bin: &str,
-    ) -> Result<BuiltCommand, String> {
+    fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
         cmd.arg("exec");
         let mut preassigned = None;

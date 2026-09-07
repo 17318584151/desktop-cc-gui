@@ -76,6 +76,7 @@ export const ChatConversation = memo(function ChatConversation({
   // only that subtree — never the composer, queue bar, or status bar here.
   const streaming = useChatStore((s) => (key ? (s.bySession[key]?.streaming ?? false) : false));
   const sessionError = useChatStore((s) => (key ? (s.bySession[key]?.error ?? null) : null));
+  const dismissSessionError = useChatStore((s) => s.dismissSessionError);
   const queue = useChatStore((s) => (key ? (s.bySession[key]?.queue ?? EMPTY_QUEUE) : EMPTY_QUEUE));
   const sessionUsage = useChatStore((s) => (key ? s.bySession[key]?.usage : undefined));
   const hasSession = useChatStore((s) => key in s.bySession);
@@ -250,8 +251,19 @@ export const ChatConversation = memo(function ChatConversation({
       {active && hasSession ? (
         <>
           {sessionError && (
-            <div className="mx-4 mt-3 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary">
-              {sessionError}
+            <div
+              role="alert"
+              className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary"
+            >
+              <span className="min-w-0 flex-1 break-all">{sessionError}</span>
+              <button
+                type="button"
+                aria-label={t("common.close")}
+                onClick={() => dismissSessionError(key)}
+                className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
+              >
+                ×
+              </button>
             </div>
           )}
           <SessionTimeline

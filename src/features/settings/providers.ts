@@ -39,7 +39,7 @@ export const isPseudoProvider = (id: string): id is PseudoProviderId =>
 
 const asString = (v: unknown): string => (typeof v === "string" ? v : "");
 
-/** Per-engine model env var, mirroring the backend env_mapping() table. */
+/** Per-engine model env var, mirroring the backend provider_files::env_mapping() table. */
 const ENV_MODEL_KEY: Partial<Record<EngineId, string>> = {
   claude: "ANTHROPIC_MODEL",
   kimi: "KIMI_MODEL_NAME",
@@ -68,7 +68,7 @@ export function providerModel(engine: EngineId, raw: unknown): string {
 
 /**
  * Per-engine env keys backing the flat baseUrl/apiKey/model fields, mirroring
- * the backend env_mapping() table. Legacy imported channels (ccswitch shape)
+ * the backend provider_files::env_mapping() table. Legacy imported channels (ccswitch shape)
  * carry these inside settingsConfig.env/env, and the backend lets raw env win
  * over flat fields — so an edit must strip them or the new values are dead.
  */

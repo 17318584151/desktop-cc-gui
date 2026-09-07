@@ -21,6 +21,14 @@ import { ChatSidebarFrame } from "./ChatSidebarFrame";
 import { ChatSidePanel } from "./ChatSidePanel";
 import { ChatCenterPane } from "./ChatCenterPane";
 
+// Windows keeps its native titlebar (titleBarStyle Overlay is macOS-only), so
+// the caption row sits directly on the app background with no visual break —
+// draw a hairline under it. Web mode has browser chrome; skip there.
+const NEEDS_TITLEBAR_HAIRLINE =
+  !isWeb &&
+  typeof navigator !== "undefined" &&
+  /windows/i.test(navigator.userAgent);
+
 export default function ChatPage() {
   const { t } = useTranslation();
   // Store actions/slices are stable or low-frequency references. The
@@ -131,6 +139,7 @@ export default function ChatPage() {
     <div
       className={cx(
         "relative flex h-dvh w-full overflow-hidden bg-background-full",
+        NEEDS_TITLEBAR_HAIRLINE && "border-t border-separator-border",
         dragging && "cursor-col-resize select-none",
       )}
     >

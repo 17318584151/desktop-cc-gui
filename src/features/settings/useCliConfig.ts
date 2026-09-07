@@ -118,7 +118,7 @@ export function useCliConfig(): CliConfigState {
   }, []);
 
   const section = config?.[engine];
-  // Unset current behaves as 官方配置 (resolve_provider_env: empty → no injection).
+  // Unset current behaves as 官方配置 (set_current_provider restores the CLI's own config file).
   const currentId = section?.current || PSEUDO_LOCAL;
   const enabled = currentId !== PSEUDO_DISABLED;
   const entries = useMemo(() => providerEntries(engine, section), [engine, section]);

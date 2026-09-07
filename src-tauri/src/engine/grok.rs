@@ -1,6 +1,5 @@
 use super::{images, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
 use serde_json::Value;
-use std::collections::HashMap;
 use tokio::process::Command;
 
 pub struct GrokEngine;
@@ -14,12 +13,7 @@ impl Engine for GrokEngine {
         true
     }
 
-    fn build_command(
-        &self,
-        req: &SendRequest,
-        _env: &HashMap<String, String>,
-        bin: &str,
-    ) -> Result<BuiltCommand, String> {
+    fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
         cmd.arg("--output-format");
         cmd.arg("streaming-json");

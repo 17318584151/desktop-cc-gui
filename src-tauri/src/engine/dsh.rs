@@ -1,5 +1,4 @@
 use super::{safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
-use std::collections::HashMap;
 use tokio::process::Command;
 
 /// DeepSeek Harness (dsh) one-shot: `dsh --profile headless "<task>"`.
@@ -16,12 +15,7 @@ impl Engine for DshEngine {
         false
     }
 
-    fn build_command(
-        &self,
-        req: &SendRequest,
-        _env: &HashMap<String, String>,
-        bin: &str,
-    ) -> Result<BuiltCommand, String> {
+    fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
         cmd.arg("--profile");
         cmd.arg("headless");

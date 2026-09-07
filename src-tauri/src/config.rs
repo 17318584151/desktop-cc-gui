@@ -6,7 +6,7 @@ use std::sync::Mutex;
 pub const LOCAL_PROVIDER_ID: &str = "__local_settings_json__";
 /// Legacy kimi marker from the imported v1 config: same "use the CLI's own
 /// config" semantics, different spelling.
-const LEGACY_LOCAL_CONFIG_TOML_ID: &str = "__local_config_toml__";
+pub(crate) const LEGACY_LOCAL_CONFIG_TOML_ID: &str = "__local_config_toml__";
 pub const DISABLED_PROVIDER_ID: &str = "__disabled__";
 pub const ENGINES: [&str; 7] = ["claude", "kimi", "grok", "codex", "pi", "omp", "dsh"];
 
@@ -97,7 +97,7 @@ pub fn import_legacy_config_once() {
     let mut config = CliConfig::default();
     for engine in ENGINES {
         // Legacy codex providers carry configToml/authJson materialization
-        // state that v1's env-injection model cannot honor; skip them.
+        // state from the pre-channel config model; skipped on import.
         if engine == "codex" {
             continue;
         }
@@ -121,134 +121,18 @@ pub fn import_legacy_config_once() {
     let _ = write_config(&config);
 }
 
-/// Static baseUrl/apiKey/model -> env var mapping per engine.
-pub(crate) fn env_mapping(engine: &str) -> [(&'static str, &'static str); 3] {
-    match engine {
-        "claude" => [
-            ("baseUrl", "ANTHROPIC_BASE_URL"),
-            ("apiKey", "ANTHROPIC_AUTH_TOKEN"),
-            ("model", "ANTHROPIC_MODEL"),
-        ],
-        "kimi" => [
-            ("baseUrl", "KIMI_BASE_URL"),
-            ("apiKey", "KIMI_API_KEY"),
-            ("model", "KIMI_MODEL_NAME"),
-        ],
-        "grok" => [
-            ("baseUrl", "GROK_BASE_URL"),
-            ("apiKey", "GROK_API_KEY"),
-            ("model", "GROK_MODEL"),
-        ],
-        // codex reads OpenAI-compatible env for its default provider.
-        "codex" => [
-            ("baseUrl", "OPENAI_BASE_URL"),
-            ("apiKey", "OPENAI_API_KEY"),
-            ("model", ""),
-        ],
-        // pi/omp keep providers in native models.json; dsh keys live in
-        // $DSH_HOME. No env mapping — providers tab is display-only for them.
-        "pi" | "omp" | "dsh" => [("baseUrl", ""), ("apiKey", ""), ("model", "")],
-        _ => [("baseUrl", ""), ("apiKey", ""), ("model", "")],
-    }
-}
-
-/// Loader/hook env keys a stored provider config must never smuggle into a
-/// spawned engine: they hand code execution to whoever wrote the config file.
-/// Prefix families (DYLD_/LD_) are matched by prefix, the rest exactly;
-/// comparison is case-insensitive because launchd/cmd env casing varies.
-fn is_blocked_env_key(key: &str) -> bool {
-    let upper = key.to_ascii_uppercase();
-    if upper.starts_with("DYLD_") || upper.starts_with("LD_") {
-        return true;
-    }
-    matches!(
-        upper.as_str(),
-        "NODE_OPTIONS"
-            | "NODE_REPL_EXTERNAL_MODULE"
-            | "BASH_ENV"
-            | "ENV"
-            | "SHELLOPTS"
-            | "PYTHONSTARTUP"
-            | "PYTHONINSPECT"
-            | "RUBYOPT"
-            | "PERL5OPT"
-            | "GIT_SSH_COMMAND"
-            | "SSH_ASKPASS"
-            | "PROMPT_COMMAND"
-            | "IFS"
-    )
-}
-
-fn merge_env_object(target: &mut HashMap<String, String>, value: Option<&Value>) {
-    let Some(map) = value.and_then(Value::as_object) else {
-        return;
-    };
-    for (key, val) in map {
-        if is_blocked_env_key(key) {
-            eprintln!("[config] refusing to inject blocked env key: {key}");
-            continue;
-        }
-        let scalar = match val {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            _ => continue,
-        };
-        if !scalar.trim().is_empty() {
-            target.insert(key.clone(), scalar);
-        }
-    }
-}
-
-/// Resolve the environment variables to inject for the current provider of an
-/// engine. `__local_settings_json__` / empty current => no injection.
-/// `__disabled__` => Err (engine must refuse to send).
-pub fn resolve_provider_env(engine: &str) -> Result<HashMap<String, String>, String> {
+/// Launch gate: the 停用 pseudo-provider refuses sends. The active channel
+/// itself lives in each CLI's native config file — `provider_files::apply`
+/// writes it on every switch, so there is nothing to resolve at spawn time.
+pub fn ensure_engine_enabled(engine: &str) -> Result<(), String> {
     let config = read_config()?;
     let section = config
         .section(engine)
         .ok_or_else(|| format!("unknown engine: {engine}"))?;
-    let current = section.current.as_deref().unwrap_or("").trim();
-    // Claude Code runs entirely on the CLI's own configuration
-    // (~/.claude/settings.json): the app's provider channels are never
-    // injected. Only the disabled pseudo-provider still gates launches.
-    if engine == "claude" {
-        return if current == DISABLED_PROVIDER_ID {
-            Err(format!("engine {engine} is disabled"))
-        } else {
-            Ok(HashMap::new())
-        };
-    }
-    if current.is_empty() || current == LOCAL_PROVIDER_ID || current == LEGACY_LOCAL_CONFIG_TOML_ID {
-        return Ok(HashMap::new());
-    }
-    if current == DISABLED_PROVIDER_ID {
+    if section.current.as_deref() == Some(DISABLED_PROVIDER_ID) {
         return Err(format!("engine {engine} is disabled"));
     }
-    let provider = section
-        .providers
-        .get(current)
-        .ok_or_else(|| format!("provider {current} not found for {engine}"))?;
-
-    let mut env = HashMap::new();
-    // Raw env escape hatch: settingsConfig.env (claude legacy shape) then env.
-    merge_env_object(
-        &mut env,
-        provider.get("settingsConfig").and_then(|s| s.get("env")),
-    );
-    merge_env_object(&mut env, provider.get("env"));
-    // Convention fields mapped via the static table; raw env wins.
-    for (field, var) in env_mapping(engine) {
-        if var.is_empty() || env.contains_key(var) {
-            continue;
-        }
-        if let Some(value) = provider.get(field).and_then(Value::as_str) {
-            if !value.trim().is_empty() {
-                env.insert(var.to_string(), value.to_string());
-            }
-        }
-    }
-    Ok(env)
+    Ok(())
 }
 
 // ==================== Commands ====================
@@ -283,6 +167,21 @@ fn mutate_section(
     mutate_section_unlocked(engine, mutate)
 }
 
+/// Re-apply the active channel to the CLI's native config after its stored
+/// value changed (edit/save on the current channel, delete of the current
+/// channel, enable-switch restore).
+fn apply_if_current(engine: &str, id: &str) -> Result<(), String> {
+    let config = read_config()?;
+    let Some(section) = config.section(engine) else {
+        return Ok(());
+    };
+    let current = section.current.as_deref().unwrap_or("");
+    if current == id {
+        crate::provider_files::apply(engine, id, section.providers.get(id))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn upsert_provider(
     store: tauri::State<'_, ConfigStore>,
@@ -291,9 +190,10 @@ pub fn upsert_provider(
     json: Value,
 ) -> Result<(), String> {
     mutate_section(&store, &engine, |section| {
-        section.providers.insert(id, json);
+        section.providers.insert(id.clone(), json);
         Ok(())
-    })
+    })?;
+    apply_if_current(&engine, &id)
 }
 
 #[tauri::command]
@@ -302,13 +202,21 @@ pub fn delete_provider(
     engine: String,
     id: String,
 ) -> Result<(), String> {
+    let mut deleted_current = false;
     mutate_section(&store, &engine, |section| {
         section.providers.remove(&id);
         if section.current.as_deref() == Some(id.as_str()) {
             section.current = None;
+            deleted_current = true;
         }
         Ok(())
-    })
+    })?;
+    if deleted_current {
+        // Deleting the active channel falls back to 官方配置: restore the
+        // CLI's own config file.
+        crate::provider_files::apply(&engine, LOCAL_PROVIDER_ID, None)?;
+    }
+    Ok(())
 }
 
 /// Enable-switch semantics: disabling remembers the current provider in
@@ -321,6 +229,7 @@ pub fn set_engine_enabled(
     engine: String,
     enabled: bool,
 ) -> Result<(), String> {
+    let mut restored: Option<(String, Option<Value>)> = None;
     mutate_section(&store, &engine, |section| {
         if enabled {
             if section.current.as_deref() == Some(DISABLED_PROVIDER_ID) {
@@ -328,14 +237,22 @@ pub fn set_engine_enabled(
                     .disabled_from
                     .take()
                     .filter(|id| id != DISABLED_PROVIDER_ID && section.providers.contains_key(id));
-                section.current = Some(restore.unwrap_or_else(|| LOCAL_PROVIDER_ID.to_string()));
+                let id = restore.unwrap_or_else(|| LOCAL_PROVIDER_ID.to_string());
+                restored = Some((id.clone(), section.providers.get(&id).cloned()));
+                section.current = Some(id);
             }
         } else if section.current.as_deref() != Some(DISABLED_PROVIDER_ID) {
             section.disabled_from = section.current.clone();
             section.current = Some(DISABLED_PROVIDER_ID.to_string());
         }
         Ok(())
-    })
+    })?;
+    // Re-enabling onto a real channel re-materializes it into the CLI's
+    // config file; disabling touches no files (gate only).
+    if let Some((id, provider)) = restored {
+        crate::provider_files::apply(&engine, &id, provider.as_ref())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -344,14 +261,26 @@ pub fn set_current_provider(
     engine: String,
     id: String,
 ) -> Result<(), String> {
-    mutate_section(&store, &engine, |section| {
+    let _guard = store.0.lock().map_err(|e| e.to_string())?;
+    let provider = {
+        let config = read_config()?;
+        let section = config
+            .section(&engine)
+            .ok_or_else(|| format!("unknown engine: {engine}"))?;
         if id != LOCAL_PROVIDER_ID
             && id != DISABLED_PROVIDER_ID
+            && id != LEGACY_LOCAL_CONFIG_TOML_ID
             && !section.providers.contains_key(&id)
         {
             return Err(format!("provider {id} not found for {engine}"));
         }
-        section.current = Some(id);
+        section.providers.get(&id).cloned()
+    };
+    // Write the CLI's native config first: a file error leaves our store
+    // untouched, so the UI never shows a channel the CLI isn't running on.
+    crate::provider_files::apply(&engine, &id, provider.as_ref())?;
+    mutate_section_unlocked(&engine, |section| {
+        section.current = Some(id.clone());
         Ok(())
     })
 }

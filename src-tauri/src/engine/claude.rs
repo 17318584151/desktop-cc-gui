@@ -1,6 +1,5 @@
 use super::{images, push_session_id, BuiltCommand, Engine, EngineEvent, SendRequest};
 use serde_json::Value;
-use std::collections::HashMap;
 use tokio::process::Command;
 
 pub struct ClaudeEngine;
@@ -14,12 +13,7 @@ impl Engine for ClaudeEngine {
         true
     }
 
-    fn build_command(
-        &self,
-        req: &SendRequest,
-        _env: &HashMap<String, String>,
-        bin: &str,
-    ) -> Result<BuiltCommand, String> {
+    fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
         cmd.arg("-p");
         cmd.arg("--input-format");

@@ -146,10 +146,12 @@ export function matchMentionEntries(
   query: string,
   limit = MENTION_MENU_LIMIT,
 ): MentionEntry[] {
-  let q = query.toLowerCase();
+  // Normalize separators so Windows absolute queries (`@C:\Users\me\proj\src`)
+  // strip the root the same way POSIX ones do; entry keys are `/`-joined.
+  let q = query.replace(/\\/g, "/").toLowerCase();
   if (!q) return entries.slice(0, limit);
-  if (q.startsWith("/")) {
-    const rootKey = root.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const rootKey = root.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  if (q.startsWith("/") || /^[a-z]:\//.test(q)) {
     if (q === rootKey) return entries.slice(0, limit);
     if (!q.startsWith(rootKey + "/")) return [];
     q = q.slice(rootKey.length + 1);

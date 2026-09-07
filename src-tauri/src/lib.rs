@@ -7,6 +7,7 @@ pub mod files;
 pub mod git;
 pub mod history;
 pub mod paths;
+pub mod provider_files;
 pub mod metrics;
 pub mod open_app;
 pub mod settings;

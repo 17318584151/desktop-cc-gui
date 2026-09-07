@@ -1,8 +1,8 @@
 use super::{parse_top_level_toml_string, run_probe, EngineModel};
 
 /// Codex's active model from its own config: `$CODEX_HOME/config.toml`
-/// (default ~/.codex), the same file `codex exec` reads when no provider
-/// channel injects env.
+/// (default ~/.codex), the same file `codex exec` reads — provider channels are written there on switch
+/// (provider_files), so this reflects the active channel.
 pub(super) fn codex_config_model() -> Option<EngineModel> {
     let home = crate::engine::engine_home(Some("CODEX_HOME"), ".codex");
     let content = std::fs::read_to_string(home.join("config.toml")).ok()?;

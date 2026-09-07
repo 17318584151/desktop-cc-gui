@@ -54,11 +54,11 @@ fn build_app(
         ),
         terminals: ccgui_next_lib::terminal::TerminalRegistry::default(),
         processes: Arc::new(ProcessRegistry::default()),
-        config_store: ConfigStore::default(),
         emitters: ccgui_next_lib::event_sink::BroadcastEmit::new(Arc::new(app.handle().clone())),
         web: ccgui_next_lib::web::WebAccessState::default(),
     };
     app.manage(state);
+    app.manage(ConfigStore::default());
 
     let events: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let captured = Arc::clone(&events);
@@ -275,10 +275,10 @@ fn ipc_send_message_accepts_camel_case_args() {
         ),
         terminals: ccgui_next_lib::terminal::TerminalRegistry::default(),
         processes: Arc::new(ProcessRegistry::default()),
-        config_store: ConfigStore::default(),
         emitters: ccgui_next_lib::event_sink::BroadcastEmit::new(Arc::new(app.handle().clone())),
         web: ccgui_next_lib::web::WebAccessState::default(),
     });
+    app.manage(ConfigStore::default());
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .unwrap();

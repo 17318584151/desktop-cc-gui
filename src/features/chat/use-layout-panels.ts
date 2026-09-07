@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MOBILE_MEDIA } from "@/hooks/use-media-query";
 import { readStoredBool, readStoredNumber, writeStored } from "@/lib/storage";
 
 const PANEL_MIN_WIDTH = 300;
@@ -12,8 +13,6 @@ const PANEL_COLLAPSED_KEY = "ccgui-next.panelCollapsed";
 const SIDEBAR_COLLAPSED_KEY = "ccgui-next.sidebarCollapsed";
 const PANEL_WIDTH_KEY = "ccgui-next.panelWidth";
 const SIDEBAR_WIDTH_KEY = "ccgui-next.sidebarWidth";
-/** Below Tailwind's md breakpoint the sidebar becomes an overlay drawer. */
-const MOBILE_MEDIA = "(max-width: 767px)";
 
 /** Stored width, validated against the live min/max before use. */
 function readStoredWidth(key: string, min: number, max: number, fallback: number): number {

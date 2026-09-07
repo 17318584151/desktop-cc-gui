@@ -12,10 +12,12 @@ import type { ActiveSession, QueuedMessage } from "../store";
 import { ImageLightbox } from "./MessageImages";
 import { USAGE_PART_LABEL_KEYS, usageBreakdown } from "./usage-breakdown";
 
-/** Workspace path → trailing folder name for the status bar. */
-function folderName(path: string): string {
-  const trimmed = path.replace(/\/+$/, "");
-  const idx = trimmed.lastIndexOf("/");
+/** Path → trailing name (folder or file) for status-bar and chip labels.
+ *  Both separators: workspace/attachment paths are native — backslashes on
+ *  Windows — matching fileName in features/files/store. */
+function baseName(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "");
+  const idx = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   return idx < 0 ? trimmed : trimmed.slice(idx + 1);
 }
 
@@ -97,10 +99,10 @@ export function ConversationFooter({
       })),
     [usage, t],
   );
-  const statusFolders = useMemo(() => workspaces.map((w) => folderName(w.path)), [workspaces]);
+  const statusFolders = useMemo(() => workspaces.map((w) => baseName(w.path)), [workspaces]);
   const handleFolderSelect = useCallback(
     (name: string) => {
-      const target = workspaces.find((w) => folderName(w.path) === name);
+      const target = workspaces.find((w) => baseName(w.path) === name);
       if (target) startNewChat(target.path);
     },
     [workspaces, startNewChat],
@@ -137,7 +139,7 @@ export function ConversationFooter({
                         setZoomImage({ src: preview.url, name: preview.name })
                       }
                       className="inline-flex cursor-pointer items-center gap-1.5 rounded-l-full py-0.5 pl-0.5"
-                      aria-label={preview?.name ?? path.split("/").pop()}
+                      aria-label={preview?.name ?? baseName(path)}
                     >
                       {preview && (
                         <img
@@ -147,7 +149,7 @@ export function ConversationFooter({
                         />
                       )}
                       <span className="max-w-48 truncate">
-                        {preview?.name ?? path.split("/").pop()}
+                        {preview?.name ?? baseName(path)}
                       </span>
                     </button>
                     <button
@@ -186,7 +188,7 @@ export function ConversationFooter({
             branches={branches}
             onBranchSelect={onBranchSelect}
             folders={statusFolders}
-            selectedFolder={active ? folderName(active.workspacePath) : undefined}
+            selectedFolder={active ? baseName(active.workspacePath) : undefined}
             onFolderSelect={handleFolderSelect}
             usagePct={usage?.pct}
             contextMax={contextMax}

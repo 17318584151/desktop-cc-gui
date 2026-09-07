@@ -115,6 +115,8 @@ export interface ChatStore {
   requestMention: (path: string) => void;
   clearPendingMention: () => void;
   dismissActionError: () => void;
+  /** Clear a session's turn/load error banner. */
+  dismissSessionError: (key: string) => void;
   loadEarlier: () => Promise<void>;
   send: (prompt: string, images: string[]) => Promise<void>;
   /** Enqueue a message on the active session while a turn streams. */
@@ -640,6 +642,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     dismissActionError: () => {
       set({ actionError: null });
+    },
+    dismissSessionError: (key) => {
+      patchSession(set, key, { error: null });
     },
 
     loadEarlier: async () => {

@@ -4,10 +4,20 @@ import Eye from "lucide-react/dist/esm/icons/eye";
 import EyeOff from "lucide-react/dist/esm/icons/eye-off";
 import Globe from "lucide-react/dist/esm/icons/globe";
 import X from "lucide-react/dist/esm/icons/x";
+import bailianIcon from "@lobehub/icons-static-svg/icons/bailian-color.svg";
+import deepseekIcon from "@lobehub/icons-static-svg/icons/deepseek-color.svg";
+import kimiIcon from "@lobehub/icons-static-svg/icons/kimi.svg";
+import longcatIcon from "@lobehub/icons-static-svg/icons/longcat-color.svg";
+import minimaxIcon from "@lobehub/icons-static-svg/icons/minimax-color.svg";
+import moonshotIcon from "@lobehub/icons-static-svg/icons/moonshot.svg";
+import opencodeIcon from "@lobehub/icons-static-svg/icons/opencode.svg";
+import openrouterIcon from "@lobehub/icons-static-svg/icons/openrouter-color.svg";
+import xaiIcon from "@lobehub/icons-static-svg/icons/xai.svg";
+import xiaomimimoIcon from "@lobehub/icons-static-svg/icons/xiaomimimo.svg";
+import zhipuIcon from "@lobehub/icons-static-svg/icons/zhipu-color.svg";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { ModalShell } from "@/components/dialogs";
-import { inferModelEngine } from "@/components/foundations/icons/engine-brands";
 import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { cx } from "@/utils/cx";
 import type { EngineId } from "./providers";
@@ -27,41 +37,48 @@ interface ProviderPreset {
   name: string;
   baseUrl: string;
   model: string;
+  /** Explicit provider mark; model inference is unsafe for relay presets
+   *  whose default model belongs to a different brand (e.g. OpenCode Go). */
+  iconSrc: string;
+  /** Monochrome SVGs use currentColor, which stays black inside an <img>;
+   *  invert them in dark mode so they remain visible. */
+  iconClassName?: string;
 }
 
 /** Claude-only: the official direct endpoint. Selecting the official card
  *  locks API URL to this value, mirroring the reference's 官方直连 preset. */
 const OFFICIAL_BASE_URL = "https://api.anthropic.com";
+const DARK_MONO_ICON_CLASS = "dark:invert";
 
 /** Third-party relay presets per engine (flat baseUrl/model shape — what the
  *  backend's env_mapping injects). Claude's table is ported from the
  *  reference's CLAUDE_PROVIDER_PRESETS, collapsed to one default model. */
 const PRESETS: Partial<Record<EngineId, ProviderPreset[]>> = {
   claude: [
-    { name: "智谱GLM", baseUrl: "https://open.bigmodel.cn/api/anthropic", model: "glm-5.2" },
-    { name: "Kimi", baseUrl: "https://api.moonshot.cn/anthropic", model: "kimi-k3" },
-    { name: "Kimi Coding", baseUrl: "https://api.kimi.com/coding/", model: "kimi-k3" },
-    { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", model: "deepseek-v4-pro[1m]" },
-    { name: "MiniMax", baseUrl: "https://api.minimaxi.com/anthropic", model: "MiniMax-M2.1" },
-    { name: "Xiaomi MiMo", baseUrl: "https://api.xiaomimimo.com/anthropic", model: "mimo-v2.5-pro" },
-    { name: "Xiaomi MiMo Plan", baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic", model: "mimo-v2.5-pro" },
-    { name: "Bailian", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic", model: "" },
-    { name: "Bailian Coding", baseUrl: "https://coding.dashscope.aliyuncs.com/apps/anthropic", model: "" },
-    { name: "LongCat", baseUrl: "https://api.longcat.chat/anthropic", model: "LongCat-2.0" },
-    { name: "OpenCode Go", baseUrl: "https://opencode.ai/zen/go", model: "deepseek-v4-flash" },
-    { name: "OpenRouter", baseUrl: "https://openrouter.ai/api", model: "anthropic/claude-sonnet-4.5" },
+    { name: "智谱GLM", baseUrl: "https://open.bigmodel.cn/api/anthropic", model: "glm-5.2", iconSrc: zhipuIcon },
+    { name: "Kimi", baseUrl: "https://api.moonshot.cn/anthropic", model: "kimi-k3", iconSrc: kimiIcon, iconClassName: DARK_MONO_ICON_CLASS },
+    { name: "Kimi Coding", baseUrl: "https://api.kimi.com/coding/", model: "kimi-k3", iconSrc: kimiIcon, iconClassName: DARK_MONO_ICON_CLASS },
+    { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", model: "deepseek-v4-pro[1m]", iconSrc: deepseekIcon },
+    { name: "MiniMax", baseUrl: "https://api.minimaxi.com/anthropic", model: "MiniMax-M2.1", iconSrc: minimaxIcon },
+    { name: "Xiaomi MiMo", baseUrl: "https://api.xiaomimimo.com/anthropic", model: "mimo-v2.5-pro", iconSrc: xiaomimimoIcon, iconClassName: DARK_MONO_ICON_CLASS },
+    { name: "Xiaomi MiMo Plan", baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic", model: "mimo-v2.5-pro", iconSrc: xiaomimimoIcon, iconClassName: DARK_MONO_ICON_CLASS },
+    { name: "Bailian", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic", model: "", iconSrc: bailianIcon },
+    { name: "Bailian Coding", baseUrl: "https://coding.dashscope.aliyuncs.com/apps/anthropic", model: "", iconSrc: bailianIcon },
+    { name: "LongCat", baseUrl: "https://api.longcat.chat/anthropic", model: "LongCat-2.0", iconSrc: longcatIcon },
+    { name: "OpenCode Go", baseUrl: "https://opencode.ai/zen/go", model: "deepseek-v4-flash", iconSrc: opencodeIcon, iconClassName: DARK_MONO_ICON_CLASS },
+    { name: "OpenRouter", baseUrl: "https://openrouter.ai/api", model: "anthropic/claude-sonnet-4.5", iconSrc: openrouterIcon },
   ],
   kimi: [
-    { name: "Kimi Coding", baseUrl: "https://api.kimi.com/coding/v1", model: "kimi-for-coding" },
-    { name: "Moonshot", baseUrl: "https://api.moonshot.cn/v1", model: "" },
+    { name: "Kimi Coding", baseUrl: "https://api.kimi.com/coding/v1", model: "kimi-for-coding", iconSrc: kimiIcon, iconClassName: DARK_MONO_ICON_CLASS },
+    { name: "Moonshot", baseUrl: "https://api.moonshot.cn/v1", model: "", iconSrc: moonshotIcon, iconClassName: DARK_MONO_ICON_CLASS },
   ],
-  grok: [{ name: "xAI Official", baseUrl: "https://api.x.ai/v1", model: "grok-build" }],
+  grok: [{ name: "xAI Official", baseUrl: "https://api.x.ai/v1", model: "grok-build", iconSrc: xaiIcon, iconClassName: DARK_MONO_ICON_CLASS }],
   codex: [
-    { name: "Zhipu GLM", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4", model: "glm-5.2" },
-    { name: "Kimi", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3" },
-    { name: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash" },
-    { name: "MiniMax", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" },
-    { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "" },
+    { name: "Zhipu GLM", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4", model: "glm-5.2", iconSrc: zhipuIcon },
+    { name: "Kimi", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k3", iconSrc: kimiIcon, iconClassName: DARK_MONO_ICON_CLASS },
+    { name: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash", iconSrc: deepseekIcon },
+    { name: "MiniMax", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3", iconSrc: minimaxIcon },
+    { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "", iconSrc: openrouterIcon },
   ],
 };
 
@@ -73,14 +90,16 @@ interface ProviderDialogProps {
   onCancel: () => void;
 }
 
-/** Brand mark for a preset button: infer from the endpoint/model, fall back
- *  to a globe (same rule as the channel rows). */
+/** Brand mark for a preset button: explicit per-preset assets keep relay
+ *  providers distinct from the model they happen to serve by default. */
 function PresetIcon({ preset }: { preset: ProviderPreset }) {
-  const brand = inferModelEngine(preset.model) ?? inferModelEngine(preset.baseUrl);
-  return brand ? (
-    <EngineIcon engine={brand} size={14} />
-  ) : (
-    <Globe className="size-3.5" aria-hidden />
+  return (
+    <img
+      src={preset.iconSrc}
+      alt=""
+      className={cx("size-3.5 object-contain", preset.iconClassName)}
+      aria-hidden
+    />
   );
 }
 

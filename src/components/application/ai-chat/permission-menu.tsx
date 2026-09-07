@@ -117,7 +117,9 @@ export function PermissionMenu({
           )}
           aria-hidden
         />
-        <span className="text-body-medium whitespace-nowrap text-text-secondary">
+        {/* Icon-only below md (aria-label on the trigger carries the mode);
+            keeps the composer toolbar within narrow widths. */}
+        <span className="text-body-medium whitespace-nowrap text-text-secondary max-md:hidden">
           {t(`chat.${current.labelKey}`)}
         </span>
       </AriaButton>

@@ -95,9 +95,13 @@ export function WebAccessSection() {
           )}
         </SettingsRow>
         {info && (
-          <SettingsRow label={t("settings.webAccessUrl")} description={t("settings.webAccessScanHint")}>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="max-w-[260px] truncate text-body-regular text-text-secondary" title={info.url}>
+          <div className="flex w-full flex-col gap-2 py-3 pr-3">
+            <p className="text-body-regular text-text-primary">{t("settings.webAccessUrl")}</p>
+            <div className="flex h-8 w-full items-center gap-1 rounded-2lg bg-background-tertiary-default pr-1 pl-2">
+              <span
+                className="min-w-0 flex-1 truncate text-body-regular text-text-primary"
+                title={info.url}
+              >
                 {info.url}
               </span>
               <button
@@ -114,12 +118,13 @@ export function WebAccessSection() {
                 )}
               </button>
             </div>
-          </SettingsRow>
+            <p className="text-body-2-regular text-text-secondary">{t("settings.webAccessScanHint")}</p>
+          </div>
         )}
       </SettingsCard>
       {info && (
         <div className="flex w-full flex-col items-center gap-3 py-2">
-          <div className="rounded-2xl bg-white p-3">
+          <div className="rounded-2xl border border-separator-border bg-white p-3 shadow-sm">
             <QRCodeSVG value={info.url} size={180} />
           </div>
           <p className="max-w-[420px] text-center text-body-2-regular text-text-error-primary">

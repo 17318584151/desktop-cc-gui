@@ -309,8 +309,9 @@ fn env_str(env: &Value, key: &str) -> Option<String> {
 }
 
 /// Convert one cc-switch provider into our channel value. Keeps the original
-/// `settingsConfig` verbatim: resolve_provider_env merges its raw `env` first,
-/// so extra keys (e.g. ANTHROPIC_SMALL_FAST_MODEL) survive the import.
+/// `settingsConfig` verbatim: provider_files merges its raw `env` /
+/// `config` first when materializing the CLI's native config, so extra keys
+/// (e.g. ANTHROPIC_SMALL_FAST_MODEL) survive the import.
 fn convert_provider(engine: &str, id: &str, p: &Value) -> Value {
     let mut out = serde_json::Map::new();
     let name = p["name"].as_str().unwrap_or(id);
@@ -448,6 +449,33 @@ fn run_import(
     for (engine, providers) in &loaded {
         if let Some(list) = providers {
             merge_engine(engine, list, prune, &mut result)?;
+        }
+    }
+    // An import may have rewritten or pruned the channel that is current:
+    // re-materialize it into the CLI's native config (a pruned current
+    // already fell back to None = 官方配置, so restore). A file error must
+    // not misreport the import itself, which already persisted.
+    for (engine, providers) in &loaded {
+        if providers.is_none() {
+            continue;
+        }
+        let config = config::read_config()?;
+        let Some(section) = config.section(engine) else {
+            continue;
+        };
+        let current = section.current.as_deref().unwrap_or("");
+        if current == config::DISABLED_PROVIDER_ID {
+            continue;
+        }
+        // Empty current = the current channel was pruned above → fell back
+        // to 官方配置, so restore the CLI's own file.
+        let (id, provider) = if current.is_empty() {
+            (config::LOCAL_PROVIDER_ID, None)
+        } else {
+            (current, section.providers.get(current).cloned())
+        };
+        if let Err(e) = crate::provider_files::apply(engine, id, provider.as_ref()) {
+            eprintln!("[cc_switch] re-apply current provider for {engine} failed: {e}");
         }
     }
     Ok(result)

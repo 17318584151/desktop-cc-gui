@@ -93,12 +93,7 @@ pub(crate) fn tool_path_arg(args: &Value) -> Option<String> {
 
 pub trait Engine: Send + Sync {
     fn id(&self) -> &'static str;
-    fn build_command(
-        &self,
-        req: &SendRequest,
-        env: &HashMap<String, String>,
-        bin: &str,
-    ) -> Result<BuiltCommand, String>;
+    fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String>;
     /// Parse one NDJSON stdout line into zero or more events.
     fn parse_line(&self, line: &str, out: &mut Vec<EngineEvent>);
     /// Whether this engine accepts image attachments.
@@ -291,7 +286,7 @@ fn kill_process_group(_pid: u32) {}
 
 // ==================== stderr redaction ====================
 
-/// Engine stderr can echo the provider env we injected; redact credential
+/// Engine stderr can echo the channel credentials from the CLI's own config files; redact credential
 /// shapes before the tail is shown to the user in an error banner.
 fn redact_secrets(text: &str) -> String {
     use std::sync::LazyLock;
@@ -389,7 +384,6 @@ struct Launch {
     bin: String,
     built: BuiltCommand,
     engine_impl: Box<dyn Engine>,
-    env: HashMap<String, String>,
 }
 
 fn prepare_launch(
@@ -402,7 +396,9 @@ fn prepare_launch(
     effort: Option<String>,
 ) -> Result<Launch, String> {
     let engine_impl = engine_by_id(engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
-    let env = crate::config::resolve_provider_env(engine)?;
+    // Channels live in each CLI's native config file (provider_files); the
+    // only launch-time gate left is the 停用 pseudo-provider.
+    crate::config::ensure_engine_enabled(engine)?;
     let settings = crate::settings::read_settings().unwrap_or_default();
     let model = model
         .filter(|m| !m.trim().is_empty())
@@ -421,13 +417,12 @@ fn prepare_launch(
         effort,
     };
     let bin = engine_bin(&settings, engine);
-    let built = engine_impl.build_command(&req, &env, &bin)?;
+    let built = engine_impl.build_command(&req, &bin)?;
     Ok(Launch {
         req,
         bin,
         built,
         engine_impl,
-        env,
     })
 }
 
@@ -682,9 +677,6 @@ pub async fn send_message(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .current_dir(&launch.req.workspace);
-    for (key, value) in &launch.env {
-        command.env(key, value);
-    }
     // Own process group so interrupt can kill the whole tree (grandchildren
     // inherit the stdout pipe and would otherwise block EOF forever).
     #[cfg(unix)]

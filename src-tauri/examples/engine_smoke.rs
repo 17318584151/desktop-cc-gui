@@ -40,7 +40,7 @@ async fn run_one(engine_id: &str, workspace: &PathBuf) -> Result<(), String> {
     let bin = which::which(engine_id)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| engine_id.to_string());
-    let built = engine.build_command(&req, &Default::default(), &bin)?;
+    let built = engine.build_command(&req, &bin)?;
     let mut command = built.command;
     command
         .stdin(if built.stdin_payload.is_some() {

@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import Check from "lucide-react/dist/esm/icons/check";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
 import Search from "lucide-react/dist/esm/icons/search";
+import X from "lucide-react/dist/esm/icons/x";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
@@ -16,8 +17,10 @@ import {
 } from "react-aria-components";
 import { AnimatePresence, m } from "motion/react";
 import { menuPopoverSurface } from "@/components/base/dropdown/menu-styles";
+import { ModalShell } from "@/components/dialogs";
 import { CLI_DISPLAY_NAMES, inferModelEngine } from "@/components/foundations/icons/engine-brands";
 import { EngineIcon } from "@/components/foundations/icons/engine-icon";
+import { MOBILE_MEDIA, useMediaQuery } from "@/hooks/use-media-query";
 import { cx } from "@/utils/cx";
 import { usePopoverState } from "@/utils/use-dismiss-on-outside-press";
 import { FlameOverlay } from "./effort-flame";
@@ -334,11 +337,13 @@ function FlyoutEffortSection({
 }
 
 /**
- * Per-engine flyout panel: "{name} 引擎" header over a search field over
- * checkmark model rows over the effort slider. Picking a model dismisses the
- * whole menu (handled by the parent via `onPickModel`).
+ * Engine model panel content: "{name} 引擎" header over a search field over
+ * checkmark model rows over the effort slider. Shared by the desktop flyout
+ * (EngineFlyout) and the mobile second-level dialog; `onClose` adds a
+ * dismiss button to the header, which only the dialog passes. Picking a
+ * model dismisses the whole menu (handled by the parent via `onPickModel`).
  */
-function EngineFlyout({
+function EngineModelPanel({
   option,
   models,
   selectedModelId,
@@ -347,6 +352,7 @@ function EngineFlyout({
   effort,
   onPickModel,
   onEffortChange,
+  onClose,
 }: {
   option: MenuOption;
   models: ModelOption[];
@@ -356,6 +362,7 @@ function EngineFlyout({
   effort: EffortLevel;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   const normalizedQuery = query.trim().toLowerCase();
@@ -376,54 +383,75 @@ function EngineFlyout({
       );
 
   return (
-    <div className={FLYOUT_CLASSES}>
-      <div className="flex w-full flex-col gap-1.5">
+    <div className="flex w-full flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-1">
         <span className="truncate px-2 py-1.5 text-body-medium text-text-secondary">
           {t("chat.engineHeader", {
             name: CLI_DISPLAY_NAMES[option.id] ?? option.label,
           })}
         </span>
-        <div className="relative mx-1 -mt-1.5 pb-1">
-          <Search
-            className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-[calc(50%+2px)] text-foreground-icon-secondary"
-            aria-hidden
-          />
-          <input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder={t("chat.modelSearchPlaceholder")}
-            aria-label={t("chat.modelSearchPlaceholder")}
-            className="h-8 w-full rounded-md border border-separator-border bg-background-secondary-default pr-2 pl-7 text-body-regular text-text-primary outline-none placeholder:text-text-tertiary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-          />
-        </div>
-        <div
-          className="flex max-h-[240px] w-full flex-col overflow-y-auto"
-          role="radiogroup"
-          aria-label={t("chat.modelPicker")}
-        >
-          {orderedModels.map((model) => (
-            <ModelRow
-              key={model.id || "__default__"}
-              option={model}
-              selected={model.id === selectedModelId}
-              engineId={option.id}
-              onPick={onPickModel}
-            />
-          ))}
-          {orderedModels.length === 0 && (
-            <span className="p-2 text-body-medium text-text-tertiary">
-              {t("chat.noMatchingModels")}
-            </span>
-          )}
-        </div>
-
-        {/* Full-bleed divider, like the reference submenu. */}
-        <div aria-hidden className="-mx-1 mt-[7px] mb-3 h-px bg-border-button-default" />
-        <FlyoutEffortSection
-          effort={effort}
-          onChange={(level) => onEffortChange(option.id, level)}
+        {onClose && (
+          <button
+            type="button"
+            aria-label={t("common.close")}
+            onClick={onClose}
+            className="mr-1 flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
+          >
+            <X className="size-4" aria-hidden />
+          </button>
+        )}
+      </div>
+      <div className="relative mx-1 -mt-1.5 pb-1">
+        <Search
+          className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-[calc(50%+2px)] text-foreground-icon-secondary"
+          aria-hidden
+        />
+        <input
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder={t("chat.modelSearchPlaceholder")}
+          aria-label={t("chat.modelSearchPlaceholder")}
+          className="h-8 w-full rounded-md border border-separator-border bg-background-secondary-default pr-2 pl-7 text-body-regular text-text-primary outline-none placeholder:text-text-tertiary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
         />
       </div>
+      <div
+        className="flex max-h-[240px] w-full flex-col overflow-y-auto"
+        role="radiogroup"
+        aria-label={t("chat.modelPicker")}
+      >
+        {orderedModels.map((model) => (
+          <ModelRow
+            key={model.id || "__default__"}
+            option={model}
+            selected={model.id === selectedModelId}
+            engineId={option.id}
+            onPick={onPickModel}
+          />
+        ))}
+        {orderedModels.length === 0 && (
+          <span className="p-2 text-body-medium text-text-tertiary">
+            {t("chat.noMatchingModels")}
+          </span>
+        )}
+      </div>
+
+      {/* Full-bleed divider, like the reference submenu. */}
+      <div aria-hidden className="-mx-1 mt-[7px] mb-3 h-px bg-border-button-default" />
+      <FlyoutEffortSection
+        effort={effort}
+        onChange={(level) => onEffortChange(option.id, level)}
+      />
+    </div>
+  );
+}
+
+/** Desktop-only wrapper: the model panel as a flyout popping to the right of
+ *  the CLI popover. On mobile CliMenu renders the same panel in a modal
+ *  dialog instead (hover flyouts don't work on touch). */
+function EngineFlyout(props: Parameters<typeof EngineModelPanel>[0]) {
+  return (
+    <div className={FLYOUT_CLASSES}>
+      <EngineModelPanel {...props} />
     </div>
   );
 }
@@ -473,6 +501,10 @@ export function CliMenu({
   // Which engine's model flyout is open. Pre-opens on the active engine so
   // the current selection is visible the moment the menu opens.
   const [openEngine, setOpenEngine] = useState<string | null>(null);
+  // Mobile has no hover, so the flyout never renders there; tapping an
+  // engine row opens the same panel as a second-level modal instead.
+  const isMobile = useMediaQuery(MOBILE_MEDIA);
+  const [dialogEngine, setDialogEngine] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const closeTimer = useRef<number | null>(null);
   const cancelFlyoutClose = () => {
@@ -488,7 +520,7 @@ export function CliMenu({
   };
   useEffect(() => {
     setQuery("");
-  }, [openEngine]);
+  }, [openEngine, dialogEngine]);
   useEffect(() => () => cancelFlyoutClose(), []);
 
   const handleOpenChange = (o: boolean) => {
@@ -498,6 +530,7 @@ export function CliMenu({
   };
 
   const flyoutOption = options.find((o) => o.id === openEngine);
+  const dialogOption = options.find((o) => o.id === dialogEngine);
 
   // Picking a model is the decision the flyout exists for, so it dismisses
   // the whole menu; a model picked on another installed engine also switches
@@ -508,29 +541,35 @@ export function CliMenu({
     if (engine !== value && target && !target.disabled) onChange(engine);
     close();
     setOpenEngine(null);
+    setDialogEngine(null);
   };
 
   return (
+    <>
     <AriaDialogTrigger isOpen={isOpen} onOpenChange={handleOpenChange}>
       <AriaButton
         ref={triggerRef}
-        className="group flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
+        // min-w-0 lets the trigger shrink instead of pushing the send button
+        // out of the composer on narrow widths; below md the trigger collapses
+        // to icon + truncated model (aria-label carries the full selection).
+        aria-label={`${engineName}${selectedModel ? ` / ${selectedModel.label}` : ""} · ${t(EFFORT_LABEL_KEYS[triggerEffort])}`}
+        className="group flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
       >
         <EngineIcon engine={value} size={16} className="shrink-0 text-foreground-icon-secondary" />
         <span className="flex min-w-0 items-center gap-1 text-body-2-medium whitespace-nowrap text-text-secondary transition-colors duration-150 ease group-hover:text-text-primary">
-          <span className="shrink-0">{engineName}</span>
+          <span className="shrink-0 max-md:hidden">{engineName}</span>
           {selectedModel && (
             <>
-              <span aria-hidden className="shrink-0 text-text-tertiary">
+              <span aria-hidden className="shrink-0 text-text-tertiary max-md:hidden">
                 /
               </span>
-              <span className="max-w-44 truncate">{selectedModel.label}</span>
+              <span className="max-w-44 truncate max-md:max-w-28">{selectedModel.label}</span>
             </>
           )}
-          <span aria-hidden className="shrink-0 text-text-tertiary">
+          <span aria-hidden className="shrink-0 text-text-tertiary max-md:hidden">
             ·
           </span>
-          <span className="shrink-0">{t(EFFORT_LABEL_KEYS[triggerEffort])}</span>
+          <span className="shrink-0 max-md:hidden">{t(EFFORT_LABEL_KEYS[triggerEffort])}</span>
         </span>
       </AriaButton>
 
@@ -564,11 +603,20 @@ export function CliMenu({
                       selected={option.id === value}
                       flyoutOpen={option.id === openEngine}
                       onSelect={() => {
+                        // Mobile: the row tap drills into the second-level
+                        // model dialog instead of switching engines outright
+                        // — the engine switches when a model is picked there.
+                        if (isMobile) {
+                          setDialogEngine(option.id);
+                          close();
+                          return;
+                        }
                         if (option.disabled) return;
                         onChange(option.id);
                         close();
                       }}
                       onHover={() => {
+                        if (isMobile) return;
                         cancelFlyoutClose();
                         setOpenEngine(option.id);
                       }}
@@ -577,7 +625,7 @@ export function CliMenu({
                 ))}
               </div>
 
-              {flyoutOption && (
+              {!isMobile && flyoutOption && (
                 <EngineFlyout
                   option={flyoutOption}
                   models={modelsByEngine[flyoutOption.id] ?? []}
@@ -594,5 +642,25 @@ export function CliMenu({
         </AriaDialog>
       </AriaPopover>
     </AriaDialogTrigger>
+
+    {dialogOption && (
+      <ModalShell
+        onClose={() => setDialogEngine(null)}
+        className="max-w-[calc(100vw-32px)]"
+      >
+        <EngineModelPanel
+          option={dialogOption}
+          models={modelsByEngine[dialogOption.id] ?? []}
+          selectedModelId={models[dialogOption.id] ?? ""}
+          query={query}
+          onQueryChange={setQuery}
+          effort={efforts[dialogOption.id] ?? "medium"}
+          onPickModel={pickModel}
+          onEffortChange={onEffortChange}
+          onClose={() => setDialogEngine(null)}
+        />
+      </ModalShell>
+    )}
+    </>
   );
 }
