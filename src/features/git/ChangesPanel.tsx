@@ -3,25 +3,14 @@ import { useTranslation } from "react-i18next";
 import Plus from "lucide-react/dist/esm/icons/plus";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
-import CloudDownload from "lucide-react/dist/esm/icons/cloud-download";
-import GitBranch from "lucide-react/dist/esm/icons/git-branch";
-import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import Minus from "lucide-react/dist/esm/icons/minus";
-import CloudUpload from "lucide-react/dist/esm/icons/cloud-upload";
-import { Button } from "@/components/base/buttons/button";
-import { IconButton } from "@/components/base/buttons/icon-button";
-import {
-  Dropdown,
-  DropdownDivider,
-  DropdownItem,
-  DropdownPopover,
-  DropdownTrigger,
-} from "@/components/base/dropdown/dropdown";
 import { Tooltip, TooltipContent } from "@/components/base/tooltip/tooltip";
 import { type GitFileEntry, type GitStatus } from "@/lib/ipc";
 import { errorText } from "@/lib/errors";
 import { cx } from "@/utils/cx";
 import { useGitStore } from "./store";
+import { ChangesPanelHeader } from "./ChangesPanelHeader";
+import { CommitFooter } from "./CommitFooter";
 
 export function ChangesPanel({
   workspacePath,
@@ -39,9 +28,6 @@ export function ChangesPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState<Record<string, true>>({});
   const [commitMsg, setCommitMsg] = useState("");
-  const [branchOpen, setBranchOpen] = useState(false);
-  const [creatingBranch, setCreatingBranch] = useState(false);
-  const [newBranchName, setNewBranchName] = useState("");
 
   useEffect(() => {
     void useGitStore.getState().refresh(workspacePath);
@@ -88,142 +74,15 @@ export function ChangesPanel({
   );
 
   const header = (
-    <div className="flex flex-col gap-2 border-b border-separator-border px-3 py-2.5">
-      <div className="flex items-center gap-1.5">
-        <span className="text-body-medium text-text-primary">{t("git.changes")}</span>
-        <div className="ml-auto flex items-center gap-1">
-          <IconButton
-            icon={RefreshCw}
-            size="small"
-            aria-label={t("common.refresh")}
-            disabled={pending.refresh === true}
-            onClick={() =>
-              run("refresh", () => useGitStore.getState().refresh(workspacePath, true))
-            }
-          />
-          <IconButton
-            icon={CloudDownload}
-            size="small"
-            aria-label={t("git.pull")}
-            disabled={notRepo || pending.pull === true}
-            onClick={() => run("pull", () => useGitStore.getState().pull(workspacePath))}
-          />
-          <IconButton
-            icon={CloudUpload}
-            size="small"
-            aria-label={t("git.push")}
-            disabled={notRepo || pending.push === true}
-            onClick={() => run("push", () => useGitStore.getState().push(workspacePath))}
-          />
-        </div>
-      </div>
-      {!notRepo && (
-        <div className="flex items-center gap-1">
-          <Dropdown isOpen={branchOpen} onOpenChange={setBranchOpen}>
-            <DropdownTrigger
-              className={cx(
-                "flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-border-button-default",
-                "px-2 text-body-medium text-text-primary shadow-xs",
-                "hover:bg-background-secondary-hover",
-              )}
-            >
-              <GitBranch
-                aria-hidden
-                className="size-4 shrink-0 text-foreground-icon-secondary"
-              />
-              <span className="truncate">{status?.branch ?? "…"}</span>
-              <ChevronDown
-                aria-hidden
-                className="ml-auto size-4 shrink-0 text-foreground-icon-tertiary"
-              />
-            </DropdownTrigger>
-            <DropdownPopover aria-label={t("git.branch")} placement="bottom start">
-              {(branches ?? []).map((b) => (
-                <DropdownItem
-                  key={b.name}
-                  selected={b.isCurrent}
-                  className="px-2 py-1.5"
-                  onSelect={() => {
-                    setBranchOpen(false);
-                    if (!b.isCurrent) {
-                      run("checkout", () =>
-                        useGitStore.getState().checkout(workspacePath, b.name),
-                      );
-                    }
-                  }}
-                >
-                  <span className="truncate text-body-medium text-text-primary">
-                    {b.name}
-                  </span>
-                </DropdownItem>
-              ))}
-              <DropdownDivider />
-              <DropdownItem
-                className="px-2 py-1.5"
-                onSelect={() => {
-                  setBranchOpen(false);
-                  setCreatingBranch(true);
-                }}
-              >
-                <Plus aria-hidden className="size-4 text-foreground-icon-secondary" />
-                <span className="text-body-medium text-text-primary">
-                  {t("git.newBranch")}
-                </span>
-              </DropdownItem>
-            </DropdownPopover>
-          </Dropdown>
-        </div>
-      )}
-      {creatingBranch && (
-        <form
-          className="flex items-center gap-1"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const name = newBranchName.trim();
-            if (name.length === 0 || pending.createBranch === true) return;
-            run("createBranch", async () => {
-              await useGitStore.getState().createBranch(workspacePath, name);
-              setCreatingBranch(false);
-              setNewBranchName("");
-            });
-          }}
-        >
-          <input
-            autoFocus
-            value={newBranchName}
-            onChange={(e) => setNewBranchName(e.target.value)}
-            placeholder={t("git.branchNamePlaceholder")}
-            className={cx(
-              "h-8 min-w-0 flex-1 rounded-lg border border-border-button-default px-2",
-              "text-body-medium text-text-primary placeholder:text-text-placeholder",
-              "outline-none focus:border-border-focus-ring",
-            )}
-          />
-          <Button
-            size="small"
-            type="submit"
-            disabled={newBranchName.trim().length === 0 || pending.createBranch === true}
-          >
-            {t("common.confirm")}
-          </Button>
-          <Button
-            size="small"
-            variant="ghost"
-            onClick={() => {
-              setCreatingBranch(false);
-              setNewBranchName("");
-            }}
-          >
-            {t("common.cancel")}
-          </Button>
-        </form>
-      )}
-      {(actionError ?? refreshError) && (
-        <p className="break-words text-xs text-text-error-primary">
-          {actionError ?? refreshError}
-        </p>
-      )}
-    </div>
+    <ChangesPanelHeader
+      workspacePath={workspacePath}
+      notRepo={notRepo}
+      branch={status?.branch}
+      branches={branches}
+      pending={pending}
+      error={actionError ?? refreshError}
+      run={run}
+    />
   );
 
   if (notRepo) {
@@ -291,36 +150,14 @@ export function ChangesPanel({
           </>
         )}
       </div>
-      <div className="flex flex-col gap-2 border-t border-separator-border p-3">
-        <textarea
-          value={commitMsg}
-          onChange={(e) => setCommitMsg(e.target.value)}
-          placeholder={t("git.commitMessage")}
-          rows={2}
-          className={cx(
-            "w-full resize-none rounded-lg border border-border-button-default px-2 py-1.5",
-            "text-body-medium text-text-primary placeholder:text-text-placeholder",
-            "outline-none focus:border-border-focus-ring",
-          )}
-        />
-        <Button
-          className="self-stretch"
-          disabled={
-            (status?.staged.length ?? 0) === 0 ||
-            commitMsg.trim().length === 0 ||
-            pending.commit === true
-          }
-          onClick={() => {
-            const message = commitMsg.trim();
-            run("commit", async () => {
-              await useGitStore.getState().commit(workspacePath, message);
-              setCommitMsg("");
-            });
-          }}
-        >
-          {t("git.commit")}
-        </Button>
-      </div>
+      <CommitFooter
+        workspacePath={workspacePath}
+        stagedCount={status?.staged.length ?? 0}
+        busy={pending.commit === true}
+        commitMsg={commitMsg}
+        onCommitMsgChange={setCommitMsg}
+        run={run}
+      />
     </aside>
   );
 }

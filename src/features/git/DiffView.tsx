@@ -1,9 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type ReactVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left";
 import { IconButton } from "@/components/base/buttons/icon-button";
-import { ipc, type GitStatus } from "@/lib/ipc";
+import { ipc, type GitFileEntry, type GitStatus } from "@/lib/ipc";
 import { errorText } from "@/lib/errors";
 import { cx } from "@/utils/cx";
 import type { DiffTarget } from "./store";
@@ -24,7 +24,6 @@ export function DiffView({
   status: GitStatus | undefined;
   onBack: () => void;
 }) {
-  const { t } = useTranslation();
   const [diffText, setDiffText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -34,13 +33,8 @@ export function DiffView({
   // Depending on the whole `status` object reloaded the diff on every
   // background poll refresh — a new object each time — even when this file
   // was untouched.
-  const entry = target.staged
-    ? status?.staged.find((e) => e.path === target.file)
-    : (status?.unstaged.find((e) => e.path === target.file) ??
-      status?.untracked.find((e) => e.path === target.file));
-  const entrySig = entry
-    ? `${entry.status}:${entry.additions ?? ""}:${entry.deletions ?? ""}`
-    : "";
+  const entry = findStatusEntry(status, target);
+  const entrySig = entrySignature(entry);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,61 +70,105 @@ export function DiffView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1 border-b border-separator-border px-2 py-1.5">
-        <IconButton
-          icon={ArrowLeft}
-          size="small"
-          aria-label={t("git.back")}
-          onClick={onBack}
-        />
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary"
-          title={target.file}
-        >
-          {target.file}
-        </span>
-        <span className="shrink-0 text-xs text-text-tertiary">
-          {target.staged ? t("git.staged") : t("git.unstaged")}
-        </span>
-      </div>
+      <DiffViewHeader file={target.file} staged={target.staged} onBack={onBack} />
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-        {error ? (
-          <p className="p-3 text-xs text-text-error-primary">{error}</p>
-        ) : lines === null ? (
-          <p className="p-3 text-body-medium text-text-tertiary">{t("common.loading")}</p>
-        ) : virtualize ? (
-          <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
-            {rowVirtualizer.getVirtualItems().map((row) => (
-              <div
-                key={row.key}
-                data-index={row.index}
-                ref={rowVirtualizer.measureElement}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  transform: `translateY(${row.start}px)`,
-                }}
-                className="w-full"
-              >
-                <DiffLine line={lines[row.index]} />
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="py-1">
-            {lines.map((line) => (
-              <DiffLine key={`${line.oldNo ?? ""}-${line.newNo ?? ""}-${line.text}`} line={line} />
-            ))}
-          </div>
-        )}
-        {truncated && lines !== null && (
-          <p className="sticky bottom-0 bg-background-primary-default px-3 py-1.5 text-xs text-text-tertiary">
-            {t("git.diffTooLarge")}
-          </p>
-        )}
+        <DiffContent
+          error={error}
+          lines={lines}
+          truncated={truncated}
+          virtualize={virtualize}
+          rowVirtualizer={rowVirtualizer}
+        />
       </div>
     </div>
+  );
+}
+
+/** Back button + file path + staged/unstaged label above the diff. */
+function DiffViewHeader({
+  file,
+  staged,
+  onBack,
+}: {
+  file: string;
+  staged: boolean;
+  onBack: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center gap-1 border-b border-separator-border px-2 py-1.5">
+      <IconButton
+        icon={ArrowLeft}
+        size="small"
+        aria-label={t("git.back")}
+        onClick={onBack}
+      />
+      <span
+        className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary"
+        title={file}
+      >
+        {file}
+      </span>
+      <span className="shrink-0 text-xs text-text-tertiary">
+        {staged ? t("git.staged") : t("git.unstaged")}
+      </span>
+    </div>
+  );
+}
+
+/** Error / loading / virtualized / plain render branches of the diff body. */
+function DiffContent({
+  error,
+  lines,
+  truncated,
+  virtualize,
+  rowVirtualizer,
+}: {
+  error: string | null;
+  lines: AnnotatedLine[] | null;
+  truncated: boolean;
+  virtualize: boolean;
+  rowVirtualizer: ReactVirtualizer<HTMLDivElement, Element>;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {error ? (
+        <p className="p-3 text-xs text-text-error-primary">{error}</p>
+      ) : lines === null ? (
+        <p className="p-3 text-body-medium text-text-tertiary">{t("common.loading")}</p>
+      ) : virtualize ? (
+        <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
+          {rowVirtualizer.getVirtualItems().map((row) => (
+            <div
+              key={row.key}
+              data-index={row.index}
+              ref={rowVirtualizer.measureElement}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                transform: `translateY(${row.start}px)`,
+              }}
+              className="w-full"
+            >
+              <DiffLine line={lines[row.index]} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="py-1">
+          {lines.map((line) => (
+            <DiffLine key={`${line.oldNo ?? ""}-${line.newNo ?? ""}-${line.text}`} line={line} />
+          ))}
+        </div>
+      )}
+      {truncated && lines !== null && (
+        <p className="sticky bottom-0 bg-background-primary-default px-3 py-1.5 text-xs text-text-tertiary">
+          {t("git.diffTooLarge")}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -138,6 +176,24 @@ interface AnnotatedLine {
   text: string;
   oldNo: number | null;
   newNo: number | null;
+}
+
+/** The status row for the diff target: staged list, else unstaged/untracked. */
+function findStatusEntry(
+  status: GitStatus | undefined,
+  target: DiffTarget,
+): GitFileEntry | undefined {
+  return target.staged
+    ? status?.staged.find((e) => e.path === target.file)
+    : (status?.unstaged.find((e) => e.path === target.file) ??
+        status?.untracked.find((e) => e.path === target.file));
+}
+
+/** Changes when the file's status row does — used to retrigger the diff load. */
+function entrySignature(entry: GitFileEntry | undefined): string {
+  return entry
+    ? `${entry.status}:${entry.additions ?? ""}:${entry.deletions ?? ""}`
+    : "";
 }
 
 /** Assign old/new line numbers from @@ hunk headers (unified diff). */
@@ -160,16 +216,17 @@ function annotateDiff(lines: string[]): AnnotatedLine[] {
   });
 }
 
+/** Classify a unified-diff line; `+++`/`---` file headers are not add/del. */
+function diffLineKind(text: string): "add" | "del" | "hunk" | null {
+  if (text.startsWith("+") && !text.startsWith("+++")) return "add";
+  if (text.startsWith("-") && !text.startsWith("---")) return "del";
+  if (text.startsWith("@@")) return "hunk";
+  return null;
+}
+
 const DiffLine = memo(function DiffLine({ line }: { line: AnnotatedLine }) {
   const text = line.text;
-  const kind =
-    text.startsWith("+") && !text.startsWith("+++")
-      ? "add"
-      : text.startsWith("-") && !text.startsWith("---")
-        ? "del"
-        : text.startsWith("@@")
-          ? "hunk"
-          : null;
+  const kind = diffLineKind(text);
   return (
     <div
       className={cx(

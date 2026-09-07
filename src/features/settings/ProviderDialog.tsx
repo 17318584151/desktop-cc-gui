@@ -84,6 +84,130 @@ function PresetIcon({ preset }: { preset: ProviderPreset }) {
   );
 }
 
+/** A channel can be saved once it has a name and an endpoint. */
+function isProviderFormValid(value: ProviderFormValue): boolean {
+  return value.name.trim() !== "" && value.baseUrl.trim() !== "";
+}
+
+/** The preset matching the current URL; the empty 自定义 URL matches nothing. */
+function findMatchedPreset(
+  presets: ProviderPreset[],
+  baseUrl: string,
+): ProviderPreset | undefined {
+  return presets.find((p) => p.baseUrl === baseUrl && p.baseUrl !== "");
+}
+
+/** Claude-only official direct-connection card; selecting it locks the API
+ *  URL to Anthropic's endpoint. */
+function OfficialPresetSection({
+  official,
+  onSelect,
+}: {
+  official: boolean;
+  onSelect: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-body-2-medium text-text-secondary">
+        {t("settings.cliOfficialSection")}
+      </p>
+      <button
+        type="button"
+        aria-pressed={official}
+        onClick={onSelect}
+        className={cx(
+          "flex w-full cursor-pointer items-center gap-3 rounded-2lg border p-3 text-left transition-colors",
+          official
+            ? "border-border-focus-ring bg-background-secondary-default"
+            : "border-border-button-default hover:bg-background-secondary-hover",
+        )}
+      >
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background-tertiary-default text-foreground-icon-primary">
+          <EngineIcon engine="claude" size={16} />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-body-medium text-text-primary">
+            {t("settings.cliOfficialPreset")}
+          </span>
+          <span className="text-body-2-regular text-text-secondary">
+            {t("settings.cliOfficialPresetDesc")}
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+/** Third-party relay preset grid, plus the 自定义配置 escape hatch that
+ *  unlocks the URL without prefilling anything. */
+function ProxyPresetSection({
+  engine,
+  presets,
+  official,
+  matchedPreset,
+  onSelectCustom,
+  onSelectPreset,
+}: {
+  engine: EngineId;
+  presets: ProviderPreset[];
+  official: boolean;
+  matchedPreset: ProviderPreset | undefined;
+  onSelectCustom: () => void;
+  onSelectPreset: (preset: ProviderPreset) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-body-2-medium text-text-secondary">
+        {t("settings.cliProxySection")}
+      </p>
+      <div className="grid grid-cols-3 gap-2">
+        {/* 自定义配置: pure escape hatch — unlocks the URL without
+            prefilling anything. */}
+        <button
+          type="button"
+          aria-pressed={!official && !matchedPreset}
+          onClick={onSelectCustom}
+          className={cx(
+            "flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-2 text-body-2-regular transition-colors",
+            !official && !matchedPreset
+              ? "border-border-focus-ring bg-background-secondary-default text-text-primary"
+              : "border-border-button-default text-text-secondary hover:bg-background-secondary-hover",
+          )}
+        >
+          <Globe className="size-3.5 shrink-0" aria-hidden />
+          <span className="truncate">{t("settings.cliPresetCustom")}</span>
+        </button>
+        {presets.map((preset) => (
+          <button
+            key={preset.name}
+            type="button"
+            aria-pressed={matchedPreset?.name === preset.name}
+            onClick={() => onSelectPreset(preset)}
+            className={cx(
+              "flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-2 text-body-2-regular transition-colors",
+              matchedPreset?.name === preset.name
+                ? "border-border-focus-ring bg-background-secondary-default text-text-primary"
+                : "border-border-button-default text-text-secondary hover:bg-background-secondary-hover",
+            )}
+          >
+            <span className="shrink-0 text-foreground-icon-secondary">
+              <PresetIcon preset={preset} />
+            </span>
+            <span className="truncate">{preset.name}</span>
+          </button>
+        ))}
+      </div>
+      {engine === "claude" && (
+        <p className="text-body-2-regular text-text-tertiary">
+          {t("settings.cliProxyHint")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Add/edit one channel. The official card (Claude only) locks the URL to
  *  Anthropic's endpoint; preset buttons prefill name/URL/model and the fields
  *  stay editable afterwards (preset = starting point, not a mode). */
@@ -95,14 +219,14 @@ export function ProviderDialog({ engine, title, initial, onSubmit, onCancel }: P
   const [showKey, setShowKey] = useState(false);
   const presets = PRESETS[engine] ?? [];
   const official = engine === "claude" && value.baseUrl === OFFICIAL_BASE_URL;
-  const matchedPreset = presets.find((p) => p.baseUrl === value.baseUrl && p.baseUrl !== "");
+  const matchedPreset = findMatchedPreset(presets, value.baseUrl);
 
   const selectPreset = (preset: ProviderPreset) => {
     setValue((v) => ({ ...v, name: preset.name, baseUrl: preset.baseUrl, model: preset.model }));
   };
 
   const patch = (p: Partial<ProviderFormValue>) => setValue((v) => ({ ...v, ...p }));
-  const valid = value.name.trim() !== "" && value.baseUrl.trim() !== "";
+  const valid = isProviderFormValid(value);
 
   return (
     <ModalShell onClose={onCancel} className="w-[560px] max-w-[calc(100vw-32px)] p-6">
@@ -128,84 +252,21 @@ export function ProviderDialog({ engine, title, initial, onSubmit, onCancel }: P
         }}
       >
         {engine === "claude" && (
-          <div className="flex flex-col gap-2">
-            <p className="text-body-2-medium text-text-secondary">
-              {t("settings.cliOfficialSection")}
-            </p>
-            <button
-              type="button"
-              aria-pressed={official}
-              onClick={() => patch({ baseUrl: OFFICIAL_BASE_URL })}
-              className={cx(
-                "flex w-full cursor-pointer items-center gap-3 rounded-2lg border p-3 text-left transition-colors",
-                official
-                  ? "border-border-focus-ring bg-background-secondary-default"
-                  : "border-border-button-default hover:bg-background-secondary-hover",
-              )}
-            >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background-tertiary-default text-foreground-icon-primary">
-                <EngineIcon engine="claude" size={16} />
-              </span>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="text-body-medium text-text-primary">
-                  {t("settings.cliOfficialPreset")}
-                </span>
-                <span className="text-body-2-regular text-text-secondary">
-                  {t("settings.cliOfficialPresetDesc")}
-                </span>
-              </span>
-            </button>
-          </div>
+          <OfficialPresetSection
+            official={official}
+            onSelect={() => patch({ baseUrl: OFFICIAL_BASE_URL })}
+          />
         )}
 
         {presets.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <p className="text-body-2-medium text-text-secondary">
-              {t("settings.cliProxySection")}
-            </p>
-            <div className="grid grid-cols-3 gap-2">
-              {/* 自定义配置: pure escape hatch — unlocks the URL without
-                  prefilling anything. */}
-              <button
-                type="button"
-                aria-pressed={!official && !matchedPreset}
-                onClick={() => patch({ baseUrl: "" })}
-                className={cx(
-                  "flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-2 text-body-2-regular transition-colors",
-                  !official && !matchedPreset
-                    ? "border-border-focus-ring bg-background-secondary-default text-text-primary"
-                    : "border-border-button-default text-text-secondary hover:bg-background-secondary-hover",
-                )}
-              >
-                <Globe className="size-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{t("settings.cliPresetCustom")}</span>
-              </button>
-              {presets.map((preset) => (
-                <button
-                  key={preset.name}
-                  type="button"
-                  aria-pressed={matchedPreset?.name === preset.name}
-                  onClick={() => selectPreset(preset)}
-                  className={cx(
-                    "flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-2 text-body-2-regular transition-colors",
-                    matchedPreset?.name === preset.name
-                      ? "border-border-focus-ring bg-background-secondary-default text-text-primary"
-                      : "border-border-button-default text-text-secondary hover:bg-background-secondary-hover",
-                  )}
-                >
-                  <span className="shrink-0 text-foreground-icon-secondary">
-                    <PresetIcon preset={preset} />
-                  </span>
-                  <span className="truncate">{preset.name}</span>
-                </button>
-              ))}
-            </div>
-            {engine === "claude" && (
-              <p className="text-body-2-regular text-text-tertiary">
-                {t("settings.cliProxyHint")}
-              </p>
-            )}
-          </div>
+          <ProxyPresetSection
+            engine={engine}
+            presets={presets}
+            official={official}
+            matchedPreset={matchedPreset}
+            onSelectCustom={() => patch({ baseUrl: "" })}
+            onSelectPreset={selectPreset}
+          />
         )}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

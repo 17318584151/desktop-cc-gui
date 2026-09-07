@@ -10,9 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import ArrowUp from "lucide-react/dist/esm/icons/arrow-up";
 import GitMerge from "lucide-react/dist/esm/icons/git-merge";
-import CircleStop from "lucide-react/dist/esm/icons/circle-stop";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
@@ -30,6 +28,9 @@ import {
   type BranchMenuItem,
 } from "@/components/application/ai-chat/branch-menu";
 import { ComposerResizeHandle } from "@/components/application/ai-chat/composer-resize-handle";
+import { ComposerEditable } from "@/components/application/ai-chat/composer-editable";
+import { ComposerToolbar } from "@/components/application/ai-chat/composer-toolbar";
+import { useMentionPicker } from "@/components/application/ai-chat/use-mention-picker";
 import { useResizableComposer } from "@/components/application/ai-chat/use-resizable-composer";
 import {
   FILE_TAG_CLASS,
@@ -42,14 +43,8 @@ import {
   renderFileTags,
   setCaretOffset,
 } from "@/components/application/ai-chat/file-tags";
-import {
-  FileMentionMenu,
-  type FileMentionMenuHandle,
-} from "@/components/application/ai-chat/file-mention-menu";
-import {
-  useMentionIndexStore,
-  type MentionEntry,
-} from "@/components/application/ai-chat/mention-files";
+import { FileMentionMenu } from "@/components/application/ai-chat/file-mention-menu";
+import { type MentionEntry } from "@/components/application/ai-chat/mention-files";
 import { joinPath } from "@/features/files/store";
 import {
   usePromptCompletion,
@@ -119,7 +114,6 @@ export function Composer({
   onPasteImages,
   workspacePath,
 }: ComposerProps = {}) {
-  const { t } = useTranslation();
   const editableRef = useRef<HTMLDivElement>(null);
   // IME composition tracking (desktop-cc-gui parity): WKWebView fires
   // `compositionend` BEFORE the Enter keydown that commits the candidate, so
@@ -140,72 +134,12 @@ export function Composer({
   /** Last text we emitted upward; the value-sync effect skips our own echoes. */
   const lastEmittedRef = useRef("");
 
-  // @-mention file picker: an active trigger is `@` + query at the caret
-  // (findMentionTrigger). The menu consumes arrows/Enter/Tab/Escape through
-  // mentionMenuRef; `left` anchors the popover to the caret's x position and
-  // stays fixed while the query grows.
+  // @-mention file picker: trigger tracking, caret anchoring, and workspace
+  // lifecycle live in useMentionPicker; the menu + select action stay wired
+  // here. The parent owns the wrapper ref (root div + popover anchor).
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const mentionMenuRef = useRef<FileMentionMenuHandle | null>(null);
-  const [mention, setMention] = useState<{
-    start: number;
-    query: string;
-    left: number;
-  } | null>(null);
-
-  // Workspace switch closes the picker: render-time adjustment via prev-prop
-  // comparison instead of a cascading effect setState.
-  const [prevWorkspacePath, setPrevWorkspacePath] = useState(workspacePath);
-  if (prevWorkspacePath !== workspacePath) {
-    setPrevWorkspacePath(workspacePath);
-    setMention(null);
-  }
-
-  // Prefetch the file index on workspace switch, so the first `@` is instant.
-  useEffect(() => {
-    if (workspacePath) useMentionIndexStore.getState().ensure(workspacePath);
-  }, [workspacePath]);
-
-  /** Caret x relative to the composer wrapper, clamped to the menu width. */
-  const caretLeftPx = useCallback(() => {
-    const wrapper = wrapperRef.current;
-    const selection = window.getSelection();
-    if (!wrapper || !selection || selection.rangeCount === 0) return 0;
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
-    const wrap = wrapper.getBoundingClientRect();
-    // A collapsed range in an element container (right after a chip) reports
-    // a zero rect in WKWebView — fall back to the wrapper's left edge.
-    const raw = (rect.left || wrap.left) - wrap.left;
-    return Math.max(0, Math.min(raw, Math.max(0, wrap.width - 320)));
-  }, []);
-
-  /** Re-derive the mention trigger from the DOM (called on real input only,
-   *  never during IME composition). */
-  const updateMentionTrigger = useCallback(() => {
-    const el = editableRef.current;
-    if (!el || !workspacePath) return;
-    const caret = getCaretOffset(el);
-    const trigger = caret >= 0 ? findMentionTrigger(extractText(el), caret) : null;
-    setMention((prev) => {
-      if (!trigger) return null;
-      if (prev && prev.start === trigger.start) return { ...prev, query: trigger.query };
-      return { ...trigger, left: caretLeftPx() };
-    });
-  }, [workspacePath, caretLeftPx]);
-
-  // Close the picker when the caret leaves the trigger (mouse click, arrow
-  // keys). Typing keeps the same trigger start, so input stays open.
-  useEffect(() => {
-    if (!mention) return;
-    const closeIfCaretLeft = () => {
-      const el = editableRef.current;
-      if (!el) return;
-      const caret = getCaretOffset(el);
-      const trigger = caret >= 0 ? findMentionTrigger(extractText(el), caret) : null;
-      if (!trigger || trigger.start !== mention.start) setMention(null);
-    };
-    document.addEventListener("selectionchange", closeIfCaretLeft);
-    return () => document.removeEventListener("selectionchange", closeIfCaretLeft);
-  }, [mention]);
+  const { mention, setMention, mentionMenuRef, updateMentionTrigger } =
+    useMentionPicker({ editableRef, wrapperRef, workspacePath, value, lastEmittedRef });
 
   const emitChange = useCallback(() => {
     const el = editableRef.current;
@@ -250,7 +184,7 @@ export function Composer({
       emitChange();
       syncTags();
     },
-    [workspacePath, emitChange, syncTags],
+    [workspacePath, emitChange, syncTags, setMention],
   );
   // Ghost-text completion from prompt history (desktop-cc-gui parity):
   // suffix is painted via data-completion-suffix and accepted with Tab.
@@ -277,16 +211,9 @@ export function Composer({
   });
 
   // External value changes (draft restore on tab switch, clear on submit):
-  // the effect below rebuilds the DOM from text, which invalidates any live
-  // trigger range — reset the picker via prev-prop comparison (render-time
-  // adjustment, no cascading effect setState). Own emissions are already in
-  // the DOM and skip both paths through lastEmittedRef.
-  const [prevValue, setPrevValue] = useState(value);
-  if (value !== prevValue) {
-    setPrevValue(value);
-    if ((value ?? "") !== lastEmittedRef.current) setMention(null);
-  }
-
+  // the effect below rebuilds the DOM from text; the mention picker resets
+  // itself on the same signal (see useMentionPicker). Own emissions are
+  // already in the DOM and skip both paths through lastEmittedRef.
   useEffect(() => {
     const v = value ?? "";
     if (v === lastEmittedRef.current) return;
@@ -359,140 +286,38 @@ export function Composer({
       )}
 
       {!isCollapsed && (
-        <div
-          ref={editableRef}
-          contentEditable
-          role="textbox"
-          aria-multiline="true"
-          aria-label={t("chat.send")}
-          data-placeholder={sendShortcut === "cmdEnter" ? t("chat.inputPlaceholderCmdEnter") : t("chat.inputPlaceholder")}
-          data-completion-suffix={mention ? undefined : completion.suffix || undefined}
-          onInput={() => {
-            emitChange();
-            syncTags();
-            if (!isComposingRef.current) updateMentionTrigger();
-          }}
-          onCompositionStart={() => {
-            isComposingRef.current = true;
-            setIsComposing(true);
-          }}
-          onCompositionEnd={() => {
-            isComposingRef.current = false;
-            setIsComposing(false);
-            lastCompositionEndTimeRef.current = Date.now();
-            // Composition commits text without an input event in WKWebView.
-            emitChange();
-            syncTags();
-            updateMentionTrigger();
-          }}
-          onKeyDown={(event) => {
-            // An open mention picker owns arrows/Enter/Tab/Escape (never
-            // mid-IME: those keys belong to the candidate window).
-            if (
-              mention &&
-              !event.nativeEvent.isComposing &&
-              !isComposingRef.current &&
-              event.nativeEvent.keyCode !== 229 &&
-              mentionMenuRef.current?.handleKey(event.key)
-            ) {
-              event.preventDefault();
-              return;
-            }
-            // Tab accepts the ghost-text history completion (never mid-IME).
-            if (
-              event.key === "Tab" &&
-              completion.suffix &&
-              !event.nativeEvent.isComposing &&
-              !isComposingRef.current &&
-              event.nativeEvent.keyCode !== 229
-            ) {
-              event.preventDefault();
-              const full = completion.accept();
-              if (full !== null) setEditableText(full);
-              return;
-            }
-            // ArrowUp/ArrowDown recall submitted prompts from history.
-            if (handleHistoryKeyDown(event)) return;
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-            // "cmdEnter": only ⌘/Ctrl+Enter sends; bare Enter falls through to
-            // the contentEditable default and inserts a newline.
-            const meta = event.metaKey || event.ctrlKey;
-            if (sendShortcut === "cmdEnter" ? !meta : event.shiftKey) return;
-            if (isComposingRef.current) return;
-            if (event.nativeEvent.keyCode === 229) return;
-            // Swallow the Enter that only committed the IME candidate.
-            if (Date.now() - lastCompositionEndTimeRef.current < 100) return;
-            event.preventDefault();
-            // Fires while streaming too: the host queues the message behind the
-            // active turn instead of dropping it.
-            const el = editableRef.current;
-            if (!disabled && el) onSubmit?.(extractText(el));
-          }}
-          onPaste={(event) => {
-            const files: File[] = [];
-            for (const item of Array.from(event.clipboardData?.items ?? [])) {
-              if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
-              const file = item.getAsFile();
-              if (file) files.push(file);
-            }
-            if (files.length > 0 && onPasteImages) {
-              // Image payload: the host turns the files into attachments.
-              event.preventDefault();
-              onPasteImages(files);
-              return;
-            }
-            // Plain text only: clipboard HTML must not leak markup (spans,
-            // styles) into the editable — chips are the only allowed markup.
-            event.preventDefault();
-            const text = event.clipboardData?.getData("text/plain") ?? "";
-            const el = editableRef.current;
-            if (!text || !el) return;
-            insertTextAtCaret(el, text);
-            emitChange();
-            syncTags();
-          }}
-          style={manualHeightPx != null ? { height: manualHeightPx } : undefined}
-          className={cx(
-            "composer-editable w-full overflow-y-auto bg-transparent px-1.5 py-1 text-body-regular text-text-primary caret-accent-500 outline-none",
-            manualHeightPx == null && "max-h-40 min-h-[52px]",
-          )}
+        <ComposerEditable
+          editableRef={editableRef}
+          sendShortcut={sendShortcut}
+          mentionOpen={mention != null}
+          completionSuffix={completion.suffix}
+          acceptCompletion={completion.accept}
+          setEditableText={setEditableText}
+          handleHistoryKeyDown={handleHistoryKeyDown}
+          mentionMenuRef={mentionMenuRef}
+          isComposingRef={isComposingRef}
+          lastCompositionEndTimeRef={lastCompositionEndTimeRef}
+          setIsComposing={setIsComposing}
+          emitChange={emitChange}
+          syncTags={syncTags}
+          updateMentionTrigger={updateMentionTrigger}
+          disabled={disabled}
+          onSubmit={onSubmit}
+          onPasteImages={onPasteImages}
+          manualHeightPx={manualHeightPx}
         />
       )}
 
       {!isCollapsed && (
-        <div className="flex items-center gap-2 select-none">
-          {addMenu}
-
-          {cliMenu}
-
-          {permissionMenu}
-
-          <div aria-hidden className="min-w-0 flex-1" />
-
-          {streaming ? (
-            <button
-              type="button"
-              aria-label={t("chat.stop")}
-              onClick={() => onStop?.()}
-              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-button-primary p-2 transition-opacity duration-200 ease"
-            >
-              <CircleStop className="size-5 text-text-white" aria-hidden />
-            </button>
-          ) : (
-            <button
-              type="button"
-              aria-label={t("chat.send")}
-              disabled={disabled}
-              onClick={() => onSubmit?.(value ?? "")}
-              className={cx(
-                "flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-button-primary p-2 transition-opacity duration-200 ease",
-                disabled && "cursor-not-allowed opacity-40",
-              )}
-            >
-              <ArrowUp className="size-5 text-text-white" aria-hidden />
-            </button>
-          )}
-        </div>
+        <ComposerToolbar
+          addMenu={addMenu}
+          cliMenu={cliMenu}
+          permissionMenu={permissionMenu}
+          streaming={streaming}
+          disabled={disabled}
+          onStop={onStop}
+          onSend={() => onSubmit?.(value ?? "")}
+        />
       )}
     </div>
   );

@@ -1,0 +1,154 @@
+import { useCallback, useEffect, useRef, type RefObject } from "react";
+import type { Message } from "@/lib/ipc";
+
+/** Distance from the scroll tail within which the user counts as "at bottom". */
+const BOTTOM_THRESHOLD_PX = 100;
+
+/** Stick-to-bottom intent model (ported from the reference chat UI): wheel-up
+ * pauses following, scrolling back down to the bottom resumes it; programmatic
+ * scrolls are tagged and ignored. */
+export function useScrollFollow({
+  scrollRef,
+}: {
+  scrollRef: RefObject<HTMLDivElement | null>;
+}) {
+  // Sampling geometry at content-change time misfires in a virtualized
+  // list: a freshly mounted tool row still has the 72px estimated height,
+  // so scrollHeight is stale and a "near bottom" check reads wrong. Track
+  // user intent instead: wheel-up pauses following, scrolling back down to
+  // the bottom resumes it; programmatic scrolls are tagged and ignored.
+  const atBottomRef = useRef(true);
+  const userPausedRef = useRef(false);
+  const autoScrollingRef = useRef(false);
+
+  const isFollowing = useCallback(
+    () => atBottomRef.current && !userPausedRef.current,
+    [],
+  );
+
+  // Pin by scrollTop, not scrollToIndex: index alignment recomputes offsets
+  // from the virtualizer's measured sizes, so rows whose height is still
+  // settling (live growth, tool rows measuring in) made the viewport jump.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    autoScrollingRef.current = true;
+    el.scrollTop = el.scrollHeight - el.clientHeight;
+    requestAnimationFrame(() => {
+      autoScrollingRef.current = false;
+    });
+  }, [scrollRef]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = () =>
+      el.scrollHeight - el.scrollTop - el.clientHeight;
+
+    let scrollRaf = 0;
+    const handleScroll = () => {
+      if (scrollRaf) return;
+      scrollRaf = requestAnimationFrame(() => {
+        scrollRaf = 0;
+        // Programmatic pins must not read as user intent; an explicit
+        // wheel-up pause is cleared only by the wheel handler, otherwise a
+        // scroll event from that same gesture (still within the threshold)
+        // would immediately un-pause.
+        if (autoScrollingRef.current || userPausedRef.current) return;
+        atBottomRef.current = distanceFromBottom() < BOTTOM_THRESHOLD_PX;
+      });
+    };
+
+    // Wheel deltas are always user-initiated: up pauses following, down to
+    // the bottom resumes it.
+    let wheelRaf = 0;
+    const handleWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        userPausedRef.current = true;
+        atBottomRef.current = false;
+      } else if (e.deltaY > 0) {
+        if (wheelRaf) cancelAnimationFrame(wheelRaf);
+        wheelRaf = requestAnimationFrame(() => {
+          wheelRaf = 0;
+          if (distanceFromBottom() < BOTTOM_THRESHOLD_PX) {
+            userPausedRef.current = false;
+            atBottomRef.current = true;
+          }
+        });
+      }
+    };
+
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    el.addEventListener("wheel", handleWheel, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", handleScroll);
+      el.removeEventListener("wheel", handleWheel);
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      if (wheelRaf) cancelAnimationFrame(wheelRaf);
+    };
+  }, [scrollRef]);
+
+  return { atBottomRef, userPausedRef, isFollowing, scrollToBottom };
+}
+
+/** Keep the tail pinned while content grows: on append (when following), on
+ * every stream flush, and on late row re-measurements that grow the virtual
+ * total height after the append effects already ran. */
+export function useTailPin({
+  scrollRef,
+  count,
+  items,
+  streaming,
+  isFollowing,
+  scrollToBottom,
+}: {
+  scrollRef: RefObject<HTMLDivElement | null>;
+  count: number;
+  items: Message[];
+  streaming: boolean;
+  isFollowing: () => boolean;
+  scrollToBottom: () => void;
+}) {
+  // Scroll to bottom when switching sessions (new page loaded) or when a new
+  // message is appended while following the tail.
+  const lastCountRef = useRef(0);
+  useEffect(() => {
+    if (!scrollRef.current || count === 0) return;
+    const grew = count > lastCountRef.current;
+    const switched = lastCountRef.current === 0;
+    if (switched || (grew && isFollowing())) scrollToBottom();
+    lastCountRef.current = count;
+  }, [count, isFollowing, scrollToBottom, scrollRef]);
+
+  // Keep the tail pinned while stream rows grow, if the user is at bottom.
+  // `items` changes identity on every flush, so this tracks both thinking
+  // and text growth.
+  useEffect(() => {
+    if (!scrollRef.current || !streaming || !isFollowing()) return;
+    const frame = requestAnimationFrame(scrollToBottom);
+    return () => cancelAnimationFrame(frame);
+  }, [items, streaming, count, isFollowing, scrollToBottom, scrollRef]);
+
+  // Rows re-measure after mount (tool calls render taller than the 72px
+  // estimate); each measurement grows the virtual total height after the
+  // count/items effects above already ran. Follow those late size changes
+  // so the tail stays pinned while tools appear.
+  useEffect(() => {
+    const el = scrollRef.current;
+    const inner = el?.querySelector<HTMLElement>("[data-virtual-inner]");
+    if (!el || !inner || typeof ResizeObserver === "undefined") return;
+    let raf = 0;
+    const observer = new ResizeObserver(() => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (isFollowing()) scrollToBottom();
+      });
+    });
+    observer.observe(inner);
+    return () => {
+      observer.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [isFollowing, scrollToBottom, scrollRef]);
+}
