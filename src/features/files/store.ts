@@ -63,6 +63,8 @@ interface FilesStore {
   /** Re-read a file from disk, resetting its editor draft. */
   reloadFile: (path: string) => Promise<void>;
   closeFile: (path: string) => void;
+  /** Move an open file tab to a new position (drag-reorder in the tab strip). */
+  moveOpenFile: (path: string, toIndex: number) => void;
   /** Re-point open tabs after a rename/move (content unchanged on disk). */
   remapOpenFiles: (from: string, to: string) => void;
   /** Close every tab at or under a removed path. */
@@ -229,6 +231,15 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
         activeFilePath = openFiles[Math.min(idx, openFiles.length - 1)] ?? null;
       }
       return { openFiles, fileStates, dirtyPaths, activeFilePath };
+    }),
+  moveOpenFile: (path, toIndex) =>
+    set((s) => {
+      const from = s.openFiles.indexOf(path);
+      if (from < 0) return s;
+      const openFiles = [...s.openFiles];
+      openFiles.splice(from, 1);
+      openFiles.splice(Math.max(0, Math.min(toIndex, openFiles.length)), 0, path);
+      return { openFiles };
     }),
 
   remapOpenFiles: (from, to) =>

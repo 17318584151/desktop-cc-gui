@@ -17,10 +17,10 @@ import {
   DropdownPopover,
   DropdownTrigger,
 } from "@/components/base/dropdown/dropdown";
+import { Tooltip, TooltipContent } from "@/components/base/tooltip/tooltip";
 import { type GitFileEntry, type GitStatus } from "@/lib/ipc";
 import { errorText } from "@/lib/errors";
 import { cx } from "@/utils/cx";
-import { DiffView, type DiffTarget } from "./DiffView";
 import { useGitStore } from "./store";
 
 export function ChangesPanel({
@@ -36,7 +36,6 @@ export function ChangesPanel({
   const refreshError = useGitStore((s) => s.errorByWorkspace[workspacePath]);
   const branches = useGitStore((s) => s.branchesByWorkspace[workspacePath]);
 
-  const [diffTarget, setDiffTarget] = useState<DiffTarget | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState<Record<string, true>>({});
   const [commitMsg, setCommitMsg] = useState("");
@@ -76,13 +75,16 @@ export function ChangesPanel({
   );
   const stageOne = useCallback((file: string) => stage([file]), [stage]);
   const unstageOne = useCallback((file: string) => unstage([file]), [unstage]);
+  // File rows open the diff in the center area, where it has room.
   const openStagedDiff = useCallback(
-    (file: string) => setDiffTarget({ file, staged: true }),
-    [],
+    (file: string) =>
+      useGitStore.getState().openDiff(workspacePath, { file, staged: true }),
+    [workspacePath],
   );
   const openUnstagedDiff = useCallback(
-    (file: string) => setDiffTarget({ file, staged: false }),
-    [],
+    (file: string) =>
+      useGitStore.getState().openDiff(workspacePath, { file, staged: false }),
+    [workspacePath],
   );
 
   const header = (
@@ -240,96 +242,85 @@ export function ChangesPanel({
   return (
     <aside className={cx("flex h-full flex-col bg-background-primary-default", className)}>
       {header}
-      {diffTarget ? (
-        <DiffView
-          workspacePath={workspacePath}
-          target={diffTarget}
-          status={status}
-          onBack={() => setDiffTarget(null)}
-        />
-      ) : (
-        <div className="flex-1 overflow-y-auto">
-          {!status ? (
-            <div className="flex h-full items-center justify-center p-4">
-              <p className="text-body-medium text-text-tertiary">{t("common.loading")}</p>
-            </div>
-          ) : status.staged.length + status.unstaged.length + status.untracked.length === 0 ? (
-            <div className="flex h-full items-center justify-center p-4">
-              <p className="text-body-medium text-text-tertiary">{t("git.noChanges")}</p>
-            </div>
-          ) : (
-            <>
-              <ChangesSummary status={status} />
-              <GroupSection
-                title={t("git.staged")}
-                entries={status.staged}
-                groupActionLabel={t("git.unstageAll")}
-                onGroupAction={unstage}
-                rowActionLabel={t("git.unstage")}
-                rowActionKind="unstage"
-                onRowAction={unstageOne}
-                onOpen={openStagedDiff}
-                actionBusy={pending.unstage === true}
-              />
-              <GroupSection
-                title={t("git.unstaged")}
-                entries={status.unstaged}
-                groupActionLabel={t("git.stageAll")}
-                onGroupAction={stage}
-                rowActionLabel={t("git.stage")}
-                rowActionKind="stage"
-                onRowAction={stageOne}
-                onOpen={openUnstagedDiff}
-                actionBusy={pending.stage === true}
-              />
-              <GroupSection
-                title={t("git.untracked")}
-                entries={status.untracked}
-                groupActionLabel={t("git.stageAll")}
-                onGroupAction={stage}
-                rowActionLabel={t("git.stage")}
-                rowActionKind="stage"
-                onRowAction={stageOne}
-                onOpen={openUnstagedDiff}
-                actionBusy={pending.stage === true}
-                isNew
-              />
-            </>
+      <div className="flex-1 overflow-y-auto">
+        {!status ? (
+          <div className="flex h-full items-center justify-center p-4">
+            <p className="text-body-medium text-text-tertiary">{t("common.loading")}</p>
+          </div>
+        ) : status.staged.length + status.unstaged.length + status.untracked.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-4">
+            <p className="text-body-medium text-text-tertiary">{t("git.noChanges")}</p>
+          </div>
+        ) : (
+          <>
+            <ChangesSummary status={status} />
+            <GroupSection
+              title={t("git.staged")}
+              entries={status.staged}
+              groupActionLabel={t("git.unstageAll")}
+              onGroupAction={unstage}
+              rowActionLabel={t("git.unstage")}
+              rowActionKind="unstage"
+              onRowAction={unstageOne}
+              onOpen={openStagedDiff}
+              actionBusy={pending.unstage === true}
+            />
+            <GroupSection
+              title={t("git.unstaged")}
+              entries={status.unstaged}
+              groupActionLabel={t("git.stageAll")}
+              onGroupAction={stage}
+              rowActionLabel={t("git.stage")}
+              rowActionKind="stage"
+              onRowAction={stageOne}
+              onOpen={openUnstagedDiff}
+              actionBusy={pending.stage === true}
+            />
+            <GroupSection
+              title={t("git.untracked")}
+              entries={status.untracked}
+              groupActionLabel={t("git.stageAll")}
+              onGroupAction={stage}
+              rowActionLabel={t("git.stage")}
+              rowActionKind="stage"
+              onRowAction={stageOne}
+              onOpen={openUnstagedDiff}
+              actionBusy={pending.stage === true}
+              isNew
+            />
+          </>
+        )}
+      </div>
+      <div className="flex flex-col gap-2 border-t border-separator-border p-3">
+        <textarea
+          value={commitMsg}
+          onChange={(e) => setCommitMsg(e.target.value)}
+          placeholder={t("git.commitMessage")}
+          rows={2}
+          className={cx(
+            "w-full resize-none rounded-lg border border-border-button-default px-2 py-1.5",
+            "text-body-medium text-text-primary placeholder:text-text-placeholder",
+            "outline-none focus:border-border-focus-ring",
           )}
-        </div>
-      )}
-      {!diffTarget && (
-        <div className="flex flex-col gap-2 border-t border-separator-border p-3">
-          <textarea
-            value={commitMsg}
-            onChange={(e) => setCommitMsg(e.target.value)}
-            placeholder={t("git.commitMessage")}
-            rows={2}
-            className={cx(
-              "w-full resize-none rounded-lg border border-border-button-default px-2 py-1.5",
-              "text-body-medium text-text-primary placeholder:text-text-placeholder",
-              "outline-none focus:border-border-focus-ring",
-            )}
-          />
-          <Button
-            className="self-stretch"
-            disabled={
-              (status?.staged.length ?? 0) === 0 ||
-              commitMsg.trim().length === 0 ||
-              pending.commit === true
-            }
-            onClick={() => {
-              const message = commitMsg.trim();
-              run("commit", async () => {
-                await useGitStore.getState().commit(workspacePath, message);
-                setCommitMsg("");
-              });
-            }}
-          >
-            {t("git.commit")}
-          </Button>
-        </div>
-      )}
+        />
+        <Button
+          className="self-stretch"
+          disabled={
+            (status?.staged.length ?? 0) === 0 ||
+            commitMsg.trim().length === 0 ||
+            pending.commit === true
+          }
+          onClick={() => {
+            const message = commitMsg.trim();
+            run("commit", async () => {
+              await useGitStore.getState().commit(workspacePath, message);
+              setCommitMsg("");
+            });
+          }}
+        >
+          {t("git.commit")}
+        </Button>
+      </div>
     </aside>
   );
 }
@@ -464,6 +455,9 @@ const FileRow = memo(function FileRow({
   const { t } = useTranslation();
   const raw = entry.status.replace("?", "").trim().charAt(0).toUpperCase();
   const letter = raw.length > 0 ? raw : "?";
+  const sepIdx = Math.max(entry.path.lastIndexOf("/"), entry.path.lastIndexOf("\\"));
+  const dirPart = sepIdx > 0 ? entry.path.slice(0, sepIdx + 1) : "";
+  const filePart = sepIdx >= 0 ? entry.path.slice(sepIdx + 1) : entry.path;
   return (
     <li className="group flex items-center gap-2 px-3 py-1 hover:bg-background-secondary-hover">
       <span
@@ -474,14 +468,24 @@ const FileRow = memo(function FileRow({
       >
         {letter}
       </span>
-      <button
-        type="button"
-        onClick={() => onOpen(entry.path)}
-        className="min-w-0 flex-1 truncate text-left font-mono text-xs text-text-primary"
-        title={entry.path}
-      >
-        {entry.path}
-      </button>
+      <Tooltip>
+        <button
+          type="button"
+          onClick={() => onOpen(entry.path)}
+          className="flex min-w-0 flex-1 items-baseline text-left font-mono text-xs"
+        >
+          {/* Directory truncates from the left (…/foo/bar) so the filename
+              — the most important part — is always fully visible; the tooltip
+              below shows the full path on hover. */}
+          {dirPart && (
+            <span dir="rtl" className="min-w-0 truncate text-left text-text-tertiary">
+              <bdo dir="ltr">{dirPart}</bdo>
+            </span>
+          )}
+          <span className="shrink-0 text-text-primary">{filePart}</span>
+        </button>
+        <TooltipContent className="break-all font-mono">{entry.path}</TooltipContent>
+      </Tooltip>
       {entry.additions !== undefined && (
         <span className="shrink-0 text-xs text-state-success-text">+{entry.additions}</span>
       )}

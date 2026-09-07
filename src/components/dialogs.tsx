@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
+import { cx } from "@/utils/cx";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 
@@ -9,19 +10,35 @@ import { Input } from "@/components/base/input/input";
  * Modal/ModalOverlay/Dialog, which own the a11y contract outright: role +
  * aria-modal, the focus trap, Escape dismissal, outside-press dismissal
  * (`isDismissable`), and portalling to document.body.
+ *
+ * z-110, not z-50: the portalled overlay is a document.body sibling of
+ * SettingsModal's z-100 overlay, so dialogs opened from inside settings
+ * (add/edit/delete channel) must outrank it to stay visible.
  */
-function ModalShell({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+export function ModalShell({
+  children,
+  onClose,
+  className,
+}: {
+  children: ReactNode;
+  onClose: () => void;
+  /** Panel sizing override; defaults to the compact w-80 prompt size. */
+  className?: string;
+}) {
   return (
     <ModalOverlay
       isOpen
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay-backdrop"
+      className="fixed inset-0 z-110 flex items-center justify-center bg-overlay-backdrop"
     >
       <Modal
         isDismissable
-        className="w-80 rounded-2lg border border-border-button-default bg-background-primary-default p-4 shadow-xl outline-none"
+        className={cx(
+          "w-80 rounded-2lg border border-border-button-default bg-background-primary-default p-4 shadow-xl outline-none",
+          className,
+        )}
       >
         <Dialog className="outline-none">{children}</Dialog>
       </Modal>

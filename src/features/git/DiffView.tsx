@@ -6,16 +6,12 @@ import { IconButton } from "@/components/base/buttons/icon-button";
 import { ipc, type GitStatus } from "@/lib/ipc";
 import { errorText } from "@/lib/errors";
 import { cx } from "@/utils/cx";
+import type { DiffTarget } from "./store";
 
 /* -------------------------------------------------------------------------- */
 
 const DIFF_TRUNCATE_LINES = 2000;
 const DIFF_VIRTUALIZE_LINES = 500;
-
-export interface DiffTarget {
-  file: string;
-  staged: boolean;
-}
 
 export function DiffView({
   workspacePath,

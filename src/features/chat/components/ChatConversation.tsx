@@ -21,7 +21,7 @@ import { MessageTimeline } from "./MessageTimeline";
 import { ImageLightbox } from "./MessageImages";
 import { useGitStore } from "@/features/git/store";
 import { ipc, type CliConfig, type EngineCatalog, type EngineInfo, type Workspace } from "@/lib/ipc";
-import { isPseudoProvider, providerModel, type EngineId } from "@/features/settings/providers";
+import { CLI_CONFIG_CHANGED_EVENT, isPseudoProvider, providerModel, type EngineId } from "@/features/settings/providers";
 import { EmptyState } from "@/components/base/empty-state";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
@@ -204,6 +204,13 @@ export const ChatConversation = memo(function ChatConversation({
   // Provider configs feed the model picker's per-engine model lists.
   useEffect(() => {
     ipc.getCliConfig().then(setCliConfig).catch(() => {});
+  }, []);
+  // The settings CLI page mutates provider config outside this tree; refetch
+  // so the model picker tracks channel switches immediately.
+  useEffect(() => {
+    const reload = () => ipc.getCliConfig().then(setCliConfig).catch(() => {});
+    window.addEventListener(CLI_CONFIG_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(CLI_CONFIG_CHANGED_EVENT, reload);
   }, []);
   // Model catalogs for every engine (pi/omp probe their CLI; others return
   // empty and fall back to provider-config models below). The CLI menu's

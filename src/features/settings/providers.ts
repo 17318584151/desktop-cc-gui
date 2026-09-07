@@ -1,5 +1,7 @@
 /** Shared provider model for the CLI config section. */
 
+import type { ProviderSection } from "@/lib/ipc";
+
 export const ENGINE_IDS = ["claude", "kimi", "grok", "codex", "pi", "omp", "dsh"] as const;
 export type EngineId = (typeof ENGINE_IDS)[number];
 
@@ -39,4 +41,87 @@ export function providerModel(engine: EngineId, raw: unknown): string {
     }
   }
   return "";
+}
+
+/**
+ * Per-engine env keys backing the flat baseUrl/apiKey/model fields, mirroring
+ * the backend env_mapping() table. Legacy imported channels (ccswitch shape)
+ * carry these inside settingsConfig.env/env, and the backend lets raw env win
+ * over flat fields — so an edit must strip them or the new values are dead.
+ */
+const ENV_CONVENTION_KEYS: Partial<Record<EngineId, string[]>> = {
+  claude: ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"],
+  kimi: ["KIMI_BASE_URL", "KIMI_API_KEY", "KIMI_MODEL_NAME"],
+  grok: ["GROK_BASE_URL", "GROK_API_KEY", "GROK_MODEL"],
+  codex: ["OPENAI_BASE_URL", "OPENAI_API_KEY"],
+};
+
+/** Copy `raw` with the convention env keys removed (empty maps/objects
+ *  dropped), so edited flat fields take effect. Unknown keys are preserved. */
+export function stripConventionEnv(engine: EngineId, raw: unknown): Record<string, unknown> {
+  const keys = ENV_CONVENTION_KEYS[engine];
+  const o = raw && typeof raw === "object" ? { ...(raw as Record<string, unknown>) } : {};
+  if (!keys) return o;
+  const strip = (env: unknown): Record<string, unknown> | undefined => {
+    if (!env || typeof env !== "object") return undefined;
+    const rest = Object.fromEntries(
+      Object.entries(env as Record<string, unknown>).filter(([k]) => !keys.includes(k)),
+    );
+    return Object.keys(rest).length > 0 ? rest : undefined;
+  };
+  const env = strip(o.env);
+  if (env) o.env = env;
+  else delete o.env;
+  if (o.settingsConfig && typeof o.settingsConfig === "object") {
+    const sc = { ...(o.settingsConfig as Record<string, unknown>) };
+    const scEnv = strip(sc.env);
+    if (scEnv) sc.env = scEnv;
+    else delete sc.env;
+    if (Object.keys(sc).length > 0) o.settingsConfig = sc;
+    else delete o.settingsConfig;
+  }
+  return o;
+}
+
+/** One channel row of an engine's provider map, flattened for the UI. */
+export interface ProviderEntry {
+  /** Map key — the id `set_current_provider` expects. */
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  /** Untouched stored record, merged back on save so unknown fields survive. */
+  raw: unknown;
+}
+
+/** Display-ready channel list: pseudo ids are never stored in the map, so no
+ *  filtering is needed; display name falls back to the id. */
+export function providerEntries(
+  engine: EngineId,
+  section: ProviderSection | undefined,
+): ProviderEntry[] {
+  if (!section) return [];
+  return Object.entries(section.providers).map(([id, raw]) => {
+    const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    return {
+      id,
+      name: asString(o.name).trim() || id,
+      baseUrl: asString(o.baseUrl),
+      apiKey: asString(o.apiKey),
+      model: providerModel(engine, raw),
+      raw,
+    };
+  });
+}
+
+/**
+ * Window event fired after any CLI config mutation so the chat tree
+ * (ChatConversation's model picker) refetches — it caches getCliConfig on
+ * mount and never re-reads otherwise.
+ */
+export const CLI_CONFIG_CHANGED_EVENT = "ccgui:cli-config-changed";
+
+export function notifyCliConfigChanged() {
+  window.dispatchEvent(new Event(CLI_CONFIG_CHANGED_EVENT));
 }

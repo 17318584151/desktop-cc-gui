@@ -1,7 +1,8 @@
 import X from "lucide-react/dist/esm/icons/x";
-import { useEffect, useRef } from "react";
+import Plus from "lucide-react/dist/esm/icons/plus";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ReactNode, MouseEvent, KeyboardEvent } from "react";
+import type { ReactNode, MouseEvent, KeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { LucideIcon } from "lucide-react";
 import { isWeb, startWindowDrag } from "@/lib/platform";
 import { cx } from "@/utils/cx";
@@ -49,6 +50,10 @@ interface SessionTabStripProps {
   onSelect: (key: string) => void;
   onClose: (key: string) => void;
   closeLabel: string;
+  /** Drag-reorder: dragged tab key dropped before/after a target tab key. */
+  onReorder?: (draggedKey: string, targetKey: string, before: boolean) => void;
+  /** Invoked by the trailing "+" button; omit to hide it. */
+  onNew?: () => void;
   /** Buttons pinned to the strip's right edge, outside the scrolling tabs. */
   actions?: ReactNode;
   /** Node pinned left of the tabs (e.g. a sidebar expand button). */
@@ -70,12 +75,90 @@ export function SessionTabStrip({
   onSelect,
   onClose,
   closeLabel,
+  onReorder,
   actions,
+  onNew,
   leading,
   trafficLightInset = true,
 }: SessionTabStripProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
+  // Tab drag-reorder is pointer-driven, not HTML5 DnD: WKWebView never
+  // delivers dragover/drop, so native DnD only reordered in Chromium. A 5px
+  // threshold keeps plain clicks intact; the dragged key lives in a ref,
+  // the insertion point in state so the indicator bar follows the pointer.
+  const dragStateRef = useRef<{ key: string; startX: number; dragging: boolean } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{
+    draggedKey: string;
+    key: string;
+    before: boolean;
+  } | null>(null);
+  // pointerup fires before click; swallow the click that ends a drag.
+  const suppressClickRef = useRef(false);
+
+  function handleTabPointerDown(tab: SessionTabItem) {
+    return (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!onReorder || e.button !== 0) return;
+      // Dragging from the close button feels broken; keep it click-only.
+      if ((e.target as HTMLElement).closest("button")) return;
+      dragStateRef.current = { key: tab.key, startX: e.clientX, dragging: false };
+    };
+  }
+
+  useEffect(() => {
+    if (!onReorder) return;
+    const DRAG_THRESHOLD = 5;
+    const targetAt = (x: number, y: number, excludeKey: string) => {
+      const el = document
+        .elementFromPoint(x, y)
+        ?.closest<HTMLElement>("[data-tab-key]");
+      const key = el?.dataset.tabKey;
+      if (!el || !key || key === excludeKey) return null;
+      const rect = el.getBoundingClientRect();
+      return { key, before: x < rect.left + rect.width / 2 };
+    };
+    const onMove = (e: PointerEvent) => {
+      const st = dragStateRef.current;
+      if (!st) return;
+      if (!st.dragging) {
+        if (Math.abs(e.clientX - st.startX) < DRAG_THRESHOLD) return;
+        st.dragging = true;
+      }
+      const target = targetAt(e.clientX, e.clientY, st.key);
+      setDropTarget((prev) => {
+        const next = target ? { draggedKey: st.key, ...target } : null;
+        return prev?.key === next?.key &&
+          prev?.before === next?.before &&
+          prev?.draggedKey === next?.draggedKey
+          ? prev
+          : next;
+      });
+    };
+    const onUp = (e: PointerEvent) => {
+      const st = dragStateRef.current;
+      dragStateRef.current = null;
+      setDropTarget(null);
+      if (!st?.dragging) return;
+      suppressClickRef.current = true;
+      // The click ending the drag fires right after pointerup — but when
+      // the press lands on one tab and releases on another, it targets
+      // their container instead, never reaching a tab's onClick. Clear the
+      // flag on the next task so it can't swallow a later genuine click.
+      setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+      const target = targetAt(e.clientX, e.clientY, st.key);
+      if (target) onReorder(st.key, target.key, target.before);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [onReorder]);
 
   // Vertical wheel drives the horizontal tab scroll (VSCode behavior).
   // Native non-passive listener: React wheel handlers cannot preventDefault.
@@ -122,18 +205,17 @@ export function SessionTabStrip({
       data-tauri-drag-region
       onMouseDown={handleStripMouseDown}
       className={cx(
-        "flex h-10 shrink-0 items-center border-b border-separator-border select-none",
+        "flex h-10 shrink-0 items-center border-b border-separator-border bg-background-primary-default select-none",
         IS_MAC && trafficLightInset && "pl-[80px]",
       )}
     >
       {leading && <div className="flex h-full shrink-0 items-center pl-2">{leading}</div>}
       <div
         ref={scrollRef}
-        role="tablist"
-        aria-label="tabs"
         onKeyDown={handleTabListKeyDown}
-        className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2"
+        className="group scrollbar-none flex min-w-0 flex-1 items-center overflow-x-auto px-2"
       >
+      <div role="tablist" aria-label="tabs" className="flex min-w-0 items-center gap-1">
       {tabs.map((tab) => {
         const isActive = tab.key === activeKey;
         const TabIcon = tab.icon;
@@ -146,7 +228,13 @@ export function SessionTabStrip({
             aria-controls="center-tabpanel"
             tabIndex={isActive ? 0 : -1}
             title={tab.title ?? tab.label}
-            onClick={() => onSelect(tab.key)}
+            onClick={() => {
+              if (suppressClickRef.current) {
+                suppressClickRef.current = false;
+                return;
+              }
+              onSelect(tab.key);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
@@ -156,8 +244,10 @@ export function SessionTabStrip({
             onAuxClick={(e) => {
               if (e.button === 1) onClose(tab.key);
             }}
+            onPointerDown={onReorder ? handleTabPointerDown(tab) : undefined}
             className={cx(
-              "group flex h-7 max-w-48 shrink-0 cursor-default items-center gap-1.5 rounded-lg px-2.5 text-body-medium transition-colors",
+              "group relative flex h-7 max-w-48 shrink-0 cursor-default items-center gap-1.5 rounded-lg px-2.5 text-body-medium transition-colors",
+              dropTarget?.draggedKey === tab.key && "opacity-50",
               isActive
                 ? "bg-background-secondary-default text-text-primary"
                 : "text-text-tertiary hover:bg-background-secondary-hover hover:text-text-secondary",
@@ -195,6 +285,15 @@ export function SessionTabStrip({
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground-icon-primary" />
             )}
             <span className="truncate">{tab.label}</span>
+            {dropTarget?.key === tab.key && (
+              <span
+                aria-hidden
+                className={cx(
+                  "pointer-events-none absolute top-1 bottom-1 w-0.5 rounded-full bg-accent-500",
+                  dropTarget.before ? "-left-[3px]" : "-right-[3px]",
+                )}
+              />
+            )}
             <button
               type="button"
               aria-label={closeLabel}
@@ -214,6 +313,18 @@ export function SessionTabStrip({
           </div>
         );
       })}
+      </div>
+      {onNew && (
+        <button
+          type="button"
+          aria-label={t("chat.newChat")}
+          title={t("chat.newChat")}
+          onClick={onNew}
+          className="ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-foreground-icon-tertiary opacity-0 transition-opacity hover:bg-background-secondary-hover hover:text-foreground-icon-primary focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Plus className="size-4" aria-hidden />
+        </button>
+      )}
       </div>
       {actions && (
         <div className="flex h-full shrink-0 items-center">

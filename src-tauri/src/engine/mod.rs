@@ -53,19 +53,41 @@ pub enum EngineEvent {
     Delta(String),
     /// Reasoning/thinking delta (append).
     Thinking(String),
-    /// A completed message block (role, text).
-    Message { role: String, text: String },
+    /// A completed message block (role, text). `path` carries the target
+    /// file of a tool call (read/edit/write/...) so the UI can render a
+    /// file chip; None for everything else.
+    Message {
+        role: String,
+        text: String,
+        path: Option<String>,
+    },
     /// Native session id became known.
     SessionId(String),
     /// Token usage snapshot from the engine.
     Usage(Value),
     /// Engine-reported error.
     Error(String),
+    /// Non-terminal engine notice (e.g. an upstream 429 the CLI is
+    /// retrying): surfaced to the UI, but the turn is still running.
+    Warn(String),
     /// Turn finished successfully.
     Done {
         session_id: Option<String>,
         usage: Option<Value>,
     },
+}
+
+/// First path-like argument of a tool call (`read`/`edit`/`write` use
+/// `path`, claude's tools use `file_path`). Returns None for tools whose
+/// args carry no file target (e.g. bash `command`). Glob patterns are kept
+/// as-is; the UI decides whether the string is chip-worthy.
+pub(crate) fn tool_path_arg(args: &Value) -> Option<String> {
+    ["path", "file_path", "filePath"]
+        .iter()
+        .filter_map(|key| args.get(key).and_then(Value::as_str))
+        .map(|s| s.trim())
+        .find(|s| !s.is_empty())
+        .map(|s| s.to_string())
 }
 
 pub trait Engine: Send + Sync {
@@ -514,13 +536,13 @@ impl RunContext {
             EngineEvent::Thinking(text) => {
                 state.push(&self.sink, &self.run_id, &self.engine_id, "thinking", Value::String(text))
             }
-            EngineEvent::Message { role, text } => state.push(
-                &self.sink,
-                &self.run_id,
-                &self.engine_id,
-                "message",
-                serde_json::json!({ "role": role, "text": text }),
-            ),
+            EngineEvent::Message { role, text, path } => {
+                let mut payload = serde_json::json!({ "role": role, "text": text });
+                if let Some(path) = path {
+                    payload["path"] = Value::String(path);
+                }
+                state.push(&self.sink, &self.run_id, &self.engine_id, "message", payload)
+            }
             EngineEvent::SessionId(id) => self.adopt_session_id(state, &id, true),
             EngineEvent::Usage(usage) => {
                 state.push(&self.sink, &self.run_id, &self.engine_id, "usage", usage)
@@ -528,6 +550,11 @@ impl RunContext {
             EngineEvent::Error(error) => {
                 state.saw_error = true;
                 state.push(&self.sink, &self.run_id, &self.engine_id, "error", Value::String(error));
+            }
+            EngineEvent::Warn(error) => {
+                // Not terminal: no saw_error — EOF settle still decides the
+                // turn's fate if the CLI gives up after this notice.
+                state.push(&self.sink, &self.run_id, &self.engine_id, "warn", Value::String(error));
             }
             EngineEvent::Done { session_id, usage } => {
                 state.saw_done = true;

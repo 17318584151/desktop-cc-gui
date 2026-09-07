@@ -83,6 +83,8 @@ export interface ChatStore {
   closeTab: (engine: string, sessionId: string | null, workspacePath: string) => void;
   /** Activate an already-open tab without changing the tab list. */
   focusTab: (engine: string, sessionId: string | null, workspacePath: string) => void;
+  /** Move an open tab to a new position (drag-reorder in the tab strip). */
+  moveTab: (engine: string, sessionId: string | null, workspacePath: string, toIndex: number) => void;
   startNewChat: (workspacePath: string) => void;
   setActiveEngine: (engine: string) => void;
   setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
@@ -477,6 +479,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
     },
     focusTab: (engine, sessionId, workspacePath) => {
       activateTab({ engine, sessionId, workspacePath });
+    },
+    moveTab: (engine, sessionId, workspacePath, toIndex) => {
+      const s = get();
+      const from = s.openTabs.findIndex((t) => sameTab(t, engine, sessionId, workspacePath));
+      if (from < 0) return;
+      const openTabs = [...s.openTabs];
+      const [tab] = openTabs.splice(from, 1);
+      openTabs.splice(Math.max(0, Math.min(toIndex, openTabs.length)), 0, tab);
+      set({ openTabs });
+      persistTabs(openTabs, s.active);
     },
 
     setActiveEngine: (engine) => {

@@ -115,6 +115,7 @@ fn collect_session(reader: impl BufRead, extract: &LineExtractor<'_>) -> ParsedS
             role: row.role,
             text: row.text,
             ts: row.ts,
+            path: row.path,
             usage: row.usage,
             model: row.model,
             images: row.images,
@@ -313,6 +314,7 @@ struct LineRow {
     role: String,
     text: String,
     ts: Option<String>,
+    path: Option<String>,
     usage: Option<Value>,
     model: Option<String>,
     images: Vec<String>,
@@ -325,6 +327,7 @@ impl LineRow {
             role: role.to_string(),
             text,
             ts,
+            path: None,
             usage: None,
             model: None,
             images: Vec::new(),
@@ -460,11 +463,16 @@ fn pi_assistant_part(part: &Value, out: &mut LineRows, text: &mut String, ts: &O
             pi_flush_text(out, text, ts);
             let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
             let intent = part.get("intent").and_then(Value::as_str);
-            out.push(LineRow::new(
-                "tool",
-                crate::engine::pi_family::tool_label(name, intent),
-                ts.clone(),
-            ));
+            out.push(LineRow {
+                path: part
+                    .get("arguments")
+                    .and_then(crate::engine::tool_path_arg),
+                ..LineRow::new(
+                    "tool",
+                    crate::engine::pi_family::tool_label(name, intent),
+                    ts.clone(),
+                )
+            });
         }
         Some("thinking") => {
             pi_flush_text(out, text, ts);
@@ -594,7 +602,10 @@ fn claude_block_rows(
                 .and_then(Value::as_str)
                 .unwrap_or("tool")
                 .to_string();
-            out.push(LineRow::new("tool", name, ts.clone()));
+            out.push(LineRow {
+                path: block.get("input").and_then(crate::engine::tool_path_arg),
+                ..LineRow::new("tool", name, ts.clone())
+            });
         }
         Some("image") => {
             if images == ImageMode::Collect {
@@ -808,7 +819,7 @@ mod tests {
                 "content": [
                     {"type": "thinking", "thinking": "first thought", "thinkingSignature": "sig"},
                     {"type": "text", "text": "answer one"},
-                    {"type": "toolCall", "name": "read", "intent": "Listing root"},
+                    {"type": "toolCall", "name": "read", "intent": "Listing root", "arguments": {"path": "src/main.rs"}},
                     {"type": "text", "text": "answer two"}
                 ]
             }
@@ -819,7 +830,9 @@ mod tests {
         assert_eq!(rows[0].text, "first thought");
         assert_eq!(rows[1].text, "answer one");
         assert_eq!(rows[2].text, "read · Listing root");
+        assert_eq!(rows[2].path.as_deref(), Some("src/main.rs"));
         assert_eq!(rows[3].text, "answer two");
+        assert_eq!(rows[3].path, None);
     }
 
     #[test]

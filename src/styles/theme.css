@@ -20,6 +20,7 @@
   --color-neutral-100: #f7f7f7;
   --color-neutral-200: #ebebeb;
   --color-neutral-925: #121212;
+  --color-neutral-850: #1c1c1c;
   --color-blue-400:    #3392ff;
 
   /* ----- Accent ramp ---------------------------------------------------------
@@ -353,8 +354,9 @@
   --color-foreground-icon-primary:    var(--color-neutral-50);
   --color-foreground-icon-hover:      var(--color-white);
   --color-foreground-icon-error:      var(--color-red-400);
-  --color-foreground-icon-tertiary:   var(--color-neutral-600);
-  --color-foreground-icon-quaternary: var(--color-neutral-700);
+  --color-foreground-icon-secondary:   var(--color-neutral-400);
+  --color-foreground-icon-tertiary:   var(--color-neutral-500);
+  --color-foreground-icon-quaternary: var(--color-neutral-600);
   --color-foreground-icon-disabled:   var(--color-neutral-800);
   --color-foreground-disabled:        var(--color-neutral-700);
   --color-foreground-disabled-danger: var(--color-red-400);
@@ -364,26 +366,28 @@
 
   /* Text */
   --color-text-primary:  var(--color-neutral-50);
-  --color-text-tertiary: var(--color-neutral-600);
-  --color-text-disabled: var(--color-neutral-800);
-  --color-text-error-primary: var(--color-red-400);
+  --color-text-secondary: var(--color-neutral-400);
+  --color-text-tertiary: var(--color-neutral-500);
+  --color-text-disabled: var(--color-neutral-700);
+  --color-text-error-primary: var(--color-red-300);
   --color-input-disabled-text: color-mix(in srgb, var(--color-neutral-500) 40%, transparent);
 
   /* Background */
   --color-background-full:              var(--color-neutral-925);
   --color-background-primary-default:   var(--color-neutral-800);
-  --color-background-inner-default:     color-mix(in srgb, var(--color-neutral-800) 60%, transparent);
-  --color-background-primary-hover:     color-mix(in srgb, var(--color-neutral-700) 60%, transparent);
-  --color-background-primary-active:    var(--color-neutral-800);
+  --color-background-inner-default:     color-mix(in srgb, var(--color-white) 6%, transparent);
+  --color-background-primary-hover:     color-mix(in srgb, var(--color-white) 8%, transparent);
+  --color-background-primary-active:    color-mix(in srgb, var(--color-white) 12%, transparent);
   --color-background-primary-disabled:  var(--color-neutral-800);
-  --color-input-disabled-background:    color-mix(in srgb, var(--color-neutral-800) 30%, transparent);
-  --color-background-secondary-default: var(--color-neutral-900);
+  --color-input-disabled-background:    color-mix(in srgb, var(--color-white) 4%, transparent);
+  --color-background-secondary-default: var(--color-neutral-850);
   --color-background-secondary-hover:   var(--color-neutral-800);
   --color-background-tertiary-default:  var(--color-neutral-800);
   --color-background-tertiary-hover:    var(--color-neutral-700);
-  --color-background-tertiary-error:    color-mix(in srgb, var(--color-red-950) 60%, transparent);
+  --color-background-tertiary-error:    color-mix(in srgb, var(--color-red-950) 40%, transparent);
   --color-background-quaternary-default: var(--color-neutral-700);
   --color-background-quaternary-hover:   var(--color-neutral-600);
+  --color-background-quaternary-error:   color-mix(in srgb, var(--color-red-900) 35%, transparent);
   --color-ai-chat-composer-add-background:       var(--color-neutral-700);
   --color-ai-chat-composer-add-hover-background: var(--color-neutral-600);
   --color-agent-progress-ring:                     color-mix(in srgb, var(--color-white) 50%, transparent);
@@ -393,7 +397,7 @@
   --color-button-ghost-disabled:                  var(--color-neutral-800);
   --color-button-ghost-foreground:                var(--color-accent-300);
   --color-button-ghost-disabled-foreground:       var(--color-neutral-600);
-  --color-dropdown-item-hover-background:        color-mix(in srgb, var(--color-neutral-700) 60%, transparent);
+  --color-dropdown-item-hover-background:        color-mix(in srgb, var(--color-white) 8%, transparent);
 
   /* Markdown syntax highlighting (hljs) — GitHub dark palette. */
   --color-md-token-comment:     rgba(150, 170, 200, 0.75);
@@ -434,17 +438,17 @@
   --color-border-button-hover:     var(--color-neutral-500);
   --color-border-button-active:    var(--color-neutral-600);
   --color-border-button-white:     var(--color-zinc-800);
-  --color-border-error-default:    var(--color-red-400);
+  --color-border-error-default:    var(--color-red-900);
   --color-border-checkbox-default: var(--color-neutral-700);
   --color-border-checkbox-hover:   var(--color-neutral-500);
   --color-border-checkbox-active:  var(--color-neutral-500);
-  --color-border-component-detail-container: var(--color-neutral-800);
-  --color-border-ai-profile-card:             var(--color-neutral-800);
-  --color-border-table:            var(--color-neutral-800);
+  --color-border-component-detail-container: var(--color-neutral-700);
+  --color-border-ai-profile-card:             var(--color-neutral-700);
+  --color-border-table:            var(--color-neutral-700);
   --color-border-button-group:     color-mix(in srgb, var(--color-neutral-600) 60%, transparent);
   --color-border-sidebar-profile-hover: var(--color-neutral-600);
-  --color-separator-border:        var(--color-neutral-800);
-  --color-separator-border-strong: color-mix(in srgb, var(--color-neutral-700) 60%, transparent);
+  --color-separator-border:        var(--color-neutral-700);
+  --color-separator-border-strong: var(--color-neutral-600);
 
   /* Figma's dark table status pairs. */
   --color-status-lime-background:   color-mix(in srgb, var(--color-lime-950) 60%, transparent);

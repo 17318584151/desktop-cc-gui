@@ -4,6 +4,12 @@ import { errorText } from "@/lib/errors";
 
 const TTL_MS = 30_000;
 
+/** A file whose diff is shown: staged (index vs HEAD) or unstaged/untracked. */
+export interface DiffTarget {
+  file: string;
+  staged: boolean;
+}
+
 function isNotARepo(err: unknown): boolean {
   return errorText(err).includes("NOT_A_REPO");
 }
@@ -23,6 +29,10 @@ interface GitStore {
   branchesByWorkspace: Record<string, BranchInfo[] | undefined>;
   /** epoch ms of last successful/failed fetch per workspace (TTL bookkeeping) */
   fetchedAtByWorkspace: Record<string, number>;
+  /** Diff open in the center area; null = center shows chat/files. */
+  diffView: { workspacePath: string; target: DiffTarget } | null;
+  openDiff: (workspacePath: string, target: DiffTarget) => void;
+  closeDiff: () => void;
 
   /** Refreshes status; skipped when fetched < 30s ago unless `force`. */
   refresh: (workspacePath: string, force?: boolean) => Promise<void>;
@@ -71,6 +81,10 @@ export const useGitStore = create<GitStore>((set, get) => {
     errorByWorkspace: {},
     branchesByWorkspace: {},
     fetchedAtByWorkspace: {},
+    diffView: null,
+
+    openDiff: (workspacePath, target) => set({ diffView: { workspacePath, target } }),
+    closeDiff: () => set({ diffView: null }),
 
     refresh: (workspacePath, force = false) => {
       const last = get().fetchedAtByWorkspace[workspacePath];

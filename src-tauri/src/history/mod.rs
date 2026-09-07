@@ -15,6 +15,10 @@ pub struct Message {
     pub role: String,
     pub text: String,
     pub ts: Option<String>,
+    /// Target file of a tool call (read/edit/write/...); drives the file
+    /// chip in the timeline. None for non-tool rows and path-less tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

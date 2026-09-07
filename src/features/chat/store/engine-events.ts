@@ -94,9 +94,15 @@ function onThinking(event: EngineEventPayload, key: string, deps: EngineEventDep
 }
 
 function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  const data = event.data as { role: string; text: string };
+  const data = event.data as { role: string; text: string; path?: string | null };
   if (data.role === "tool") {
-    appendToolMessage(deps.set, key, data.text, deps.get().models[event.engine] || null);
+    appendToolMessage(
+      deps.set,
+      key,
+      data.text,
+      deps.get().models[event.engine] || null,
+      data.path ?? null,
+    );
     return;
   }
   if (data.role !== "assistant") return;
@@ -218,6 +224,14 @@ function onError(event: EngineEventPayload, key: string, deps: EngineEventDeps) 
   deps.markUnseenIfBackground(key);
 }
 
+function onWarn(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
+  // Non-terminal notice (e.g. an upstream 429 the CLI is retrying): show the
+  // banner, but the turn is still alive — streaming state, unflushed chunks,
+  // and run routing all stay untouched. Cleared by onDone when the turn
+  // recovers, overwritten by onError if it ends up failing.
+  patchSession(deps.set, key, { error: event.data as string });
+}
+
 function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   const prev = deps.get().bySession[key] ?? EMPTY_SESSION;
   const data = event.data as { usage: unknown };
@@ -253,6 +267,7 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
         [key]: {
           ...cur,
           messages,
+          error: null,
           streaming: false,
           turnStartedAt: null,
           usage: finalUsage,
@@ -308,6 +323,9 @@ export function handleEngineEvents(events: EngineEventPayload[], deps: EngineEve
         break;
       case "error":
         onError(event, key, deps);
+        break;
+      case "warn":
+        onWarn(event, key, deps);
         break;
       case "done":
         onDone(event, key, deps);

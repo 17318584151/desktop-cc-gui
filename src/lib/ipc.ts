@@ -23,6 +23,8 @@ export interface Message {
   seq: number;
   role: string; // "user" | "assistant" | "tool" | "thinking"
   text: string;
+  /** Target file of a tool call (read/edit/write/...); renders as a file chip. */
+  path?: string | null;
   ts: string | null;
   usage?: unknown;
   model?: string | null;

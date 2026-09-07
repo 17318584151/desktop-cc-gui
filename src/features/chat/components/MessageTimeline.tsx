@@ -11,14 +11,53 @@ import type { SessionState } from "../store";
 import { parseUsage } from "../usage";
 import { cx } from "@/utils/cx";
 import { SOFT_EASE } from "@/components/application/agent-log/agent-log";
-import { StepRow, type TaskListStep } from "@/components/application/task-list/task-list";
+import { StepRow, type TaskListChip, type TaskListStep } from "@/components/application/task-list/task-list";
+import { getFileTreeIconSvg } from "@/features/files/fileIcons";
 import { AgentThinking } from "@/components/application/agent-thinking/agent-thinking";
 import { useThrottled } from "@/hooks/use-throttled";
 import { useCopied } from "@/hooks/use-copied";
 import { MessageImages } from "./MessageImages";
+import { MessageAnchorRail, type MessageAnchor } from "./MessageAnchorRail";
 
 /** Distance from the scroll tail within which the user counts as "at bottom". */
 const BOTTOM_THRESHOLD_PX = 100;
+const ANCHOR_TITLE_MAX_LENGTH = 60;
+const ANCHOR_DESCRIPTION_MAX_LENGTH = 160;
+
+/** Bounded plain-text preview copy for one anchor: first line is the title,
+ * the rest folds into a short description (reference: deriveAnchorPreviewCopy). */
+type AnchorRow = MessageAnchor & { rowIndex: number };
+
+function buildAnchorRows(rows: TimelineRow[]): AnchorRow[] {
+  const anchors: AnchorRow[] = [];
+  rows.forEach((row, rowIndex) => {
+    if (row.kind !== "msg" || row.message.role !== "user") return;
+    const normalizedLines = row.message.text
+      .split("\n")
+      .map((line) => line.trim().replace(/\s+/g, " "))
+      .filter(Boolean);
+    const firstLine = normalizedLines[0] ?? "";
+    const title =
+      firstLine.length > ANCHOR_TITLE_MAX_LENGTH
+        ? `${firstLine.slice(0, ANCHOR_TITLE_MAX_LENGTH)}…`
+        : firstLine;
+    const descriptionSource =
+      normalizedLines.length > 1
+        ? normalizedLines.slice(1).join(" ")
+        : firstLine.slice(ANCHOR_TITLE_MAX_LENGTH).trim();
+    const description =
+      descriptionSource.length > ANCHOR_DESCRIPTION_MAX_LENGTH
+        ? `${descriptionSource.slice(0, ANCHOR_DESCRIPTION_MAX_LENGTH)}…`
+        : descriptionSource;
+    anchors.push({
+      id: `u-${row.message.seq}`,
+      rowIndex,
+      title,
+      ...(description ? { description } : {}),
+    });
+  });
+  return anchors;
+}
 
 /** Classify a tool-call label (tool name or shell command) into a type chip. */
 function toolTypeKey(text: string): string {
@@ -35,7 +74,33 @@ function toolTypeKey(text: string): string {
   return "toolTypeTool";
 }
 
-type ProcessItem = { type: "tool" | "thinking"; text: string; live?: boolean };
+/** File chip for a tool call's target path. Glob patterns and path-less
+ * calls get no chip — a pattern is not a file you can open. */
+function fileChipFor(path: string | null | undefined): TaskListChip | null {
+  if (!path || /[*?{}[\]]/.test(path)) return null;
+  const name = path.split(/[\\/]/).pop() ?? "";
+  if (!name) return null;
+  // Same heuristic as the composer file tags: extension-less = folder.
+  const isDir = !name.includes(".");
+  return {
+    label: name,
+    icon: (
+      <span
+        aria-hidden
+        className="text-foreground-icon-tertiary [&>svg]:size-3.5"
+        dangerouslySetInnerHTML={{ __html: getFileTreeIconSvg(name, isDir, false) }}
+      />
+    ),
+  };
+}
+
+type ProcessItem = {
+  type: "tool" | "thinking";
+  text: string;
+  live?: boolean;
+  /** Target file of the tool call; renders as a file-type chip. */
+  path?: string | null;
+};
 
 type TimelineRow =
   | { kind: "msg"; message: Message; turnFinal: boolean }
@@ -74,6 +139,7 @@ function getProcessItem(message: Message): ProcessItem {
       type: message.role === "tool" ? "tool" : "thinking",
       text: message.text,
       live: message.live,
+      path: message.path,
     };
     processItemCache.set(message, item);
   }
@@ -167,7 +233,7 @@ function markToolKeys(seen: Set<string>, processId: number, items: ProcessItem[]
 
 type ProcessSection =
   | { type: "thinking"; text: string; live?: boolean }
-  | { type: "tools"; calls: { text: string; index: number }[] };
+  | { type: "tools"; calls: { text: string; path: string | null; index: number }[] };
 
 function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
   const sections: ProcessSection[] = [];
@@ -176,7 +242,7 @@ function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
       sections.push({ type: "thinking", text: item.text, live: item.live });
     } else {
       const last = sections[sections.length - 1];
-      const call = { text: item.text, index };
+      const call = { text: item.text, path: item.path ?? null, index };
       if (last?.type === "tools") last.calls.push(call);
       else sections.push({ type: "tools", calls: [call] });
     }
@@ -441,7 +507,7 @@ const ProcessDisclosure = memo(function ProcessDisclosure({
         }}
         className="flex w-full cursor-pointer flex-col text-left"
       >
-        <span className="flex items-center gap-1 py-0.5 text-body-regular text-text-tertiary transition-colors hover:text-text-secondary">
+        <span className="flex items-center gap-1 py-0.5 text-body-regular text-text-secondary transition-colors hover:text-text-primary">
           {singleThinking && <Brain className="size-3.5" aria-hidden />}
           {label}
           <ChevronRight
@@ -484,7 +550,13 @@ const ProcessDisclosure = memo(function ProcessDisclosure({
                       <FrozenStepRow
                         key={call.index}
                         play={play}
-                        step={{ label: call.text, chips: [{ label: t(`chat.${toolTypeKey(call.text)}`) }] }}
+                        step={{
+                          label: call.text,
+                          chips: [
+                            ...[fileChipFor(call.path)].filter((c): c is TaskListChip => c !== null),
+                            { label: t(`chat.${toolTypeKey(call.text)}`) },
+                          ],
+                        }}
                         first={j === 0}
                         last={j === section.calls.length - 1}
                       />
@@ -552,6 +624,8 @@ export const MessageTimeline = memo(function MessageTimeline({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const items = session.messages;
   const rows = useMemo(() => buildRows(items), [items]);
+  // Anchor rail: one dash per user message (reference: messageAnchors).
+  const anchors = useMemo(() => buildAnchorRows(rows), [rows]);
   // Per-timeline, not a module singleton: ChatConversation remounts this
   // with key={sessionKey}, so a tab switch gets a fresh set. Prime from
   // the first snapshot that already has rows so history / tab-open does
@@ -668,6 +742,68 @@ export const MessageTimeline = memo(function MessageTimeline({
       if (wheelRaf) cancelAnimationFrame(wheelRaf);
     };
   }, []);
+  // --- Anchor rail: active dash follows scroll (ported from the reference
+  // client, adapted to the virtualizer: row offsets replace DOM queries) ---
+  const [activeAnchorId, setActiveAnchorId] = useState<string | null>(null);
+  const anchorsRef = useRef(anchors);
+  anchorsRef.current = anchors;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || anchors.length === 0) {
+      setActiveAnchorId(null);
+      return;
+    }
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const list = anchorsRef.current;
+      if (list.length === 0) return;
+      // Pinned to the tail → the latest anchor is always active (reference W1
+      // rule); streaming growth must not churn the active dash per frame.
+      if (atBottomRef.current && !userPausedRef.current) {
+        const latest = list[list.length - 1].id;
+        setActiveAnchorId((prev) => (prev === latest ? prev : latest));
+        return;
+      }
+      const anchorY = el.scrollTop + Math.min(96, el.clientHeight * 0.32);
+      let rowIndex = 0;
+      for (const item of virtualizer.getVirtualItems()) {
+        if (item.start <= anchorY) rowIndex = item.index;
+        else break;
+      }
+      let next = list[0].id;
+      for (const anchor of list) {
+        if (anchor.rowIndex <= rowIndex) next = anchor.id;
+        else break;
+      }
+      setActiveAnchorId((prev) => (prev === next ? prev : next));
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [anchors.length, virtualizer]);
+
+  const handleScrollToAnchor = useCallback(
+    (anchorId: string) => {
+      const anchor = anchorsRef.current.find((a) => a.id === anchorId);
+      if (!anchor) return;
+      // Jumping is explicit navigation: pause tail-follow unless the target
+      // IS the tail, so the pin effect does not fight the jump.
+      const isTail = anchor.rowIndex >= rows.length - 1;
+      userPausedRef.current = !isTail;
+      atBottomRef.current = isTail;
+      setActiveAnchorId(anchorId);
+      virtualizer.scrollToIndex(anchor.rowIndex, { align: "start" });
+    },
+    [rows.length, virtualizer],
+  );
 
   // Scroll to bottom when switching sessions (new page loaded) or when a new
   // message is appended while following the tail.
@@ -755,57 +891,66 @@ export const MessageTimeline = memo(function MessageTimeline({
   }, [session.nextBefore, items.length, virtualizer]);
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4">
-      <div data-sentinel className="h-px" />
-      {session.nextBefore && (
-        <button
-          type="button"
-          onClick={onLoadEarlier}
-          className="mx-auto my-2 block rounded-full bg-background-tertiary-default px-3 py-1 text-caption-1-medium text-text-secondary hover:bg-background-secondary-hover"
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <MessageAnchorRail
+        activeAnchorId={activeAnchorId}
+        anchors={anchors}
+        navigationLabel={t("chat.anchorNavigation")}
+        getFallbackTitle={(index) => t("chat.anchorUserTitle", { index: index + 1 })}
+        onScrollToAnchor={handleScrollToAnchor}
+      />
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4">
+        <div data-sentinel className="h-px" />
+        {session.nextBefore && (
+          <button
+            type="button"
+            onClick={onLoadEarlier}
+            className="mx-auto my-2 block rounded-full bg-background-tertiary-default px-3 py-1 text-caption-1-medium text-text-secondary hover:bg-background-secondary-hover"
+          >
+            {t("chat.loadEarlier")}
+          </button>
+        )}
+        <div
+          data-virtual-inner
+          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          className="mx-auto max-w-[750px]"
         >
-          {t("chat.loadEarlier")}
-        </button>
-      )}
-      <div
-        data-virtual-inner
-        style={{ height: virtualizer.getTotalSize(), position: "relative" }}
-        className="mx-auto max-w-[750px]"
-      >
-        {virtualizer.getVirtualItems().map((item) => {
-          const isTail = item.index >= rows.length;
-          return (
-            <div
-              key={item.key}
-              data-index={item.index}
-              ref={virtualizer.measureElement}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                transform: `translateY(${item.start}px)`,
-              }}
-              className="py-2"
-            >
-              {isTail ? (
-                <AgentThinking
-                  variant="wave"
-                  label={t("chat.thinking")}
-                  className="py-2"
-                  startedAt={session.turnStartedAt ?? undefined}
-                />
-              ) : (
-                <TimelineRowView
-                  row={rows[item.index]}
-                  workspacePath={workspacePath}
-                  turnLive={turnLive}
-                  autoExpand={rowKey(rows[item.index]) === lastProcessKey}
-                  seenRef={seenToolRef}
-                />
-              )}
-            </div>
-          );
-        })}
+          {virtualizer.getVirtualItems().map((item) => {
+            const isTail = item.index >= rows.length;
+            return (
+              <div
+                key={item.key}
+                data-index={item.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${item.start}px)`,
+                }}
+                className="py-2"
+              >
+                {isTail ? (
+                  <AgentThinking
+                    variant="wave"
+                    label={t("chat.thinking")}
+                    className="py-2"
+                    startedAt={session.turnStartedAt ?? undefined}
+                  />
+                ) : (
+                  <TimelineRowView
+                    row={rows[item.index]}
+                    workspacePath={workspacePath}
+                    turnLive={turnLive}
+                    autoExpand={rowKey(rows[item.index]) === lastProcessKey}
+                    seenRef={seenToolRef}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

@@ -57,6 +57,7 @@ impl Engine for KimiEngine {
                         out.push(EngineEvent::Message {
                             role: "assistant".to_string(),
                             text,
+                            path: None,
                         });
                     }
                 }
@@ -70,6 +71,7 @@ impl Engine for KimiEngine {
                         out.push(EngineEvent::Message {
                             role: "tool".to_string(),
                             text: name.to_string(),
+                            path: None,
                         });
                     }
                 }
@@ -83,6 +85,7 @@ impl Engine for KimiEngine {
                         out.push(EngineEvent::Message {
                             role: "tool".to_string(),
                             text: content.trim().chars().take(200).collect(),
+                            path: None,
                         });
                     }
                 }

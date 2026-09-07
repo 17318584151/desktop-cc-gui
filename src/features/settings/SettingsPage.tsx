@@ -4,8 +4,10 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Settings from "lucide-react/dist/esm/icons/settings";
 import Info from "lucide-react/dist/esm/icons/info";
 import Smartphone from "lucide-react/dist/esm/icons/smartphone";
+import SquareTerminal from "lucide-react/dist/esm/icons/square-terminal";
 import { SettingsModal } from "@/components/application/settings/settings-modal";
 import { GeneralSection } from "./GeneralSection";
+import { CliConfigSection } from "./CliConfigSection";
 import { AboutSection } from "./AboutSection";
 import { WebAccessSection } from "./WebAccessSection";
 
@@ -15,8 +17,7 @@ import { WebAccessSection } from "./WebAccessSection";
  * the chat tree.
  *
  * Nav mirrors the BoardUI "Settings/General" rail: one "Settings" group with
- * General (appearance/behavior) and About. Engine CLI/provider config has no
- * UI entry for now — saved configs keep working untouched.
+ * General, Mobile Access, CLI 配置 (provider channels) and About.
  */
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -31,6 +32,7 @@ export default function SettingsPage() {
         items: [
           { key: "general", label: t("settings.general"), icon: Settings },
           { key: "webAccess", label: t("settings.webAccess"), icon: Smartphone },
+          { key: "cliConfig", label: t("settings.cliConfig"), icon: SquareTerminal },
           { key: "about", label: t("settings.about"), icon: Info },
         ],
       },
@@ -42,6 +44,7 @@ export default function SettingsPage() {
     () => ({
       general: t("settings.general"),
       webAccess: t("settings.webAccess"),
+      cliConfig: t("settings.cliConfig"),
       about: t("settings.about"),
     }),
     [t],
@@ -51,6 +54,7 @@ export default function SettingsPage() {
   const renderPage = (key: string) => {
     if (key === "about") return <AboutSection />;
     if (key === "webAccess") return <WebAccessSection />;
+    if (key === "cliConfig") return <CliConfigSection />;
     return <GeneralSection />;
   };
 

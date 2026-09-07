@@ -13,6 +13,7 @@ import { ChatConversation } from "./components/ChatConversation";
 import type { ComposerInputHandle } from "@/components/application/ai-chat/ai-chat-composer";
 import { relativeTime } from "./time";
 import { ChangesPanel } from "@/features/git/ChangesPanel";
+import { DiffView } from "@/features/git/DiffView";
 import { AppStatusBar } from "@/components/application/app-status-bar/app-status-bar";
 import { FilesPanel } from "@/features/files/FilesPanel";
 import { fileName, useFilesStore } from "@/features/files/store";
@@ -37,6 +38,8 @@ import { cx } from "@/utils/cx";
 // File tabs share the session tab strip; their keys are prefixed so select /
 // close handlers can route them to the files store instead of the chat store.
 const FILE_TAB_PREFIX = "file:";
+// The changes diff opens as a center tab too; a single instance at a time.
+const DIFF_TAB_KEY = "diff:";
 // CodeMirror + react-markdown are heavy; split them out of the startup chunk.
 const EditorPane = lazy(() => import("@/features/files/EditorPane"));
 const PANEL_MIN_WIDTH = 300;
@@ -80,6 +83,7 @@ export default function ChatPage() {
     deleteSession,
     closeTab,
     focusTab,
+    moveTab,
   } = useChatStore(
     useShallow((s) => ({
       init: s.init,
@@ -93,6 +97,7 @@ export default function ChatPage() {
       deleteSession: s.deleteSession,
       closeTab: s.closeTab,
       focusTab: s.focusTab,
+      moveTab: s.moveTab,
     })),
   );
   // Sidebar/tab-strip data: low-frequency slices that change only on
@@ -109,6 +114,12 @@ export default function ChatPage() {
     })),
   );
   const gitRefresh = useGitStore((s) => s.refresh);
+  // Center diff, opened from the changes panel's file rows.
+  const diffView = useGitStore((s) => s.diffView);
+  const closeDiff = useGitStore((s) => s.closeDiff);
+  const diffStatus = useGitStore((s) =>
+    s.diffView ? s.statusByWorkspace[s.diffView.workspacePath] : undefined,
+  );
   // Terminal dock: toggled from the header open-actions cluster (and ⌘J).
   const toggleTerminal = useTerminalStore((s) => s.toggle);
   const removeTerminalWorkspace = useTerminalStore((s) => s.removeWorkspace);
@@ -170,7 +181,7 @@ export default function ChatPage() {
   const [sidebarWidth, setSidebarWidth] = useState(() => readStoredWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_DEFAULT_WIDTH));
   const [panelTab, setPanelTab] = useState<"files" | "changes">("files");
   // Open file tabs render alongside the session tabs in the center area.
-  const { openFiles, activeFilePath, dirtyPaths, activateFile, clearActiveFile, closeFile } =
+  const { openFiles, activeFilePath, dirtyPaths, activateFile, clearActiveFile, closeFile, moveOpenFile } =
     useFilesStore(
       useShallow((s) => ({
         openFiles: s.openFiles,
@@ -179,6 +190,7 @@ export default function ChatPage() {
         activateFile: s.activateFile,
         clearActiveFile: s.clearActiveFile,
         closeFile: s.closeFile,
+        moveOpenFile: s.moveOpenFile,
       })),
     );
   const [dialog, setDialog] = useState<
@@ -331,16 +343,36 @@ export default function ChatPage() {
     [openFiles, dirtyPaths],
   );
   const tabItems = useMemo(
-    () => [...sessionTabItems, ...fileTabItems],
-    [sessionTabItems, fileTabItems],
+    () => [
+      ...sessionTabItems,
+      ...fileTabItems,
+      ...(diffView
+        ? [
+            {
+              key: DIFF_TAB_KEY,
+              label: fileName(diffView.target.file),
+              title: diffView.target.file,
+              icon: GitBranch,
+              streaming: false,
+            },
+          ]
+        : []),
+    ],
+    [sessionTabItems, fileTabItems, diffView],
   );
-  const activeTabKey = activeFilePath
-    ? FILE_TAB_PREFIX + activeFilePath
-    : active
-      ? sessionKey(active.engine, active.sessionId, active.workspacePath)
-      : null;
+  const activeTabKey = diffView
+    ? DIFF_TAB_KEY
+    : activeFilePath
+      ? FILE_TAB_PREFIX + activeFilePath
+      : active
+        ? sessionKey(active.engine, active.sessionId, active.workspacePath)
+        : null;
   const handleTabSelect = useCallback(
     (tabKey: string) => {
+      // The diff tab is already the active center view while diffView is set.
+      if (tabKey === DIFF_TAB_KEY) return;
+      // Selecting any other tab dismisses the diff so the tab shows.
+      closeDiff();
       if (tabKey.startsWith(FILE_TAB_PREFIX)) {
         activateFile(tabKey.slice(FILE_TAB_PREFIX.length));
         return;
@@ -349,10 +381,14 @@ export default function ChatPage() {
       const item = sessionTabItems.find((i) => i.key === tabKey);
       if (item) focusTab(item.tab.engine, item.tab.sessionId, item.tab.workspacePath);
     },
-    [sessionTabItems, focusTab, activateFile, clearActiveFile],
+    [sessionTabItems, focusTab, activateFile, clearActiveFile, closeDiff],
   );
   const handleTabClose = useCallback(
     (tabKey: string) => {
+      if (tabKey === DIFF_TAB_KEY) {
+        closeDiff();
+        return;
+      }
       if (tabKey.startsWith(FILE_TAB_PREFIX)) {
         const path = tabKey.slice(FILE_TAB_PREFIX.length);
         if (dirtyPaths[path]) setDialog({ kind: "closeFile", path });
@@ -362,7 +398,33 @@ export default function ChatPage() {
       const item = sessionTabItems.find((i) => i.key === tabKey);
       if (item) closeTab(item.tab.engine, item.tab.sessionId, item.tab.workspacePath);
     },
-    [sessionTabItems, closeTab, closeFile, dirtyPaths],
+    [sessionTabItems, closeTab, closeFile, dirtyPaths, closeDiff],
+  );
+  // Drag-reorder stays within each tab group: file tabs reorder openFiles,
+  // session tabs reorder openTabs; cross-group drops are ignored.
+  const handleTabReorder = useCallback(
+    (draggedKey: string, targetKey: string, before: boolean) => {
+      if (draggedKey === DIFF_TAB_KEY || targetKey === DIFF_TAB_KEY) return;
+      const draggedIsFile = draggedKey.startsWith(FILE_TAB_PREFIX);
+      if (draggedIsFile !== targetKey.startsWith(FILE_TAB_PREFIX)) return;
+      if (draggedIsFile) {
+        const draggedPath = draggedKey.slice(FILE_TAB_PREFIX.length);
+        const targetPath = targetKey.slice(FILE_TAB_PREFIX.length);
+        const from = openFiles.indexOf(draggedPath);
+        let to = openFiles.indexOf(targetPath) + (before ? 0 : 1);
+        if (from >= 0 && from < to) to -= 1;
+        moveOpenFile(draggedPath, to);
+        return;
+      }
+      const from = sessionTabItems.findIndex((i) => i.key === draggedKey);
+      const targetIdx = sessionTabItems.findIndex((i) => i.key === targetKey);
+      const dragged = sessionTabItems[from]?.tab;
+      if (!dragged || targetIdx < 0) return;
+      let to = targetIdx + (before ? 0 : 1);
+      if (from < to) to -= 1;
+      moveTab(dragged.engine, dragged.sessionId, dragged.workspacePath, to);
+    },
+    [openFiles, moveOpenFile, sessionTabItems, moveTab],
   );
 
   const repos: AiChatRepo[] = useMemo(() => {
@@ -526,6 +588,8 @@ export default function ChatPage() {
           onSelect={handleTabSelect}
           onClose={handleTabClose}
           closeLabel={t("common.close")}
+          onReorder={handleTabReorder}
+          onNew={handleNewSession}
           trafficLightInset={sidebarCollapsed && !isWeb}
           leading={
             sidebarCollapsed ? (
@@ -546,18 +610,19 @@ export default function ChatPage() {
                 <HeaderOpenActions workspacePath={active.workspacePath} />
                 <div className="hidden h-full items-center xl:flex">
                   {
-                    // Panel header lives in the titlebar: same width as the
-                    // panel below, border-l continuing the panel's left edge.
-                    // Always mounted so width animates in sync with the panel.
-                    <div
-                      ref={panelHeaderRef}
-                      className={cx(
-                        "flex h-full items-center justify-end overflow-hidden",
-                        // Width is mutated imperatively during panel drags.
-                        !dragging &&
-                          "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-                        !panelCollapsed && "border-l border-separator-border",
-                      )}
+                                          // Panel header lives in the titlebar: same width as the
+                      // panel below, border-l continuing the panel's left edge.
+                      // Always mounted so width animates in sync with the panel;
+                      // stays put in changes mode so its pills remain reachable.
+                      <div
+                        ref={panelHeaderRef}
+                        className={cx(
+                          "flex h-full items-center justify-end overflow-hidden",
+                          // Width is mutated imperatively during panel drags.
+                          !dragging &&
+                            "transition-[width] duration-200 ease-out motion-reduce:transition-none",
+                          !panelCollapsed && "border-l border-separator-border",
+                        )}
                       style={{ width: panelCollapsed ? 0 : panelWidth }}
                     >
                     <div
@@ -640,7 +705,7 @@ export default function ChatPage() {
           <div
             className={cx(
               "flex min-w-0 flex-col overflow-hidden bg-background-primary-default",
-              activeFilePath
+              activeFilePath || diffView
                 ? "invisible absolute inset-0"
                 : "relative min-w-0 flex-1 basis-0",
             )}
@@ -658,7 +723,7 @@ export default function ChatPage() {
             <div
               className={cx(
                 "flex min-w-0 flex-col overflow-hidden bg-background-primary-default",
-                activeFilePath
+                activeFilePath && !diffView
                   ? "relative min-w-0 flex-1 basis-0"
                   : "invisible absolute inset-0",
               )}
@@ -679,8 +744,21 @@ export default function ChatPage() {
                 ))}
               </Suspense>
             </div>
+                    )}
+
+          {/* Center diff, opened from the changes panel's file rows. Its tab
+              sits in the strip; ← or closing the tab returns to the chat. */}
+          {diffView && (
+            <div className="relative flex min-w-0 flex-1 basis-0 flex-col overflow-hidden bg-background-primary-default">
+              <DiffView
+                workspacePath={diffView.workspacePath}
+                target={diffView.target}
+                status={diffStatus}
+                onBack={closeDiff}
+              />
+            </div>
           )}
-          
+
           {active && (
             <div
               ref={panelRef}
@@ -719,7 +797,7 @@ export default function ChatPage() {
                 )}
               >
                 {/* Both panels stay mounted so tab switches preserve tree
-                    expansion and diff state. */}
+                    expansion and scroll state. */}
                 <div
                   className={cx(
                     "min-h-0 flex-1",

@@ -205,8 +205,10 @@ function ThreadItem({
  * the repo's folder icon with a rounded elbow into each thread row.
  */
 function TreeConnector({ count }: { count: number }) {
-  const rowPitch = 32; // 30px row + 2px gap
-  const firstCenter = 15;
+  // Rows are 28px tall (py-[5px] + 18px line-height) with a 2px gap,
+  // and the container's pt-0.5 pushes the first row down 2px.
+  const rowPitch = 30; // 28px row + 2px gap
+  const firstCenter = 16; // 2px container padding + half of the 28px row
   const height = firstCenter + rowPitch * (count - 1) + 1;
   return (
     <svg

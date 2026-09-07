@@ -104,7 +104,7 @@ async fn run_one(engine_id: &str, workspace: &PathBuf) -> Result<(), String> {
             match event {
                 EngineEvent::Delta(text) => deltas.push_str(&text),
                 EngineEvent::Thinking(_) => {}
-                EngineEvent::Message { role, text } => {
+                EngineEvent::Message { role, text, .. } => {
                     println!("  message[{role}]: {:.60}", text.replace('\n', " "))
                 }
                 EngineEvent::SessionId(id) => {
@@ -113,6 +113,7 @@ async fn run_one(engine_id: &str, workspace: &PathBuf) -> Result<(), String> {
                 }
                 EngineEvent::Usage(u) => println!("  usage: {u}"),
                 EngineEvent::Error(e) => println!("  ERROR: {e}"),
+                EngineEvent::Warn(e) => println!("  warn: {e}"),
                 EngineEvent::Done { usage, .. } => {
                     println!("  done (usage: {})", usage.is_some());
                     done = true;

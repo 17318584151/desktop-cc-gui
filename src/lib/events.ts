@@ -6,7 +6,7 @@ export interface EngineEventPayload {
   sessionId: string | null;
   engine: string;
   seq: number;
-  kind: "delta" | "thinking" | "message" | "session" | "usage" | "error" | "done";
+  kind: "delta" | "thinking" | "message" | "session" | "usage" | "error" | "warn" | "done";
   data: unknown;
 }
 

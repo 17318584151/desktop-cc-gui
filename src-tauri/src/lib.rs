@@ -23,7 +23,6 @@ pub struct AppState {
     pub emitters: Arc<event_sink::BroadcastEmit>,
     pub terminals: terminal::TerminalRegistry,
     pub processes: Arc<engine::ProcessRegistry>,
-    pub config_store: config::ConfigStore,
     pub web: web::WebAccessState,
 }
 
@@ -57,13 +56,17 @@ pub fn run() {
                 emitters,
                 terminals: terminal::TerminalRegistry::default(),
                 processes: Arc::new(engine::ProcessRegistry::default()),
-                config_store: config::ConfigStore::default(),
                 web: web::WebAccessState::default(),
             };
             // Clone what the initial scan needs before state moves into manage.
             let scan_db = Arc::clone(&state.db);
             let scan_sink = Arc::clone(&state.sink);
             app.manage(state);
+            // Provider commands inject State<'_, ConfigStore> directly (not
+            // via AppState), so the store must be managed as its own type —
+            // otherwise every provider mutation panics with "state() called
+            // before manage()".
+            app.manage(config::ConfigStore::default());
             app.manage(metrics::MetricsState::new());
             // Initial history scan, non-blocking.
             history::scanner::spawn_scan(scan_db, scan_sink);

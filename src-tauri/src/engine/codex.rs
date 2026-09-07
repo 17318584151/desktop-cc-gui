@@ -82,6 +82,7 @@ impl Engine for CodexEngine {
                                 out.push(EngineEvent::Message {
                                     role: "assistant".to_string(),
                                     text: text.to_string(),
+                                    path: None,
                                 });
                             }
                         }
@@ -103,6 +104,7 @@ impl Engine for CodexEngine {
                         out.push(EngineEvent::Message {
                             role: "tool".to_string(),
                             text: name.chars().take(120).collect(),
+                            path: None,
                         });
                     }
                     _ => {}

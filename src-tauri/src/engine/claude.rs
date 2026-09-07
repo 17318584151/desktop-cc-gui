@@ -153,9 +153,12 @@ fn parse_content_block_start(event: &Value, out: &mut Vec<EngineEvent>) {
         return;
     }
     let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+    // content_block_start carries `input: {}` — the real arguments stream in
+    // later as partial JSON deltas, so no path is available here.
     out.push(EngineEvent::Message {
         role: "tool".to_string(),
         text: name.to_string(),
+        path: None,
     });
 }
 
@@ -178,7 +181,7 @@ mod tests {
         ClaudeEngine.parse_line(&line, &mut out);
         assert_eq!(out.len(), 1);
         match &out[0] {
-            EngineEvent::Message { role, text } => {
+            EngineEvent::Message { role, text, .. } => {
                 assert_eq!(role, "tool");
                 assert_eq!(text, "Bash");
             }

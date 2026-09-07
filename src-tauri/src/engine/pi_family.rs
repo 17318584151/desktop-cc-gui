@@ -128,9 +128,11 @@ fn parse_pi_family_line(line: &str, out: &mut Vec<EngineEvent>) {
                 .and_then(Value::as_str)
                 .unwrap_or("tool");
             let intent = value.get("intent").and_then(Value::as_str);
+            let path = value.get("args").and_then(super::tool_path_arg);
             out.push(EngineEvent::Message {
                 role: "tool".to_string(),
                 text: tool_label(name, intent),
+                path,
             });
         }
         "message_end" => {
@@ -141,6 +143,9 @@ fn parse_pi_family_line(line: &str, out: &mut Vec<EngineEvent>) {
             {
                 out.push(EngineEvent::Usage(usage.clone()));
             }
+            // A message-level error is one failed model call (e.g. an
+            // upstream 429): the CLI retries and the turn continues, so this
+            // is only a notice. turn_end/agent_end errors stay terminal.
             if let Some(error) = value
                 .get("message")
                 .and_then(|m| m.get("errorMessage"))
@@ -148,7 +153,7 @@ fn parse_pi_family_line(line: &str, out: &mut Vec<EngineEvent>) {
                 .or_else(|| value.get("errorMessage").and_then(Value::as_str))
             {
                 if !error.trim().is_empty() {
-                    out.push(EngineEvent::Error(error.trim().to_string()));
+                    out.push(EngineEvent::Warn(error.trim().to_string()));
                 }
             }
         }
@@ -182,5 +187,47 @@ pub fn tool_label(name: &str, intent: Option<&str>) -> String {
                 .collect()
         }
         _ => name.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_execution_start_carries_args_path() {
+        let line = serde_json::json!({
+            "type": "tool_execution_start",
+            "toolCallId": "tool_1",
+            "toolName": "edit",
+            "args": { "path": "src/app.tsx", "input": {} },
+            "intent": "Adding chrome token"
+        })
+        .to_string();
+        let mut out = Vec::new();
+        parse_pi_family_line(&line, &mut out);
+        match &out[0] {
+            EngineEvent::Message { role, text, path } => {
+                assert_eq!(role, "tool");
+                assert_eq!(text, "edit · Adding chrome token");
+                assert_eq!(path.as_deref(), Some("src/app.tsx"));
+            }
+            _ => panic!("expected tool message"),
+        }
+
+        // bash-style args carry no path key -> None.
+        let line = serde_json::json!({
+            "type": "tool_execution_start",
+            "toolCallId": "tool_2",
+            "toolName": "bash",
+            "args": { "command": "ls" }
+        })
+        .to_string();
+        let mut out = Vec::new();
+        parse_pi_family_line(&line, &mut out);
+        match &out[0] {
+            EngineEvent::Message { path, .. } => assert_eq!(*path, None),
+            _ => panic!("expected tool message"),
+        }
     }
 }
