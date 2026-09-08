@@ -119,13 +119,13 @@ export const ChatConversation = memo(function ChatConversation({
       interrupt: s.interrupt,
     })),
   );
-  const { branch, branches, branchError, handleBranchSelect } = useBranchSwitcher(active);
+  const { branch, branches, branchError, handleBranchSelect, dismissBranchError } = useBranchSwitcher(active);
   // Permission mode lives in the store (persisted) and flows into every
   // send; engines that cannot honor the selected mode fall back to their
   // first supported one, which is what the chip displays.
   const permission = useChatStore((s) => s.permission);
   const setPermission = useChatStore((s) => s.setPermission);
-  const { images, previews, imageError, removeImage, clearImages, pasteImages } =
+  const { images, previews, imageError, removeImage, clearImages, pasteImages, dismissImageError } =
     useComposerImages();
   const { catalogs, modelsByEngine, refresh: refreshModels } = useEngineModels(engines, models, pinModels);
 
@@ -295,6 +295,8 @@ export const ChatConversation = memo(function ChatConversation({
         onClearQueued={clearQueue}
         imageError={imageError}
         branchError={branchError}
+        onDismissImageError={dismissImageError}
+        onDismissBranchError={dismissBranchError}
         images={images}
         previews={previews}
         onRemoveImage={removeImage}

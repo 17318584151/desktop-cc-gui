@@ -34,6 +34,8 @@ export function useComposerImages() {
     setImages([]);
     setPreviews((prev) => (Object.keys(prev).length > 0 ? {} : prev));
   }, []);
+  /** Dismiss the paste-error banner without clearing attachments. */
+  const dismissImageError = useCallback(() => setImageError(null), []);
   /** Resolve one attachment's chip thumbnail through readFile (data URL).
    * Unreadable/oversized files simply get no thumbnail — the chip falls back
    * to a plain filename. */
@@ -74,5 +76,5 @@ export function useComposerImages() {
     },
     [t, loadPreview],
   );
-  return { images, previews, imageError, removeImage, clearImages, pasteImages };
+  return { images, previews, imageError, removeImage, clearImages, pasteImages, dismissImageError };
 }

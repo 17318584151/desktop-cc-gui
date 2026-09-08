@@ -38,6 +38,14 @@ mod grok;
 mod kimi;
 mod pi;
 
+/// Claude launch-time model resolution: picker alias → the custom id its
+/// ANTHROPIC_DEFAULT_<FAMILY>_MODEL override maps to (pass-through when
+/// unmapped), so the request carries the model the picker displayed even
+/// when the CLI build skips its own env remap.
+pub(crate) fn resolve_claude_launch_model(selector: &str) -> String {
+    claude::resolve_launch_model(selector)
+}
+
 use serde::Serialize;
 
 /// Catalog probe budget; with extension boot skipped the call lands in ~1s,

@@ -42,7 +42,10 @@ impl Engine for ClaudeEngine {
         }
         if let Some(model) = req.model.as_deref() {
             cmd.arg("--model");
-            cmd.arg(model);
+            // Launch with the id the picker names: family aliases resolve
+            // through their ANTHROPIC_DEFAULT_<FAMILY>_MODEL override here,
+            // so relay setups don't depend on the CLI's own alias remap.
+            cmd.arg(super::models::resolve_claude_launch_model(model));
         }
         // Claude Code has no effort flag; the thinking budget env var is the
         // effort knob. "low" stays at the CLI default (no forced thinking).
@@ -82,6 +85,12 @@ impl Engine for ClaudeEngine {
         match event_type {
             "system" => {
                 push_session_id(&value, "session_id", out);
+                // api_retry precedes minutes of silent exponential backoff
+                // (10 attempts, 30s+ delays); surface it as a non-terminal
+                // warning so the UI shows progress instead of a dead spinner.
+                if value.get("subtype").and_then(Value::as_str) == Some("api_retry") {
+                    out.push(EngineEvent::Warn(format_api_retry(&value)));
+                }
             }
             "stream_event" => parse_stream_event(&value, out),
             "assistant" => {
@@ -116,6 +125,30 @@ impl Engine for ClaudeEngine {
             _ => {}
         }
     }
+}
+
+/// Human-readable line for a `system/api_retry` event.
+fn format_api_retry(value: &Value) -> String {
+    let attempt = value.get("attempt").and_then(Value::as_u64).unwrap_or(0);
+    let max = value.get("max_retries").and_then(Value::as_u64).unwrap_or(0);
+    let delay_ms = value.get("retry_delay_ms").and_then(Value::as_u64).unwrap_or(0);
+    let detail = value
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|e| !e.is_empty() && *e != "unknown");
+    let mut msg = match value.get("error_status").and_then(Value::as_u64) {
+        Some(code) => format!("API error (HTTP {code})"),
+        None => match detail {
+            Some(detail) => format!("API error: {detail}"),
+            None => "API error".to_string(),
+        },
+    };
+    msg.push_str(&format!(
+        "; retrying ({attempt}/{max}) in {:.1}s",
+        delay_ms as f64 / 1000.0
+    ));
+    msg
 }
 
 /// Anthropic SSE wrapped events (requires --include-partial-messages).
@@ -197,6 +230,52 @@ mod tests {
                 assert_eq!(text, "Bash");
             }
             _ => panic!("expected tool message"),
+        }
+    }
+
+    #[test]
+    fn api_retry_system_event_warns_without_settling() {
+        let line = serde_json::json!({
+            "type": "system",
+            "subtype": "api_retry",
+            "attempt": 3,
+            "max_retries": 10,
+            "retry_delay_ms": 9560,
+            "error_status": 529,
+            "error": "overloaded",
+            "session_id": "s-1"
+        })
+        .to_string();
+        let mut out = Vec::new();
+        ClaudeEngine.parse_line(&line, &mut out);
+        assert_eq!(out.len(), 2);
+        match &out[1] {
+            EngineEvent::Warn(msg) => {
+                assert!(msg.contains("529"), "{msg}");
+                assert!(msg.contains("3/10"), "{msg}");
+                assert!(msg.contains("9.6s"), "{msg}");
+            }
+            _ => panic!("expected retry warning"),
+        }
+    }
+
+    #[test]
+    fn api_retry_without_status_falls_back_to_error_text() {
+        let line = serde_json::json!({
+            "type": "system",
+            "subtype": "api_retry",
+            "attempt": 1,
+            "max_retries": 10,
+            "retry_delay_ms": 1000,
+            "error_status": null,
+            "error": "unknown"
+        })
+        .to_string();
+        let mut out = Vec::new();
+        ClaudeEngine.parse_line(&line, &mut out);
+        match &out[0] {
+            EngineEvent::Warn(msg) => assert!(msg.starts_with("API error;"), "{msg}"),
+            _ => panic!("expected retry warning"),
         }
     }
 

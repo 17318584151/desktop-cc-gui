@@ -18,6 +18,8 @@ export function useBranchSwitcher(active: ActiveSession | null) {
     if (active?.workspacePath) void useGitStore.getState().loadBranches(active.workspacePath);
   }, [active?.workspacePath]);
   const [branchError, setBranchError] = useState<string | null>(null);
+  /** Dismiss the checkout-error banner (cleared anyway on the next attempt). */
+  const dismissBranchError = useCallback(() => setBranchError(null), []);
   const handleBranchSelect = useCallback(
     (name: string) => {
       if (!active) return;
@@ -29,5 +31,5 @@ export function useBranchSwitcher(active: ActiveSession | null) {
     },
     [active],
   );
-  return { branch, branches, branchError, handleBranchSelect };
+  return { branch, branches, branchError, handleBranchSelect, dismissBranchError };
 }

@@ -375,8 +375,19 @@ export function FileTree() {
         </div>
       )}
       {notice ? (
-        <div className="sticky bottom-1 z-10 mx-2 mt-auto rounded-lg border border-border-button-default bg-background-primary-default px-2.5 py-1.5 text-caption-1-regular text-text-error-primary shadow-dropdown">
-          {notice}
+        <div
+          role="alert"
+          className="sticky bottom-1 z-10 mx-2 mt-auto flex items-center gap-2 rounded-lg border border-border-button-default bg-background-primary-default px-2.5 py-1.5 text-caption-1-regular text-text-error-primary shadow-dropdown"
+        >
+          <span className="min-w-0 flex-1 break-all">{notice}</span>
+          <button
+            type="button"
+            aria-label={t("common.close")}
+            onClick={() => setNotice(null)}
+            className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
+          >
+            ×
+          </button>
         </div>
       ) : null}
       {menu ? (

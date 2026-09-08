@@ -33,6 +33,8 @@ export function ConversationFooter({
   onClearQueued,
   imageError,
   branchError,
+  onDismissImageError,
+  onDismissBranchError,
   images,
   previews,
   onRemoveImage,
@@ -63,6 +65,8 @@ export function ConversationFooter({
   onClearQueued?: () => void;
   imageError: string | null;
   branchError: string | null;
+  onDismissImageError: () => void;
+  onDismissBranchError: () => void;
   images: string[];
   previews: Record<string, { url: string; name: string }>;
   onRemoveImage: (path: string) => void;
@@ -119,13 +123,35 @@ export function ConversationFooter({
       >
         <MessageQueue queue={queue} onRemove={onRemoveQueued} onClear={onClearQueued} className="mx-auto w-full max-w-3xl" />
         {imageError && (
-          <div className="rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary">
-            {imageError}
+          <div
+            role="alert"
+            className="flex items-center gap-2 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary"
+          >
+            <span className="min-w-0 flex-1 break-all">{imageError}</span>
+            <button
+              type="button"
+              aria-label={t("common.close")}
+              onClick={onDismissImageError}
+              className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
+            >
+              ×
+            </button>
           </div>
         )}
         {branchError && (
-          <div className="rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary">
-            {branchError}
+          <div
+            role="alert"
+            className="flex items-center gap-2 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary"
+          >
+            <span className="min-w-0 flex-1 break-all">{branchError}</span>
+            <button
+              type="button"
+              aria-label={t("common.close")}
+              onClick={onDismissBranchError}
+              className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
+            >
+              ×
+            </button>
           </div>
         )}
         {images.length > 0 && (

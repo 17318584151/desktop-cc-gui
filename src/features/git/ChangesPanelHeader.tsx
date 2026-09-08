@@ -29,6 +29,7 @@ interface ChangesPanelHeaderProps {
   /** First error to surface: a failed action, else the last refresh failure. */
   error: string | null;
   run: (key: string, action: () => Promise<unknown>) => void;
+  onDismissError: () => void;
 }
 
 /** Title row with refresh/pull/push, the branch picker, and the new-branch form. */
@@ -40,6 +41,7 @@ export function ChangesPanelHeader({
   pending,
   error,
   run,
+  onDismissError,
 }: ChangesPanelHeaderProps) {
   const { t } = useTranslation();
   const [branchOpen, setBranchOpen] = useState(false);
@@ -110,58 +112,66 @@ export function ChangesPanelHeader({
               />
             </DropdownTrigger>
             <DropdownPopover aria-label={t("git.branch")} placement="bottom start">
-              <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border-button-default px-2">
-                <Search
-                  aria-hidden
-                  className="size-4 shrink-0 text-foreground-icon-secondary"
-                />
-                <input
-                  autoFocus
-                  value={branchQuery}
-                  onChange={(e) => setBranchQuery(e.target.value)}
-                  placeholder={t("git.searchBranches")}
-                  className="min-w-0 flex-1 bg-transparent text-body-medium text-text-primary outline-none placeholder:text-text-placeholder"
-                />
+              {/* Single scroller: the popover itself (react-aria clamps its
+                  max-height to the window). Search and the new-branch footer
+                  pin via sticky; the rows scroll between them. An inner
+                  max-h-64 scroll div nested badly here — in short windows the
+                  clamped popover clipped the inner list and its scrollbar,
+                  leaving the lower branches unreachable. */}
+              <div className="sticky -top-2.5 z-10 -mx-2.5 -mt-2.5 bg-background-primary-default px-2.5 pt-2.5 pb-1">
+                <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border-button-default px-2">
+                  <Search
+                    aria-hidden
+                    className="size-4 shrink-0 text-foreground-icon-secondary"
+                  />
+                  <input
+                    autoFocus
+                    value={branchQuery}
+                    onChange={(e) => setBranchQuery(e.target.value)}
+                    placeholder={t("git.searchBranches")}
+                    className="min-w-0 flex-1 bg-transparent text-body-medium text-text-primary outline-none placeholder:text-text-placeholder"
+                  />
+                </div>
               </div>
-              <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
-                {filteredBranches.map((b) => (
-                  <DropdownItem
-                    key={b.name}
-                    selected={b.isCurrent}
-                    className="px-2 py-1.5"
-                    onSelect={() => {
-                      setBranchOpen(false);
-                      if (!b.isCurrent) {
-                        run("checkout", () =>
-                          useGitStore.getState().checkout(workspacePath, b.name),
-                        );
-                      }
-                    }}
-                  >
-                    <span className="truncate text-body-medium text-text-primary">
-                      {b.name}
-                    </span>
-                  </DropdownItem>
-                ))}
-                {filteredBranches.length === 0 && (
-                  <span className="px-2 py-1.5 text-body-medium text-text-tertiary">
-                    {t("git.noMatchingBranches")}
+              {filteredBranches.map((b) => (
+                <DropdownItem
+                  key={b.name}
+                  selected={b.isCurrent}
+                  className="px-2 py-1.5"
+                  onSelect={() => {
+                    setBranchOpen(false);
+                    if (!b.isCurrent) {
+                      run("checkout", () =>
+                        useGitStore.getState().checkout(workspacePath, b.name),
+                      );
+                    }
+                  }}
+                >
+                  <span className="truncate text-body-medium text-text-primary">
+                    {b.name}
                   </span>
-                )}
-              </div>
-              <DropdownDivider />
-              <DropdownItem
-                className="px-2 py-1.5"
-                onSelect={() => {
-                  setBranchOpen(false);
-                  setCreatingBranch(true);
-                }}
-              >
-                <Plus aria-hidden className="size-4 text-foreground-icon-secondary" />
-                <span className="text-body-medium text-text-primary">
-                  {t("git.newBranch")}
+                </DropdownItem>
+              ))}
+              {filteredBranches.length === 0 && (
+                <span className="px-2 py-1.5 text-body-medium text-text-tertiary">
+                  {t("git.noMatchingBranches")}
                 </span>
-              </DropdownItem>
+              )}
+              <div className="sticky -bottom-2.5 z-10 -mx-2.5 -mb-2.5 bg-background-primary-default px-2.5 pb-2.5">
+                <DropdownDivider />
+                <DropdownItem
+                  className="px-2 py-1.5"
+                  onSelect={() => {
+                    setBranchOpen(false);
+                    setCreatingBranch(true);
+                  }}
+                >
+                  <Plus aria-hidden className="size-4 text-foreground-icon-secondary" />
+                  <span className="text-body-medium text-text-primary">
+                    {t("git.newBranch")}
+                  </span>
+                </DropdownItem>
+              </div>
             </DropdownPopover>
           </Dropdown>
         </div>
@@ -211,7 +221,17 @@ export function ChangesPanelHeader({
         </form>
       )}
       {error && (
-        <p className="break-words text-xs text-text-error-primary">{error}</p>
+        <div role="alert" className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 break-words text-xs text-text-error-primary">{error}</p>
+          <button
+            type="button"
+            aria-label={t("common.close")}
+            onClick={onDismissError}
+            className="shrink-0 cursor-pointer rounded p-0.5 text-text-error-primary hover:bg-background-tertiary-hover"
+          >
+            ×
+          </button>
+        </div>
       )}
     </div>
   );

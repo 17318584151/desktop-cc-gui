@@ -170,6 +170,29 @@ fn read_cli_config() -> CliModelConfig {
     read_cli_config_from(&claude_config_dir())
 }
 
+/// The model id a picker selector actually runs, for launch: a family alias
+/// resolves through its ANTHROPIC_DEFAULT_<FAMILY>_MODEL override, "default"
+/// through the CLI's configured default; anything unmapped passes through
+/// for the CLI to resolve itself. Relay setups depend on the env remap,
+/// which some CLI builds/shims skip — launching with the id the picker
+/// names makes the request match the display regardless.
+pub(crate) fn resolve_launch_model(selector: &str) -> String {
+    resolve_launch_model_from(&read_cli_config(), selector)
+}
+
+fn resolve_launch_model_from(config: &CliModelConfig, selector: &str) -> String {
+    let bare = selector.strip_suffix("[1m]").unwrap_or(selector);
+    if bare == "default" {
+        return config
+            .resolved_default()
+            .unwrap_or_else(|| selector.to_string());
+    }
+    config
+        .override_for(bare)
+        .map(str::to_string)
+        .unwrap_or_else(|| selector.to_string())
+}
+
 fn read_cli_config_from(dir: &std::path::Path) -> CliModelConfig {
     let pick = |value: Option<&serde_json::Value>| {
         value
@@ -290,6 +313,32 @@ mod tests {
         assert_eq!(config.env_model.as_deref(), Some("sonnet"));
         assert_eq!(config.override_for("opus"), Some("grok-4.5"));
         assert_eq!(config.override_for("sonnet"), None);
+    }
+
+    #[test]
+    fn launch_model_resolves_overrides_and_passes_the_rest_through() {
+        let dir = std::env::temp_dir().join(format!("ccgui-claude-test4-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"model":"opus","env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"gemini-3.8-flash"}}"#,
+        )
+        .unwrap();
+        let config = read_cli_config_from(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+        // Overridden alias → custom id (what the picker names it).
+        assert_eq!(resolve_launch_model_from(&config, "opus"), "gemini-3.8-flash");
+        assert_eq!(resolve_launch_model_from(&config, "opus[1m]"), "gemini-3.8-flash");
+        // "default" → the CLI's configured default, override applied.
+        assert_eq!(resolve_launch_model_from(&config, "default"), "gemini-3.8-flash");
+        // Unmapped aliases and raw ids pass through for the CLI to resolve.
+        assert_eq!(resolve_launch_model_from(&config, "sonnet"), "sonnet");
+        assert_eq!(resolve_launch_model_from(&config, "claude-opus-5"), "claude-opus-5");
+        // Nothing configured: "default" stays an alias for the CLI's `best`.
+        assert_eq!(
+            resolve_launch_model_from(&CliModelConfig::default(), "default"),
+            "default"
+        );
     }
 
     #[test]

@@ -48,6 +48,12 @@ export function ChangesPanel({
         });
       });
   }, []);
+  /** Dismiss the header error: the failed action's error, else the store's
+   * last refresh failure. */
+  const dismissError = useCallback(() => {
+    setActionError(null);
+    useGitStore.getState().clearError(workspacePath);
+  }, [workspacePath]);
 
   const stage = useCallback(
     (files: string[]) =>
@@ -82,6 +88,7 @@ export function ChangesPanel({
       pending={pending}
       error={actionError ?? refreshError}
       run={run}
+      onDismissError={dismissError}
     />
   );
 

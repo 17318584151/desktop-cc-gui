@@ -33,6 +33,8 @@ interface GitStore {
   diffView: { workspacePath: string; target: DiffTarget } | null;
   openDiff: (workspacePath: string, target: DiffTarget) => void;
   closeDiff: () => void;
+  /** Dismiss the surfaced refresh error for one workspace. */
+  clearError: (workspacePath: string) => void;
 
   /** Refreshes status; skipped when fetched < 30s ago unless `force`. */
   refresh: (workspacePath: string, force?: boolean) => Promise<void>;
@@ -85,6 +87,10 @@ export const useGitStore = create<GitStore>((set, get) => {
 
     openDiff: (workspacePath, target) => set({ diffView: { workspacePath, target } }),
     closeDiff: () => set({ diffView: null }),
+    clearError: (workspacePath) =>
+      set((s) => ({
+        errorByWorkspace: { ...s.errorByWorkspace, [workspacePath]: null },
+      })),
 
     refresh: (workspacePath, force = false) => {
       const last = get().fetchedAtByWorkspace[workspacePath];
