@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Plus from "lucide-react/dist/esm/icons/plus";
+import Search from "lucide-react/dist/esm/icons/search";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import CloudDownload from "lucide-react/dist/esm/icons/cloud-download";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch";
@@ -44,6 +45,19 @@ export function ChangesPanelHeader({
   const [branchOpen, setBranchOpen] = useState(false);
   const [creatingBranch, setCreatingBranch] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
+  const [branchQuery, setBranchQuery] = useState("");
+
+  // Stale filter text must not survive into the next open.
+  useEffect(() => {
+    if (!branchOpen) setBranchQuery("");
+  }, [branchOpen]);
+
+  const filteredBranches = useMemo(() => {
+    const q = branchQuery.trim().toLowerCase();
+    return (branches ?? []).filter(
+      (b) => q.length === 0 || b.name.toLowerCase().includes(q),
+    );
+  }, [branches, branchQuery]);
 
   return (
     <div className="flex flex-col gap-2 border-b border-separator-border px-3 py-2.5">
@@ -96,25 +110,45 @@ export function ChangesPanelHeader({
               />
             </DropdownTrigger>
             <DropdownPopover aria-label={t("git.branch")} placement="bottom start">
-              {(branches ?? []).map((b) => (
-                <DropdownItem
-                  key={b.name}
-                  selected={b.isCurrent}
-                  className="px-2 py-1.5"
-                  onSelect={() => {
-                    setBranchOpen(false);
-                    if (!b.isCurrent) {
-                      run("checkout", () =>
-                        useGitStore.getState().checkout(workspacePath, b.name),
-                      );
-                    }
-                  }}
-                >
-                  <span className="truncate text-body-medium text-text-primary">
-                    {b.name}
+              <div className="flex h-8 items-center gap-1.5 rounded-lg border border-border-button-default px-2">
+                <Search
+                  aria-hidden
+                  className="size-4 shrink-0 text-foreground-icon-secondary"
+                />
+                <input
+                  autoFocus
+                  value={branchQuery}
+                  onChange={(e) => setBranchQuery(e.target.value)}
+                  placeholder={t("git.searchBranches")}
+                  className="min-w-0 flex-1 bg-transparent text-body-medium text-text-primary outline-none placeholder:text-text-placeholder"
+                />
+              </div>
+              <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                {filteredBranches.map((b) => (
+                  <DropdownItem
+                    key={b.name}
+                    selected={b.isCurrent}
+                    className="px-2 py-1.5"
+                    onSelect={() => {
+                      setBranchOpen(false);
+                      if (!b.isCurrent) {
+                        run("checkout", () =>
+                          useGitStore.getState().checkout(workspacePath, b.name),
+                        );
+                      }
+                    }}
+                  >
+                    <span className="truncate text-body-medium text-text-primary">
+                      {b.name}
+                    </span>
+                  </DropdownItem>
+                ))}
+                {filteredBranches.length === 0 && (
+                  <span className="px-2 py-1.5 text-body-medium text-text-tertiary">
+                    {t("git.noMatchingBranches")}
                   </span>
-                </DropdownItem>
-              ))}
+                )}
+              </div>
               <DropdownDivider />
               <DropdownItem
                 className="px-2 py-1.5"

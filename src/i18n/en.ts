@@ -436,6 +436,8 @@ export const en: Messages = {
     branch: "Branch",
     newBranch: "New branch",
     branchNamePlaceholder: "Branch name",
+    searchBranches: "Search branches…",
+    noMatchingBranches: "No matching branches",
     back: "Back",
     notARepo: "Current workspace is not a git repository",
     diffTooLarge: "Diff too large, truncated",
