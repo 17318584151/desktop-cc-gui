@@ -11,6 +11,7 @@ export type ChatPageDialog =
   | { kind: "rename"; session: SessionMeta }
   | { kind: "delete"; session: SessionMeta }
   | { kind: "removeWorkspace"; workspaceId: string }
+  | { kind: "workspaceAlias"; workspaceId: string }
   | { kind: "closeFile"; path: string };
 
 /** Session rename/delete, dirty-file close, and workspace removal
@@ -23,14 +24,16 @@ export function ChatPageDialogs({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const { renameSession, deleteSession, removeWorkspace } = useChatStore(
+  const { renameSession, deleteSession, removeWorkspace, setWorkspaceAlias } = useChatStore(
     useShallow((s) => ({
       renameSession: s.renameSession,
       deleteSession: s.deleteSession,
       removeWorkspace: s.removeWorkspace,
+      setWorkspaceAlias: s.setWorkspaceAlias,
     })),
   );
   const workspaces = useChatStore((s) => s.workspaces);
+  const workspaceAliases = useChatStore((s) => s.workspaceAliases);
   const closeFile = useFilesStore((s) => s.closeFile);
   const removeTerminalWorkspace = useTerminalStore((s) => s.removeWorkspace);
 
@@ -65,6 +68,20 @@ export function ChatPageDialogs({
           onConfirm={() => {
             closeFile(dialog.path);
             onClose();
+          }}
+          onCancel={onClose}
+        />
+      )}
+      {dialog?.kind === "workspaceAlias" && (
+        <PromptDialog
+          allowEmpty
+          title={t("chat.workspaceAliasTitle")}
+          hint={t("chat.workspaceAliasHint")}
+          placeholder={t("chat.workspaceAliasPlaceholder")}
+          initial={workspaceAliases[dialog.workspaceId] ?? ""}
+          onSubmit={(alias) => {
+            onClose();
+            void setWorkspaceAlias(dialog.workspaceId, alias);
           }}
           onCancel={onClose}
         />

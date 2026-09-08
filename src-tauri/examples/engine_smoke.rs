@@ -36,6 +36,7 @@ async fn run_one(engine_id: &str, workspace: &PathBuf) -> Result<(), String> {
         images: Vec::new(),
         model: None,
         effort: None,
+        permission: None,
     };
     let bin = which::which(engine_id)
         .map(|p| p.to_string_lossy().to_string())

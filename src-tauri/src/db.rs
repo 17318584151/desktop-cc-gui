@@ -22,9 +22,7 @@ impl Db {
                 .create(true)
                 .write(true)
                 .open(path);
-            if let Err(e) =
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            {
+            if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
                 eprintln!("[db] chmod 0600 {}: {e}", path.display());
             }
         }
@@ -79,10 +77,10 @@ fn import_legacy_workspaces_from(db: &Db, path: &std::path::Path) -> Result<(), 
     }
 
     if path.is_file() {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("read {}: {e}", path.display()))?;
-        let legacy: Vec<serde_json::Value> = serde_json::from_str(&content)
-            .map_err(|e| format!("parse {}: {e}", path.display()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let legacy: Vec<serde_json::Value> =
+            serde_json::from_str(&content).map_err(|e| format!("parse {}: {e}", path.display()))?;
         // Sidebar order: ungrouped workspaces first (file order), then each
         // group with its internal sortOrder. Worktree children (parentId)
         // have no new-app equivalent and are skipped.
@@ -91,7 +89,9 @@ fn import_legacy_workspaces_from(db: &Db, path: &std::path::Path) -> Result<(), 
             .enumerate()
             .filter(|(_, w)| {
                 w.get("parentId").and_then(|v| v.as_str()).is_none()
-                    && w.get("path").and_then(|v| v.as_str()).is_some_and(|p| !p.trim().is_empty())
+                    && w.get("path")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|p| !p.trim().is_empty())
             })
             .collect();
         entries.sort_by_key(|(i, w)| {
@@ -122,10 +122,18 @@ fn import_legacy_workspaces_from(db: &Db, path: &std::path::Path) -> Result<(), 
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            // Group assignment rides along with the row (legacy
+            // `settings.groupId`); a conflict keeps any assignment the user
+            // already made in the new app.
+            let group_id = w
+                .pointer("/settings/groupId")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty());
             tx.execute(
-                "INSERT INTO workspaces(id, path, name, sort_order) VALUES(?1,?2,?3,?4)
-                 ON CONFLICT(path) DO UPDATE SET sort_order=excluded.sort_order",
-                rusqlite::params![id, path, name, index],
+                "INSERT INTO workspaces(id, path, name, sort_order, group_id) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(path) DO UPDATE SET sort_order=excluded.sort_order,
+                    group_id=COALESCE(workspaces.group_id, excluded.group_id)",
+                rusqlite::params![id, path, name, index, group_id],
             )
             .map_err(|e| e.to_string())?;
             imported_paths.insert(path.to_string());
@@ -211,6 +219,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has_sort_order {
         conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order INTEGER", [])?;
     }
+
+    // Additive migration: sidebar group assignment (工作区分组), matching the
+    // legacy app's per-workspace `settings.groupId` in workspaces.json.
+    let has_group_id = conn
+        .prepare("PRAGMA table_info(workspaces)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .flatten()
+        .any(|name| name == "group_id");
+    if !has_group_id {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN group_id TEXT", [])?;
+    }
     Ok(())
 }
 
@@ -221,8 +240,8 @@ mod tests {
     struct Scratch(std::path::PathBuf);
     impl Scratch {
         fn new() -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("ccgui-next-db-test-{}", uuid::Uuid::new_v4()));
+            let dir =
+                std::env::temp_dir().join(format!("ccgui-next-db-test-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
             Self(dir)
         }
@@ -312,11 +331,8 @@ mod tests {
         // Second run is a no-op: a removal in the new app is not resurrected.
         {
             let conn = db.0.lock();
-            conn.execute(
-                "DELETE FROM workspaces WHERE id='legacy-ungrouped'",
-                [],
-            )
-            .unwrap();
+            conn.execute("DELETE FROM workspaces WHERE id='legacy-ungrouped'", [])
+                .unwrap();
         }
         import_legacy_workspaces_from(&db, &legacy_path).unwrap();
         assert_eq!(list(&db).len(), 2);

@@ -1,12 +1,15 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { measureElement as defaultMeasureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import Loader2 from "lucide-react/dist/esm/icons/loader-2";
 import Plus from "lucide-react/dist/esm/icons/plus";
 import { cx } from "@/utils/cx";
-import type { DirEntry } from "@/lib/ipc";
-import { joinPath, useFilesStore } from "./store";
+import { ipc, type DirEntry } from "@/lib/ipc";
+import { errorText } from "@/lib/errors";
+import { ConfirmDialog, PromptDialog } from "@/components/dialogs";
+import { fileName, joinPath, parentPath, useFilesStore } from "./store";
 import { getFileTreeIconSvg } from "./fileIcons";
+import { FileTreeContextMenu, type FileTreeMenuState } from "./FileTreeContextMenu";
 import { useChatStore } from "@/features/chat/store";
 
 export interface VisibleNode extends DirEntry {
@@ -22,6 +25,7 @@ interface TreeRowProps {
   onToggleDir: (path: string) => void;
   onOpenFile: (path: string) => void;
   onSelectDir: (path: string) => void;
+  onContextMenu: (event: MouseEvent<HTMLElement>, node: VisibleNode) => void;
   /** Hover "+": stage an @path mention in the active chat's composer. */
   onMention: (path: string) => void;
   mentionLabel: string;
@@ -33,6 +37,7 @@ const TreeRow = memo(function TreeRow({
   onToggleDir,
   onOpenFile,
   onSelectDir,
+  onContextMenu,
   onMention,
   mentionLabel,
 }: TreeRowProps) {
@@ -53,6 +58,7 @@ const TreeRow = memo(function TreeRow({
 
   return (
     <div
+      onContextMenu={(e) => onContextMenu(e, node)}
       className={cx(
         "group flex h-7 w-full items-center rounded-md pr-1 text-body-medium",
         "hover:bg-background-primary-hover",
@@ -110,6 +116,7 @@ export function FileTree() {
   const selectedPath = useFilesStore((s) => s.selectedPath);
   const ensureDir = useFilesStore((s) => s.ensureDir);
   const toggleDir = useFilesStore((s) => s.toggleDir);
+  const invalidateDir = useFilesStore((s) => s.invalidateDir);
   const selectPath = useFilesStore((s) => s.selectPath);
   const openFile = useFilesStore((s) => s.openFile);
 
@@ -187,6 +194,128 @@ export function FileTree() {
 
   const rootError = root ? dirErrors[root] : undefined;
   const rootLoading = root ? !!loadingDirs[root] : false;
+  // ---- context menu + file operations -------------------------------------
+  const clipboard = useFilesStore((s) => s.clipboard);
+  const [menu, setMenu] = useState<FileTreeMenuState | null>(null);
+  const [prompt, setPrompt] = useState<{
+    kind: "newFile" | "newFolder" | "rename";
+    /** Parent dir for newFile/newFolder; the item itself for rename. */
+    path: string;
+    isDir: boolean;
+  } | null>(null);
+  const [trashTarget, setTrashTarget] = useState<{ path: string; isDir: boolean } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const opFailed = useCallback(
+    (e: unknown) => setNotice(t("files.opFailed", { message: errorText(e) })),
+    [t],
+  );
+
+  const openContextMenu = useCallback(
+    (event: MouseEvent<HTMLElement>, node: VisibleNode) => {
+      event.preventDefault();
+      selectPath(node.path, node.isDir);
+      setMenu({ x: event.clientX, y: event.clientY, path: node.path, isDir: node.isDir });
+    },
+    [selectPath],
+  );
+
+  /** Refresh the (loaded) parent listing, expand it when collapsed, and
+   *  select the operation result so the user sees what changed. */
+  const revealInTree = useCallback(
+    async (dir: string, target: string | null, isDir: boolean) => {
+      if (dir && dir !== root && !useFilesStore.getState().expanded[dir]) {
+        await toggleDir(dir);
+      }
+      await invalidateDir(dir);
+      if (target) selectPath(target, isDir);
+    },
+    [root, toggleDir, invalidateDir, selectPath],
+  );
+
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  const submitPrompt = useCallback(
+    async (name: string) => {
+      const p = prompt;
+      setPrompt(null);
+      if (!p) return;
+      if (name.includes("/") || name.includes("\\")) {
+        setNotice(t("files.opFailed", { message: name }));
+        return;
+      }
+      try {
+        if (p.kind === "rename") {
+          const parent = parentPath(p.path);
+          const to = joinPath(parent, name);
+          if (to !== p.path) {
+            await ipc.renameItem(p.path, to);
+            useFilesStore.getState().remapTreePath(p.path, to);
+            await invalidateDir(parent);
+            selectPath(to, p.isDir);
+          }
+          return;
+        }
+        const target = joinPath(p.path, name);
+        if (p.kind === "newFile") {
+          await ipc.createFile(target);
+          await revealInTree(p.path, target, false);
+        } else {
+          await ipc.createDir(target);
+          await revealInTree(p.path, target, true);
+        }
+      } catch (e) {
+        opFailed(e);
+      }
+    },
+    [prompt, t, invalidateDir, selectPath, revealInTree, opFailed],
+  );
+
+  const confirmTrash = useCallback(async () => {
+    const target = trashTarget;
+    setTrashTarget(null);
+    if (!target) return;
+    try {
+      await ipc.trashItem(target.path);
+      useFilesStore.getState().removeTreePath(target.path);
+      await invalidateDir(parentPath(target.path));
+    } catch (e) {
+      opFailed(e);
+    }
+  }, [trashTarget, invalidateDir, opFailed]);
+
+  const handlePaste = useCallback(
+    async (targetDir: string) => {
+      const item = useFilesStore.getState().clipboard;
+      if (!item) {
+        setNotice(t("files.pasteUnavailable"));
+        return;
+      }
+      try {
+        const result = await ipc.pasteItem(item.path, targetDir);
+        await revealInTree(targetDir, result.path, result.isDir);
+      } catch (e) {
+        opFailed(e);
+      }
+    },
+    [t, revealInTree, opFailed],
+  );
+
+  const handleDuplicate = useCallback(async () => {
+    if (!menu) return;
+    try {
+      const result = await ipc.duplicateItem(menu.path);
+      await revealInTree(parentPath(menu.path), result.path, result.isDir);
+    } catch (e) {
+      opFailed(e);
+    }
+  }, [menu, revealInTree, opFailed]);
 
   // Hover "+" on a row: insert an @path mention into the active chat's
   // composer (renders there as an inline chip). Files and folders alike.
@@ -236,6 +365,7 @@ export function FileTree() {
                   onToggleDir={toggleDir}
                   onOpenFile={openFile}
                   onSelectDir={selectPath}
+                  onContextMenu={openContextMenu}
                   onMention={handleMention}
                   mentionLabel={t("files.addToChat")}
                 />
@@ -244,6 +374,59 @@ export function FileTree() {
           })}
         </div>
       )}
+      {notice ? (
+        <div className="sticky bottom-1 z-10 mx-2 mt-auto rounded-lg border border-border-button-default bg-background-primary-default px-2.5 py-1.5 text-caption-1-regular text-text-error-primary shadow-dropdown">
+          {notice}
+        </div>
+      ) : null}
+      {menu ? (
+        <FileTreeContextMenu
+          menu={menu}
+          pasteDisabled={!clipboard}
+          onClose={closeMenu}
+          onNewFile={(dir) => setPrompt({ kind: "newFile", path: dir, isDir: true })}
+          onNewFolder={(dir) => setPrompt({ kind: "newFolder", path: dir, isDir: true })}
+          onCopy={() =>
+            useFilesStore.getState().setClipboard({ path: menu.path, isDir: menu.isDir })
+          }
+          onPaste={(dir) => void handlePaste(dir)}
+          onDuplicate={() => void handleDuplicate()}
+          onRename={() => setPrompt({ kind: "rename", path: menu.path, isDir: menu.isDir })}
+          onCopyPath={() => {
+            void navigator.clipboard.writeText(menu.path).catch(opFailed);
+          }}
+          onSendPath={() => useChatStore.getState().requestMention(menu.path)}
+          onReveal={() => {
+            void ipc.revealInFileManager(menu.path).catch(opFailed);
+          }}
+          onTrash={() => setTrashTarget({ path: menu.path, isDir: menu.isDir })}
+        />
+      ) : null}
+      {prompt ? (
+        <PromptDialog
+          title={t(
+            prompt.kind === "newFile"
+              ? "files.newFile"
+              : prompt.kind === "newFolder"
+                ? "files.newFolder"
+                : "files.renameItem",
+          )}
+          initial={prompt.kind === "rename" ? fileName(prompt.path) : ""}
+          onSubmit={(name) => void submitPrompt(name)}
+          onCancel={() => setPrompt(null)}
+        />
+      ) : null}
+      {trashTarget ? (
+        <ConfirmDialog
+          danger
+          message={t(
+            trashTarget.isDir ? "files.deleteFolderConfirm" : "files.deleteFileConfirm",
+            { name: fileName(trashTarget.path) },
+          )}
+          onConfirm={() => void confirmTrash()}
+          onCancel={() => setTrashTarget(null)}
+        />
+      ) : null}
     </div>
   );
 }

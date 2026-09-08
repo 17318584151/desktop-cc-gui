@@ -81,10 +81,12 @@ export default function ChatPage() {
     workspaces,
     startNewChat,
     repos,
+    sections,
     handleAddWorkspace,
     handleThreadSelect,
     handleThreadAction,
     handleRemoveWorkspace,
+    handleWorkspaceAlias,
     handleNewSession,
     handleNewSessionInWorkspace,
     handleReorderWorkspaces,
@@ -153,10 +155,12 @@ export default function ChatPage() {
         onResizeStart={handleResizeStart("sidebar")}
         onClose={toggleSidebarCollapsed}
         repos={repos}
+        sections={sections}
         onThreadSelect={handleThreadSelect}
         onThreadAction={handleThreadAction}
         onAddWorkspace={handleAddWorkspace}
         onRemoveWorkspace={handleRemoveWorkspace}
+        onWorkspaceAlias={handleWorkspaceAlias}
         onNewSessionInWorkspace={handleNewSessionInWorkspace}
         onNewSession={handleNewSession}
         onReorderWorkspaces={handleReorderWorkspaces}

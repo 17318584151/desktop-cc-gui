@@ -28,6 +28,7 @@ export function ConversationFooter({
   workspaces,
   queue,
   onRemoveQueued,
+  onClearQueued,
   imageError,
   branchError,
   images,
@@ -57,6 +58,7 @@ export function ConversationFooter({
   workspaces: Workspace[];
   queue: QueuedMessage[];
   onRemoveQueued: (id: string) => void;
+  onClearQueued?: () => void;
   imageError: string | null;
   branchError: string | null;
   images: string[];
@@ -111,7 +113,7 @@ export function ConversationFooter({
   return (
     <>
       <div className="flex w-full flex-col gap-2.5 bg-background-primary-default px-4 pt-2.5 pb-2">
-        <MessageQueue queue={queue} onRemove={onRemoveQueued} />
+        <MessageQueue queue={queue} onRemove={onRemoveQueued} onClear={onClearQueued} className="mx-auto w-full max-w-3xl" />
         {imageError && (
           <div className="rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary">
             {imageError}

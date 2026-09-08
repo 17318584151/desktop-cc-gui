@@ -38,12 +38,33 @@ export function useScrollFollow({
       autoScrollingRef.current = false;
     });
   }, [scrollRef]);
+  // Explicit jump-to-bottom: clears the wheel-up pause so the pin effects
+  // keep following afterwards (used by the floating back-to-bottom button).
+  const resumeFollow = useCallback(() => {
+    userPausedRef.current = false;
+    atBottomRef.current = true;
+    scrollToBottom();
+  }, [scrollToBottom]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const distanceFromBottom = () =>
       el.scrollHeight - el.scrollTop - el.clientHeight;
+
+    // Only a scrollbar drag counts as scroll-event intent: the virtualizer's
+    // measurement compensation also moves scrollTop (untagged), and reading
+    // those programmatic shifts as intent silently unfollowed the tail right
+    // after opening a session. Wheel pause/resume stays in the wheel handler.
+    let scrollbarDrag = false;
+    const handlePointerDown = (e: PointerEvent) => {
+      // Scrollbar chrome sits outside the padding box: a press with offsets
+      // beyond clientWidth/clientHeight landed on the track or thumb.
+      scrollbarDrag = e.offsetX > el.clientWidth || e.offsetY > el.clientHeight;
+    };
+    const endScrollbarDrag = () => {
+      scrollbarDrag = false;
+    };
 
     let scrollRaf = 0;
     const handleScroll = () => {
@@ -55,6 +76,7 @@ export function useScrollFollow({
         // scroll event from that same gesture (still within the threshold)
         // would immediately un-pause.
         if (autoScrollingRef.current || userPausedRef.current) return;
+        if (!scrollbarDrag) return;
         atBottomRef.current = distanceFromBottom() < BOTTOM_THRESHOLD_PX;
       });
     };
@@ -80,15 +102,21 @@ export function useScrollFollow({
 
     el.addEventListener("scroll", handleScroll, { passive: true });
     el.addEventListener("wheel", handleWheel, { passive: true });
+    el.addEventListener("pointerdown", handlePointerDown, { passive: true });
+    window.addEventListener("pointerup", endScrollbarDrag);
+    window.addEventListener("pointercancel", endScrollbarDrag);
     return () => {
       el.removeEventListener("scroll", handleScroll);
       el.removeEventListener("wheel", handleWheel);
+      el.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointerup", endScrollbarDrag);
+      window.removeEventListener("pointercancel", endScrollbarDrag);
       if (scrollRaf) cancelAnimationFrame(scrollRaf);
       if (wheelRaf) cancelAnimationFrame(wheelRaf);
     };
   }, [scrollRef]);
 
-  return { atBottomRef, userPausedRef, isFollowing, scrollToBottom };
+  return { atBottomRef, userPausedRef, isFollowing, scrollToBottom, resumeFollow };
 }
 
 /** Keep the tail pinned while content grows: on append (when following), on

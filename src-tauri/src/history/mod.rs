@@ -74,7 +74,11 @@ pub fn parse_ts_ms_str(text: &str) -> Option<i64> {
         return None;
     }
     if let Ok(n) = trimmed.parse::<i64>() {
-        return Some(if n.abs() < 10_000_000_000 { n * 1000 } else { n });
+        return Some(if n.abs() < 10_000_000_000 {
+            n * 1000
+        } else {
+            n
+        });
     }
     chrono_like_rfc3339_ms(trimmed)
 }
@@ -155,11 +159,7 @@ pub fn content_text(value: Option<&Value>) -> String {
                 let t = p.get("type").and_then(Value::as_str);
                 t == Some("text") || t.is_none()
             })
-            .filter_map(|p| {
-                p.get("text")
-                    .and_then(Value::as_str)
-                    .or_else(|| p.as_str())
-            })
+            .filter_map(|p| p.get("text").and_then(Value::as_str).or_else(|| p.as_str()))
             .collect::<Vec<_>>()
             .join(""),
         Some(Value::Object(map)) => {
@@ -420,6 +420,9 @@ mod tests {
             strip_title_noise("# AGENTS.md instructions\n\n<INSTRUCTIONS>\n…\n</INSTRUCTIONS>\n<environment_context>\n  <cwd>/tmp/ws</cwd>\n</environment_context>"),
             ""
         );
-        assert_eq!(strip_title_noise("<skill>\n<name>plan</name>\n</skill>"), "");
+        assert_eq!(
+            strip_title_noise("<skill>\n<name>plan</name>\n</skill>"),
+            ""
+        );
     }
 }

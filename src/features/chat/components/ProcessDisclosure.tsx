@@ -53,7 +53,7 @@ function fileChipFor(path: string | null | undefined): TaskListChip | null {
       <span
         aria-hidden
         className="text-foreground-icon-tertiary [&>svg]:size-3.5"
-        dangerouslySetInnerHTML={{ __html: getFileTreeIconSvg(name, isDir, false) }}
+        dangerouslySetInnerHTML={{ __html: getFileTreeIconSvg(name, isDir) }}
       />
     ),
   };

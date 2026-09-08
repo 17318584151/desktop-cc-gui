@@ -1,4 +1,4 @@
-import { isValidElement, memo, useMemo, type ReactNode } from "react";
+import { isValidElement, memo, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -8,6 +8,7 @@ import Copy from "lucide-react/dist/esm/icons/copy";
 import Check from "lucide-react/dist/esm/icons/check";
 import { useFilesStore } from "@/features/files/store";
 import { useCopied } from "@/hooks/use-copied";
+import { FileLinkContextMenu } from "./FileLinkContextMenu";
 import {
   decodeFileLink,
   isFileLinkUrl,
@@ -43,19 +44,33 @@ function FileLink({
   children: ReactNode;
 }) {
   const resolved = resolveFilePath(path, workspacePath);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   return (
-    <a
-      className="md-file-link"
-      href={href}
-      title={resolved ?? path}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        openFileFromChat(path, workspacePath);
-      }}
-    >
-      {children}
-    </a>
+    <>
+      <a
+        className="md-file-link"
+        href={href}
+        title={resolved ?? path}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openFileFromChat(path, workspacePath);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setMenu({ x: event.clientX, y: event.clientY });
+        }}
+      >
+        {children}
+      </a>
+      {menu && (
+        <FileLinkContextMenu
+          menu={{ ...menu, path, resolvedPath: resolved }}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </>
   );
 }
 

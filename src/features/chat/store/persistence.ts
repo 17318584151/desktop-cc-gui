@@ -22,6 +22,7 @@ const ACTIVE_SESSION_KEY = "ccgui-next.activeSession:v1";
 const LEGACY_OPEN_TABS_KEY = "ccgui-next.openTabs";
 const LEGACY_ACTIVE_SESSION_KEY = "ccgui-next.activeSession";
 export const ENGINE_PREF_KEY = "ccgui-next.enginePref";
+export const PERMISSION_PREF_KEY = "ccgui-next.permissionPref";
 
 export function sameTab(
   tab: ActiveSession,
@@ -30,6 +31,17 @@ export function sameTab(
   workspacePath: string,
 ) {
   return tab.engine === engine && tab.sessionId === sessionId && tab.workspacePath === workspacePath;
+}
+/** Drop duplicate tabs (same engine+sessionId+workspacePath), keeping the
+ * first occurrence. Duplicates render with identical React keys and break
+ * the tab strip's reconciliation. */
+export function dedupeTabs(tabs: ActiveSession[]): ActiveSession[] {
+  const out: ActiveSession[] = [];
+  for (const tab of tabs) {
+    if (out.some((t) => sameTab(t, tab.engine, tab.sessionId, tab.workspacePath))) continue;
+    out.push(tab);
+  }
+  return out;
 }
 
 export function persistTabs(openTabs: ActiveSession[], active: ActiveSession | null) {
@@ -65,9 +77,11 @@ function isActiveSession(t: unknown): t is ActiveSession {
 
 export function readPersistedTabs(): ActiveSession[] {
   return (
-    readPersistedValue(OPEN_TABS_KEY, LEGACY_OPEN_TABS_KEY, (raw) =>
-      Array.isArray(raw) ? raw.filter(isActiveSession) : null,
-    ) ?? []
+    dedupeTabs(
+      readPersistedValue(OPEN_TABS_KEY, LEGACY_OPEN_TABS_KEY, (raw) =>
+        Array.isArray(raw) ? raw.filter(isActiveSession) : null,
+      ) ?? [],
+    )
   );
 }
 

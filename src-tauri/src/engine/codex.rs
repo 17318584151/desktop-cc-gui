@@ -1,4 +1,6 @@
-use super::{images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
+use super::{
+    images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest,
+};
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -15,6 +17,9 @@ impl Engine for CodexEngine {
     fn supports_images(&self) -> bool {
         true // -i/--image FILE
     }
+    fn supported_permissions(&self) -> &'static [&'static str] {
+        &["auto", "manual", "bypass"]
+    }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
@@ -30,7 +35,22 @@ impl Engine for CodexEngine {
             cmd.arg("--json");
         }
         cmd.arg("--skip-git-repo-check");
-        cmd.arg("--dangerously-bypass-approvals-and-sandbox");
+        // exec auto-declines approval prompts, so "manual" is enforced by the
+        // sandbox instead: read-only means nothing can change without the
+        // user re-sending in a writable mode. codex exec has no plan mode.
+        match self.resolve_permission(req.permission.as_deref()) {
+            "bypass" => {
+                cmd.arg("--dangerously-bypass-approvals-and-sandbox");
+            }
+            "manual" => {
+                cmd.arg("--sandbox");
+                cmd.arg("read-only");
+            }
+            _ => {
+                cmd.arg("--sandbox");
+                cmd.arg("workspace-write");
+            }
+        }
         if let Some(model) = req.model.as_deref() {
             cmd.arg("-m");
             cmd.arg(model);
@@ -68,7 +88,9 @@ impl Engine for CodexEngine {
                 push_session_id(&value, "thread_id", out);
             }
             "item.completed" => {
-                let Some(item) = value.get("item") else { return };
+                let Some(item) = value.get("item") else {
+                    return;
+                };
                 match item.get("type").and_then(Value::as_str) {
                     Some("agent_message") => {
                         if let Some(text) = item.get("text").and_then(Value::as_str) {

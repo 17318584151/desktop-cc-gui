@@ -10,6 +10,7 @@ pub(super) fn codex_config_model() -> Option<EngineModel> {
     Some(EngineModel {
         id: model,
         name: None,
+        description: None,
         provider: "codex".to_string(),
         context_window: None,
     })
@@ -46,8 +47,11 @@ pub fn parse_codex_models_json(stdout: &str) -> Result<Vec<EngineModel>, String>
                 .get("display_name")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
+            description: None,
             provider: "codex".to_string(),
-            context_window: row.get("context_window").and_then(serde_json::Value::as_u64),
+            context_window: row
+                .get("context_window")
+                .and_then(serde_json::Value::as_u64),
         });
     }
     Ok(models)

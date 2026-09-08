@@ -1,4 +1,6 @@
-use super::{images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
+use super::{
+    images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest,
+};
 use serde_json::Value;
 use tokio::process::Command;
 
@@ -14,11 +16,26 @@ impl Engine for KimiEngine {
         // instruction into the prompt; that IS the kimi image transport.
         true
     }
+    fn supported_permissions(&self) -> &'static [&'static str] {
+        // One-shot --prompt runs cannot ask mid-turn ("manual" out); kimi's
+        // non-interactive default policy already auto-approves ("auto" = no
+        // flag).
+        &["auto", "plan", "bypass"]
+    }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
         cmd.arg("--output-format");
         cmd.arg("stream-json");
+        match self.resolve_permission(req.permission.as_deref()) {
+            "plan" => {
+                cmd.arg("--plan");
+            }
+            "bypass" => {
+                cmd.arg("--yolo");
+            }
+            _ => {}
+        }
         if let Some(model) = req.model.as_deref() {
             cmd.arg("--model");
             cmd.arg(model);

@@ -12,6 +12,9 @@ impl Engine for ClaudeEngine {
     fn supports_images(&self) -> bool {
         true
     }
+    fn supported_permissions(&self) -> &'static [&'static str] {
+        &["auto", "manual", "plan", "bypass"]
+    }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
@@ -22,7 +25,22 @@ impl Engine for ClaudeEngine {
         cmd.arg("stream-json");
         cmd.arg("--verbose");
         cmd.arg("--include-partial-messages");
-        cmd.arg("--dangerously-skip-permissions");
+        // Headless -p cannot prompt mid-turn: "manual" maps onto claude's
+        // default mode, where approval-needing tools are denied and the
+        // agent is told to work around them (honest degrade, no fake ask).
+        match self.resolve_permission(req.permission.as_deref()) {
+            "bypass" => {
+                cmd.arg("--dangerously-skip-permissions");
+            }
+            mode => {
+                cmd.arg("--permission-mode");
+                cmd.arg(match mode {
+                    "manual" => "default",
+                    "plan" => "plan",
+                    _ => "acceptEdits",
+                });
+            }
+        }
         if let Some(model) = req.model.as_deref() {
             cmd.arg("--model");
             cmd.arg(model);

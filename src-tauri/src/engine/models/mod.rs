@@ -14,7 +14,8 @@
 //! the active model — top-level `model = "…"` in $CODEX_HOME/config.toml.
 //! Claude runs entirely on the CLI's own configuration: the catalog is
 //! the built-in aliases `claude --model` resolves (the /model menu's
-//! entries) plus the configured default from ~/.claude/settings.json — no
+//! entries) in menu order; the configured default from ~/.claude/settings.json is named
+//! in the "default" row's subtitle. No
 //! relay probe: the /model menu is built into the CLI binary. The app's
 //! provider channels never feed
 //! it. Kimi keeps its own
@@ -72,6 +73,10 @@ pub struct EngineModel {
     pub id: String,
     /// Display name when the catalog carries one (JSON probe only).
     pub name: Option<String>,
+    /// Secondary line under the name (e.g. "Custom Opus model"), mirroring
+    /// the CLI's own /model menu descriptions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub provider: String,
     /// Context window parsed from the table ("131.1K" -> 131_100).
     pub context_window: Option<u64>,
@@ -225,6 +230,7 @@ pub(super) fn config_toml_model(
     Some(EngineModel {
         id,
         name: None,
+        description: None,
         provider: provider.to_string(),
         context_window: None,
     })
@@ -276,6 +282,7 @@ pub(super) fn alias_table_catalog(
                     EngineModel {
                         id: alias.clone(),
                         name,
+                        description: None,
                         provider,
                         context_window,
                     }
@@ -338,25 +345,61 @@ model = \"must-not-leak\"
             parse_top_level_toml_string(toml, "model"),
             Some("gpt-5.6-sol".to_string())
         );
-        assert_eq!(parse_top_level_toml_string("[features]\nmodel = \"x\"", "model"), None);
+        assert_eq!(
+            parse_top_level_toml_string("[features]\nmodel = \"x\"", "model"),
+            None
+        );
         assert_eq!(parse_top_level_toml_string("model = ''", "model"), None);
     }
 
     #[test]
     fn default_entry_leads_the_catalog() {
         let listed = vec![
-            EngineModel { id: "a".to_string(), name: None, provider: "p".to_string(), context_window: None },
-            EngineModel { id: "b".to_string(), name: None, provider: "p".to_string(), context_window: None },
+            EngineModel {
+                id: "a".to_string(),
+                name: None,
+                description: None,
+                provider: "p".to_string(),
+                context_window: None,
+            },
+            EngineModel {
+                id: "b".to_string(),
+                name: None,
+                description: None,
+                provider: "p".to_string(),
+                context_window: None,
+            },
         ];
-        let default = || EngineModel { id: "b".to_string(), name: None, provider: "p".to_string(), context_window: None };
-        let ids: Vec<String> = with_default_first(listed.clone(), Some(default())).into_iter().map(|m| m.id).collect();
+        let default = || EngineModel {
+            id: "b".to_string(),
+            name: None,
+            description: None,
+            provider: "p".to_string(),
+            context_window: None,
+        };
+        let ids: Vec<String> = with_default_first(listed.clone(), Some(default()))
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
         assert_eq!(ids, vec!["b", "a"]);
         // Absent from the catalog: prepended, not dropped.
-        let absent = EngineModel { id: "z".to_string(), name: None, provider: "p".to_string(), context_window: None };
-        let ids: Vec<String> = with_default_first(listed.clone(), Some(absent)).into_iter().map(|m| m.id).collect();
+        let absent = EngineModel {
+            id: "z".to_string(),
+            name: None,
+            description: None,
+            provider: "p".to_string(),
+            context_window: None,
+        };
+        let ids: Vec<String> = with_default_first(listed.clone(), Some(absent))
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
         assert_eq!(ids, vec!["z", "a", "b"]);
         // No default known: order untouched.
-        let ids: Vec<String> = with_default_first(listed, None).into_iter().map(|m| m.id).collect();
+        let ids: Vec<String> = with_default_first(listed, None)
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
         assert_eq!(ids, vec!["a", "b"]);
     }
 }

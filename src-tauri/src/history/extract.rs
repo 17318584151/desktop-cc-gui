@@ -11,7 +11,10 @@ pub struct ParsedSession {
 /// skipped individually.
 pub fn parse_session_file(engine: &str, path: &Path) -> Result<ParsedSession, String> {
     let reader = open_line_reader(engine, path)?;
-    Ok(collect_session(reader, &extractor_for(engine, ImageMode::Collect)))
+    Ok(collect_session(
+        reader,
+        &extractor_for(engine, ImageMode::Collect),
+    ))
 }
 
 /// Everything the sidebar needs from a scan: title/preview/timestamps/count.
@@ -32,16 +35,19 @@ pub struct ScanSummary {
 pub fn scan_summary_file(engine: &str, path: &Path) -> Result<ScanSummary, String> {
     let reader = open_line_reader(engine, path)?;
     let mut acc = ScanAcc::default();
-    walk_lines(reader, &extractor_for(engine, ImageMode::SkipDataUrls), |row| {
-        acc.accept(row);
-    });
+    walk_lines(
+        reader,
+        &extractor_for(engine, ImageMode::SkipDataUrls),
+        |row| {
+            acc.accept(row);
+        },
+    );
     Ok(acc.finish())
 }
 
 /// dsh session files are zstd-compressed NDJSON; everything else is plain.
 fn open_line_reader(engine: &str, path: &Path) -> Result<Box<dyn BufRead>, String> {
-    let file =
-        std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let file = std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     if engine == "dsh" {
         let decoder = zstd::stream::read::Decoder::new(std::io::BufReader::new(file))
             .map_err(|e| format!("zstd {}: {e}", path.display()))?;
@@ -71,11 +77,7 @@ fn extractor_for(engine: &str, images: ImageMode) -> LineExtractor<'static> {
 
 /// Line-loop skeleton shared by the full parse and the scan summary: decode
 /// one NDJSON line, extract rows, normalize, hand each to `consume`.
-fn walk_lines(
-    reader: impl BufRead,
-    extract: &LineExtractor<'_>,
-    mut consume: impl FnMut(LineRow),
-) {
+fn walk_lines(reader: impl BufRead, extract: &LineExtractor<'_>, mut consume: impl FnMut(LineRow)) {
     for line in reader.lines() {
         let Ok(line) = line else { continue };
         let trimmed = line.trim();
@@ -187,7 +189,10 @@ impl ScanAcc {
 
 fn extract_dsh_line(value: &Value) -> LineRows {
     let line_type = type_str(value);
-    let ts = value.get("time").and_then(Value::as_i64).map(|ms| ms.to_string());
+    let ts = value
+        .get("time")
+        .and_then(Value::as_i64)
+        .map(|ms| ms.to_string());
     match line_type {
         "user/message" => {
             let text = content_text(value.get("data").and_then(|d| d.get("content")));
@@ -426,10 +431,7 @@ fn extract_codex_line(value: &Value, images: ImageMode) -> LineRows {
                 return Vec::new();
             };
             if payload.get("type").and_then(Value::as_str) == Some("token_count") {
-                if let Some(usage) = payload
-                    .get("info")
-                    .and_then(|i| i.get("total_token_usage"))
-                {
+                if let Some(usage) = payload.get("info").and_then(|i| i.get("total_token_usage")) {
                     return vec![LineRow {
                         usage: Some(usage.clone()),
                         ..LineRow::new("__usage__", String::new(), ts)
@@ -464,9 +466,7 @@ fn pi_assistant_part(part: &Value, out: &mut LineRows, text: &mut String, ts: &O
             let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
             let intent = part.get("intent").and_then(Value::as_str);
             out.push(LineRow {
-                path: part
-                    .get("arguments")
-                    .and_then(crate::engine::tool_path_arg),
+                path: part.get("arguments").and_then(crate::engine::tool_path_arg),
                 ..LineRow::new(
                     "tool",
                     crate::engine::pi_family::tool_label(name, intent),
@@ -651,7 +651,14 @@ fn extract_claude_line(value: &Value, images: ImageMode) -> LineRows {
             let mut collected: Vec<String> = Vec::new();
             for block in blocks {
                 claude_block_rows(
-                    block, images, &mut out, &mut text, &mut collected, &role, &ts, &usage,
+                    block,
+                    images,
+                    &mut out,
+                    &mut text,
+                    &mut collected,
+                    &role,
+                    &ts,
+                    &usage,
                     &model,
                 );
             }

@@ -19,7 +19,7 @@ fn main() {
 
     let db = Db::open_at(&tmp.join("app.db")).expect("open db");
     {
-        let conn = db.0.lock().unwrap();
+        let conn = db.0.lock();
         for (i, w) in workspaces.iter().enumerate() {
             conn.execute(
                 "INSERT INTO workspaces(id, path, name) VALUES(?1, ?2, ?3)",
@@ -53,10 +53,12 @@ fn main() {
 
     // Per-engine session counts the scan attributed to each workspace.
     {
-        let conn = db.0.lock().unwrap();
+        let conn = db.0.lock();
         for w in &workspaces {
             let mut stmt = conn
-                .prepare("SELECT engine, COUNT(*) FROM sessions WHERE workspace_path=?1 GROUP BY engine")
+                .prepare(
+                    "SELECT engine, COUNT(*) FROM sessions WHERE workspace_path=?1 GROUP BY engine",
+                )
                 .unwrap();
             let counts: Vec<(String, i64)> = stmt
                 .query_map(rusqlite::params![w], |r| {
@@ -72,7 +74,7 @@ fn main() {
     // Sample: parse the largest scanned file end-to-end (reader path).
     // Sidebar sanity: the most recent session titles as the app shows them.
     {
-        let conn = db.0.lock().unwrap();
+        let conn = db.0.lock();
         let mut stmt = conn
             .prepare("SELECT title FROM sessions ORDER BY COALESCE(updated_at, 0) DESC LIMIT 12")
             .unwrap();
@@ -87,7 +89,7 @@ fn main() {
     }
 
     let biggest = {
-        let conn = db.0.lock().unwrap();
+        let conn = db.0.lock();
         conn.query_row(
             "SELECT engine, file_path, file_size FROM sessions ORDER BY file_size DESC LIMIT 1",
             [],
@@ -103,7 +105,8 @@ fn main() {
     };
     if let Some((engine, path, size)) = biggest {
         let start = Instant::now();
-        let parsed = parse_session_file(&engine, std::path::Path::new(&path)).expect("parse biggest");
+        let parsed =
+            parse_session_file(&engine, std::path::Path::new(&path)).expect("parse biggest");
         println!(
             "reader: {engine} {} bytes -> {} messages in {:?} ({})",
             size,
@@ -118,4 +121,3 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
-

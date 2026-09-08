@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import Folder from "lucide-react/dist/esm/icons/folder";
+import FolderSymlink from "lucide-react/dist/esm/icons/folder-symlink";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch";
 import PanelRightClose from "lucide-react/dist/esm/icons/panel-right-close";
 import PanelRightOpen from "lucide-react/dist/esm/icons/panel-right-open";
@@ -56,7 +56,7 @@ export function ChatPanelHeader({
             >
               <PillTabList>
                 <PillTab
-                  icon={Folder}
+                  icon={FolderSymlink}
                   isSelected={panelTab === "files"}
                   onSelect={() => onPanelTabChange("files")}
                 >

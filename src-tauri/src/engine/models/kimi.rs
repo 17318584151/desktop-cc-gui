@@ -26,6 +26,7 @@ pub fn parse_kimi_provider_list(stdout: &str) -> Vec<EngineModel> {
                 .get("displayName")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string),
+            description: None,
             provider: row
                 .get("provider")
                 .and_then(serde_json::Value::as_str)

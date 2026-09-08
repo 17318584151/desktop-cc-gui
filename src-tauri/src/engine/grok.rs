@@ -12,11 +12,16 @@ impl Engine for GrokEngine {
     fn supports_images(&self) -> bool {
         true
     }
+    fn supported_permissions(&self) -> &'static [&'static str] {
+        &["bypass"]
+    }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
         let mut cmd = Command::new(bin);
         cmd.arg("--output-format");
         cmd.arg("streaming-json");
+        // The only verified headless behavior: without --always-approve the CLI
+        // would block on an approval prompt nobody can answer.
         cmd.arg("--always-approve");
         if let Some(model) = req.model.as_deref() {
             cmd.arg("-m");

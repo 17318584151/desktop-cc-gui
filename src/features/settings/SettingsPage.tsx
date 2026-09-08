@@ -2,11 +2,13 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Settings from "lucide-react/dist/esm/icons/settings";
+import FolderSymlink from "lucide-react/dist/esm/icons/folder-symlink";
 import Info from "lucide-react/dist/esm/icons/info";
 import Smartphone from "lucide-react/dist/esm/icons/smartphone";
 import SquareTerminal from "lucide-react/dist/esm/icons/square-terminal";
 import { SettingsModal } from "@/components/application/settings/settings-modal";
 import { GeneralSection } from "./GeneralSection";
+import { WorkspacesSection } from "./WorkspacesSection";
 import { CliConfigSection } from "./CliConfigSection";
 import { AboutSection } from "./AboutSection";
 import { WebAccessSection } from "./WebAccessSection";
@@ -14,6 +16,7 @@ import { WebAccessSection } from "./WebAccessSection";
 /** Unknown page params fall back to General. */
 const renderPage = (key: string) => {
   if (key === "about") return <AboutSection />;
+  if (key === "workspaces") return <WorkspacesSection />;
   if (key === "webAccess") return <WebAccessSection />;
   if (key === "cliConfig") return <CliConfigSection />;
   return <GeneralSection />;
@@ -39,6 +42,7 @@ export default function SettingsPage() {
         label: t("settings.title"),
         items: [
           { key: "general", label: t("settings.general"), icon: Settings },
+          { key: "workspaces", label: t("settings.workspaces"), icon: FolderSymlink },
           { key: "cliConfig", label: t("settings.cliConfig"), icon: SquareTerminal },
           { key: "webAccess", label: t("settings.webAccess"), icon: Smartphone },
           { key: "about", label: t("settings.about"), icon: Info },
@@ -51,6 +55,7 @@ export default function SettingsPage() {
   const titles = useMemo(
     () => ({
       general: t("settings.general"),
+      workspaces: t("settings.workspaces"),
       webAccess: t("settings.webAccess"),
       cliConfig: t("settings.cliConfig"),
       about: t("settings.about"),

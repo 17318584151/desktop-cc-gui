@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { RiSpeedUpFill } from "@remixicon/react";
+import type { LucideIcon } from "lucide-react";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
@@ -33,7 +33,7 @@ export interface ComposerPermissionOption {
   /** i18n keys under `chat.` for label and description. */
   labelKey: string;
   descriptionKey: string;
-  icon: typeof RiSpeedUpFill;
+  icon: LucideIcon;
   /** Figma draws the branch and route glyphs mirrored on the vertical axis. */
   flip?: boolean;
 }
@@ -61,6 +61,10 @@ export interface PermissionMenuProps {
    *  href or handler is provided (the app has no permission docs target yet). */
   learnMoreHref?: string;
   onLearnMore?: () => void;
+  /** Modes the active engine actually honors (from EngineInfo.permissions);
+   * omitted = all modes selectable. Unsupported modes render disabled rather
+   * than silently sending a different mode to the CLI. */
+  supported?: string[];
   className?: string;
 }
 
@@ -70,6 +74,7 @@ export function PermissionMenu({
   onChange,
   learnMoreHref,
   onLearnMore,
+  supported,
   className,
 }: PermissionMenuProps) {
   const { t } = useTranslation();
@@ -165,18 +170,26 @@ export function PermissionMenu({
             {COMPOSER_PERMISSIONS.map((option) => {
               const Icon = option.icon;
               const checked = option.id === selected;
+              const disabled = supported !== undefined && !supported.includes(option.id);
               return (
                 <button
                   key={option.id}
                   type="button"
                   role="radio"
                   aria-checked={checked}
-                  onClick={() => select(option.id)}
+                  aria-disabled={disabled || undefined}
+                  title={disabled ? t("chat.permissionUnsupported") : undefined}
+                  onClick={() => !disabled && select(option.id)}
                   className={cx(
-                    "flex w-full cursor-pointer items-center gap-2 rounded-[14px] p-2 text-left outline-none transition-colors",
-                    checked
-                      ? "bg-background-primary-hover"
-                      : "hover:bg-background-primary-hover focus-visible:bg-background-primary-hover",
+                    "flex w-full items-center gap-2 rounded-[14px] p-2 text-left outline-none transition-colors",
+                    disabled
+                      ? "cursor-not-allowed opacity-50"
+                      : cx(
+                          "cursor-pointer",
+                          checked
+                            ? "bg-background-primary-hover"
+                            : "hover:bg-background-primary-hover focus-visible:bg-background-primary-hover",
+                        ),
                   )}
                 >
                   <Icon

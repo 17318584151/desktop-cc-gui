@@ -127,8 +127,10 @@ fn spawn_reader(
                             Err(error) => {
                                 let valid_up_to = error.valid_up_to();
                                 if valid_up_to > 0 {
-                                    emit(String::from_utf8_lossy(&pending[..valid_up_to])
-                                        .into_owned());
+                                    emit(
+                                        String::from_utf8_lossy(&pending[..valid_up_to])
+                                            .into_owned(),
+                                    );
                                     pending.drain(..valid_up_to);
                                 }
                                 // Incomplete trailing sequence: wait for more bytes.

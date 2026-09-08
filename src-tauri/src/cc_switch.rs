@@ -332,7 +332,11 @@ fn convert_provider(engine: &str, id: &str, p: &Value) -> Value {
         "claude" | "grok" => {
             let env = &sc["env"];
             let (base, key, model) = if engine == "claude" {
-                ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL")
+                (
+                    "ANTHROPIC_BASE_URL",
+                    "ANTHROPIC_AUTH_TOKEN",
+                    "ANTHROPIC_MODEL",
+                )
             } else {
                 ("GROK_BASE_URL", "GROK_API_KEY", "GROK_MODEL")
             };
@@ -488,8 +492,9 @@ pub fn import_cc_switch(
     store: tauri::State<'_, ConfigStore>,
     engine: String,
 ) -> Result<CcSwitchImportResult, String> {
-    let path = ccs_source_path()
-        .ok_or_else(|| "cc-switch not found (~/.cc-switch/cc-switch.db or config.json)".to_string())?;
+    let path = ccs_source_path().ok_or_else(|| {
+        "cc-switch not found (~/.cc-switch/cc-switch.db or config.json)".to_string()
+    })?;
     let engines = import_engines(&engine);
     let is_json = is_json_file(&path);
     let result = run_import(
@@ -560,7 +565,8 @@ pub async fn test_provider_connection(url: String) -> Result<u64, String> {
     let (host, port) = match authority.split_once(':') {
         Some((h, p)) => (
             h.to_string(),
-            p.parse::<u16>().map_err(|_| format!("invalid port in url: {trimmed}"))?,
+            p.parse::<u16>()
+                .map_err(|_| format!("invalid port in url: {trimmed}"))?,
         ),
         None => (
             authority.to_string(),
@@ -578,7 +584,9 @@ pub async fn test_provider_connection(url: String) -> Result<u64, String> {
     let mut addrs = tokio::net::lookup_host((host.as_str(), port))
         .await
         .map_err(|e| format!("resolve {host}: {e}"))?;
-    let addr = addrs.next().ok_or_else(|| format!("no address for {host}"))?;
+    let addr = addrs
+        .next()
+        .ok_or_else(|| format!("no address for {host}"))?;
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
         tokio::net::TcpStream::connect(addr),
@@ -594,11 +602,8 @@ mod tests {
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ccgui-ccs-test-{}-{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ccgui-ccs-test-{}-{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -35,45 +35,159 @@ struct ProviderDef {
 /// provider registry). `google-vertex` uses ADC/service accounts (no paste-able
 /// key) and is deliberately excluded.
 const PROVIDER_CATALOG: &[ProviderDef] = &[
-    ProviderDef { id: "anthropic", env_var: Some("ANTHROPIC_API_KEY") },
-    ProviderDef { id: "ant-ling", env_var: Some("ANT_LING_API_KEY") },
-    ProviderDef { id: "azure-openai-responses", env_var: Some("AZURE_OPENAI_API_KEY") },
-    ProviderDef { id: "openai", env_var: Some("OPENAI_API_KEY") },
-    ProviderDef { id: "deepseek", env_var: Some("DEEPSEEK_API_KEY") },
-    ProviderDef { id: "nvidia", env_var: Some("NVIDIA_API_KEY") },
-    ProviderDef { id: "google", env_var: Some("GEMINI_API_KEY") },
-    ProviderDef { id: "amazon-bedrock", env_var: Some("AWS_BEARER_TOKEN_BEDROCK") },
-    ProviderDef { id: "mistral", env_var: Some("MISTRAL_API_KEY") },
-    ProviderDef { id: "groq", env_var: Some("GROQ_API_KEY") },
-    ProviderDef { id: "cerebras", env_var: Some("CEREBRAS_API_KEY") },
-    ProviderDef { id: "cloudflare-ai-gateway", env_var: Some("CLOUDFLARE_API_KEY") },
-    ProviderDef { id: "cloudflare-workers-ai", env_var: Some("CLOUDFLARE_API_KEY") },
-    ProviderDef { id: "xai", env_var: Some("XAI_API_KEY") },
-    ProviderDef { id: "openrouter", env_var: Some("OPENROUTER_API_KEY") },
-    ProviderDef { id: "vercel-ai-gateway", env_var: Some("AI_GATEWAY_API_KEY") },
-    ProviderDef { id: "zai", env_var: Some("ZAI_API_KEY") },
-    ProviderDef { id: "zai-coding-cn", env_var: Some("ZAI_CODING_CN_API_KEY") },
-    ProviderDef { id: "opencode", env_var: Some("OPENCODE_API_KEY") },
-    ProviderDef { id: "opencode-go", env_var: Some("OPENCODE_API_KEY") },
-    ProviderDef { id: "radius", env_var: Some("RADIUS_API_KEY") },
-    ProviderDef { id: "huggingface", env_var: Some("HF_TOKEN") },
-    ProviderDef { id: "fireworks", env_var: Some("FIREWORKS_API_KEY") },
-    ProviderDef { id: "together", env_var: Some("TOGETHER_API_KEY") },
-    ProviderDef { id: "baseten", env_var: Some("BASETEN_API_KEY") },
-    ProviderDef { id: "kimi-coding", env_var: Some("KIMI_API_KEY") },
-    ProviderDef { id: "moonshotai", env_var: Some("MOONSHOT_API_KEY") },
-    ProviderDef { id: "moonshotai-cn", env_var: Some("MOONSHOT_API_KEY") },
-    ProviderDef { id: "minimax", env_var: Some("MINIMAX_API_KEY") },
-    ProviderDef { id: "minimax-cn", env_var: Some("MINIMAX_CN_API_KEY") },
-    ProviderDef { id: "qwen-token-plan", env_var: Some("QWEN_TOKEN_PLAN_API_KEY") },
-    ProviderDef { id: "qwen-token-plan-individual", env_var: Some("QWEN_TOKEN_PLAN_API_KEY") },
-    ProviderDef { id: "qwen-token-plan-cn", env_var: Some("QWEN_TOKEN_PLAN_CN_API_KEY") },
-    ProviderDef { id: "xiaomi", env_var: Some("XIAOMI_API_KEY") },
-    ProviderDef { id: "xiaomi-token-plan-cn", env_var: Some("XIAOMI_TOKEN_PLAN_CN_API_KEY") },
-    ProviderDef { id: "xiaomi-token-plan-ams", env_var: Some("XIAOMI_TOKEN_PLAN_AMS_API_KEY") },
-    ProviderDef { id: "xiaomi-token-plan-sgp", env_var: Some("XIAOMI_TOKEN_PLAN_SGP_API_KEY") },
+    ProviderDef {
+        id: "anthropic",
+        env_var: Some("ANTHROPIC_API_KEY"),
+    },
+    ProviderDef {
+        id: "ant-ling",
+        env_var: Some("ANT_LING_API_KEY"),
+    },
+    ProviderDef {
+        id: "azure-openai-responses",
+        env_var: Some("AZURE_OPENAI_API_KEY"),
+    },
+    ProviderDef {
+        id: "openai",
+        env_var: Some("OPENAI_API_KEY"),
+    },
+    ProviderDef {
+        id: "deepseek",
+        env_var: Some("DEEPSEEK_API_KEY"),
+    },
+    ProviderDef {
+        id: "nvidia",
+        env_var: Some("NVIDIA_API_KEY"),
+    },
+    ProviderDef {
+        id: "google",
+        env_var: Some("GEMINI_API_KEY"),
+    },
+    ProviderDef {
+        id: "amazon-bedrock",
+        env_var: Some("AWS_BEARER_TOKEN_BEDROCK"),
+    },
+    ProviderDef {
+        id: "mistral",
+        env_var: Some("MISTRAL_API_KEY"),
+    },
+    ProviderDef {
+        id: "groq",
+        env_var: Some("GROQ_API_KEY"),
+    },
+    ProviderDef {
+        id: "cerebras",
+        env_var: Some("CEREBRAS_API_KEY"),
+    },
+    ProviderDef {
+        id: "cloudflare-ai-gateway",
+        env_var: Some("CLOUDFLARE_API_KEY"),
+    },
+    ProviderDef {
+        id: "cloudflare-workers-ai",
+        env_var: Some("CLOUDFLARE_API_KEY"),
+    },
+    ProviderDef {
+        id: "xai",
+        env_var: Some("XAI_API_KEY"),
+    },
+    ProviderDef {
+        id: "openrouter",
+        env_var: Some("OPENROUTER_API_KEY"),
+    },
+    ProviderDef {
+        id: "vercel-ai-gateway",
+        env_var: Some("AI_GATEWAY_API_KEY"),
+    },
+    ProviderDef {
+        id: "zai",
+        env_var: Some("ZAI_API_KEY"),
+    },
+    ProviderDef {
+        id: "zai-coding-cn",
+        env_var: Some("ZAI_CODING_CN_API_KEY"),
+    },
+    ProviderDef {
+        id: "opencode",
+        env_var: Some("OPENCODE_API_KEY"),
+    },
+    ProviderDef {
+        id: "opencode-go",
+        env_var: Some("OPENCODE_API_KEY"),
+    },
+    ProviderDef {
+        id: "radius",
+        env_var: Some("RADIUS_API_KEY"),
+    },
+    ProviderDef {
+        id: "huggingface",
+        env_var: Some("HF_TOKEN"),
+    },
+    ProviderDef {
+        id: "fireworks",
+        env_var: Some("FIREWORKS_API_KEY"),
+    },
+    ProviderDef {
+        id: "together",
+        env_var: Some("TOGETHER_API_KEY"),
+    },
+    ProviderDef {
+        id: "baseten",
+        env_var: Some("BASETEN_API_KEY"),
+    },
+    ProviderDef {
+        id: "kimi-coding",
+        env_var: Some("KIMI_API_KEY"),
+    },
+    ProviderDef {
+        id: "moonshotai",
+        env_var: Some("MOONSHOT_API_KEY"),
+    },
+    ProviderDef {
+        id: "moonshotai-cn",
+        env_var: Some("MOONSHOT_API_KEY"),
+    },
+    ProviderDef {
+        id: "minimax",
+        env_var: Some("MINIMAX_API_KEY"),
+    },
+    ProviderDef {
+        id: "minimax-cn",
+        env_var: Some("MINIMAX_CN_API_KEY"),
+    },
+    ProviderDef {
+        id: "qwen-token-plan",
+        env_var: Some("QWEN_TOKEN_PLAN_API_KEY"),
+    },
+    ProviderDef {
+        id: "qwen-token-plan-individual",
+        env_var: Some("QWEN_TOKEN_PLAN_API_KEY"),
+    },
+    ProviderDef {
+        id: "qwen-token-plan-cn",
+        env_var: Some("QWEN_TOKEN_PLAN_CN_API_KEY"),
+    },
+    ProviderDef {
+        id: "xiaomi",
+        env_var: Some("XIAOMI_API_KEY"),
+    },
+    ProviderDef {
+        id: "xiaomi-token-plan-cn",
+        env_var: Some("XIAOMI_TOKEN_PLAN_CN_API_KEY"),
+    },
+    ProviderDef {
+        id: "xiaomi-token-plan-ams",
+        env_var: Some("XIAOMI_TOKEN_PLAN_AMS_API_KEY"),
+    },
+    ProviderDef {
+        id: "xiaomi-token-plan-sgp",
+        env_var: Some("XIAOMI_TOKEN_PLAN_SGP_API_KEY"),
+    },
     // OAuth-only (no env var / api_key path).
-    ProviderDef { id: "github-copilot", env_var: None },
+    ProviderDef {
+        id: "github-copilot",
+        env_var: None,
+    },
 ];
 
 fn catalog_entry(provider_id: &str) -> Option<&'static ProviderDef> {
@@ -84,7 +198,9 @@ fn home_dir_name(engine: &str) -> Result<&'static str, String> {
     match engine {
         "pi" => Ok(".pi"),
         "omp" => Ok(".omp"),
-        _ => Err(format!("[PI_FAMILY_AUTH_ENGINE] unsupported engine: {engine}")),
+        _ => Err(format!(
+            "[PI_FAMILY_AUTH_ENGINE] unsupported engine: {engine}"
+        )),
     }
 }
 
@@ -165,8 +281,9 @@ fn key_source(key: &str) -> &'static str {
 }
 
 fn validate_new_key(provider_id: &str, key: &str) -> Result<String, String> {
-    let def = catalog_entry(provider_id)
-        .ok_or_else(|| format!("[PI_FAMILY_AUTH_UNKNOWN_PROVIDER] unknown provider: {provider_id}"))?;
+    let def = catalog_entry(provider_id).ok_or_else(|| {
+        format!("[PI_FAMILY_AUTH_UNKNOWN_PROVIDER] unknown provider: {provider_id}")
+    })?;
     if def.env_var.is_none() {
         return Err(format!(
             "[PI_FAMILY_AUTH_OAUTH_ONLY] {provider_id} is OAuth-only; log in from the CLI instead"
@@ -219,7 +336,10 @@ fn read_auth_map(path: &std::path::Path) -> Result<Option<Map<String, Value>>, S
     match std::fs::read_to_string(path) {
         Ok(content) => {
             let value: Value = serde_json::from_str(&content).map_err(|error| {
-                format!("[PI_FAMILY_AUTH_CORRUPTED] {} is not valid JSON: {error}", path.display())
+                format!(
+                    "[PI_FAMILY_AUTH_CORRUPTED] {} is not valid JSON: {error}",
+                    path.display()
+                )
             })?;
             match value {
                 Value::Object(map) => Ok(Some(map)),
@@ -230,7 +350,10 @@ fn read_auth_map(path: &std::path::Path) -> Result<Option<Map<String, Value>>, S
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("[PI_FAMILY_AUTH_READ] read {}: {error}", path.display())),
+        Err(error) => Err(format!(
+            "[PI_FAMILY_AUTH_READ] read {}: {error}",
+            path.display()
+        )),
     }
 }
 
@@ -239,8 +362,12 @@ fn atomic_write_private(path: &std::path::Path, content: &str) -> Result<(), Str
     let parent = path
         .parent()
         .ok_or_else(|| "[PI_FAMILY_AUTH_WRITE] path has no parent dir".to_string())?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("[PI_FAMILY_AUTH_WRITE] create {}: {error}", parent.display()))?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "[PI_FAMILY_AUTH_WRITE] create {}: {error}",
+            parent.display()
+        )
+    })?;
 
     let tmp = parent.join(format!(
         ".{}.tmp-{}",
@@ -256,8 +383,12 @@ fn atomic_write_private(path: &std::path::Path, content: &str) -> Result<(), Str
             std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
                 .map_err(|error| format!("[PI_FAMILY_AUTH_WRITE] chmod 0600: {error}"))?;
         }
-        std::fs::rename(&tmp, path)
-            .map_err(|error| format!("[PI_FAMILY_AUTH_WRITE] rename over {}: {error}", path.display()))?;
+        std::fs::rename(&tmp, path).map_err(|error| {
+            format!(
+                "[PI_FAMILY_AUTH_WRITE] rename over {}: {error}",
+                path.display()
+            )
+        })?;
         Ok::<(), String>(())
     })();
 
@@ -314,8 +445,9 @@ fn pi_set_api_key(agent: &std::path::Path, provider_id: &str, key: &str) -> Resu
 }
 
 fn pi_delete_credential(agent: &std::path::Path, provider_id: &str) -> Result<(), String> {
-    catalog_entry(provider_id)
-        .ok_or_else(|| format!("[PI_FAMILY_AUTH_UNKNOWN_PROVIDER] unknown provider: {provider_id}"))?;
+    catalog_entry(provider_id).ok_or_else(|| {
+        format!("[PI_FAMILY_AUTH_UNKNOWN_PROVIDER] unknown provider: {provider_id}")
+    })?;
     let path = agent.join("auth.json");
     let mut map = match read_auth_map(&path)? {
         Some(map) => map,
@@ -454,8 +586,9 @@ fn omp_set_api_key(agent: &std::path::Path, provider_id: &str, key: &str) -> Res
 }
 
 fn omp_delete_credential(agent: &std::path::Path, provider_id: &str) -> Result<(), String> {
-    catalog_entry(provider_id)
-        .ok_or_else(|| format!("[PI_FAMILY_AUTH_UNKNOWN_PROVIDER] unknown provider: {provider_id}"))?;
+    catalog_entry(provider_id).ok_or_else(|| {
+        format!("[PI_FAMILY_AUTH_UNKNOWN_PROVIDER] unknown provider: {provider_id}")
+    })?;
     let path = agent.join("agent.db");
     if !path.exists() {
         return Ok(()); // nothing to delete
@@ -574,7 +707,11 @@ fn models_config_path(agent: &std::path::Path, engine: &str) -> Result<PathBuf, 
     let file = match engine {
         "pi" => "models.json",
         "omp" => "models.yml",
-        _ => return Err(format!("[PI_FAMILY_AUTH_ENGINE] unsupported engine: {engine}")),
+        _ => {
+            return Err(format!(
+                "[PI_FAMILY_AUTH_ENGINE] unsupported engine: {engine}"
+            ))
+        }
     };
     Ok(agent.join(file))
 }
@@ -632,12 +769,14 @@ fn strip_jsonc_comments(input: &str) -> String {
 /// and preserved (the raw user text is stored verbatim).
 fn validate_models_config_text(engine: &str, text: &str) -> Result<Value, String> {
     let value: Value = if engine == "omp" {
-        serde_yaml::from_str(text)
-            .map_err(|error| format!("[PI_FAMILY_MODELS_INVALID] models.yml is not valid YAML: {error}"))?
+        serde_yaml::from_str(text).map_err(|error| {
+            format!("[PI_FAMILY_MODELS_INVALID] models.yml is not valid YAML: {error}")
+        })?
     } else {
         let stripped = strip_jsonc_comments(text);
-        serde_json::from_str(&stripped)
-            .map_err(|error| format!("[PI_FAMILY_MODELS_INVALID] models.json is not valid JSON: {error}"))?
+        serde_json::from_str(&stripped).map_err(|error| {
+            format!("[PI_FAMILY_MODELS_INVALID] models.json is not valid JSON: {error}")
+        })?
     };
     let root = value
         .as_object()
@@ -654,7 +793,9 @@ fn validate_models_config_text(engine: &str, text: &str) -> Result<Value, String
             }
             if let Some(models) = provider.get("models") {
                 let models = models.as_array().ok_or_else(|| {
-                    format!("[PI_FAMILY_MODELS_SHAPE] providers.{provider_id}.models must be a list")
+                    format!(
+                        "[PI_FAMILY_MODELS_SHAPE] providers.{provider_id}.models must be a list"
+                    )
                 })?;
                 for (index, model) in models.iter().enumerate() {
                     let has_id = model.get("id").and_then(Value::as_str).is_some();
@@ -688,9 +829,18 @@ fn summarize_providers(value: &Value) -> Vec<CustomProviderSummary> {
             .unwrap_or(false);
         out.push(CustomProviderSummary {
             id: id.clone(),
-            name: provider.get("name").and_then(Value::as_str).map(str::to_string),
-            base_url: provider.get("baseUrl").and_then(Value::as_str).map(str::to_string),
-            api: provider.get("api").and_then(Value::as_str).map(str::to_string),
+            name: provider
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            base_url: provider
+                .get("baseUrl")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            api: provider
+                .get("api")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             model_count,
             has_api_key,
         });
@@ -699,7 +849,10 @@ fn summarize_providers(value: &Value) -> Vec<CustomProviderSummary> {
     out
 }
 
-fn read_models_config(agent: &std::path::Path, engine: &str) -> Result<ModelsConfigReadResult, String> {
+fn read_models_config(
+    agent: &std::path::Path,
+    engine: &str,
+) -> Result<ModelsConfigReadResult, String> {
     let path = models_config_path(agent, engine)?;
     let (format, template) = if engine == "omp" {
         ("yaml", MODELS_TEMPLATE_YAML)
@@ -724,7 +877,10 @@ fn read_models_config(agent: &std::path::Path, engine: &str) -> Result<ModelsCon
             });
         }
         Err(error) => {
-            return Err(format!("[PI_FAMILY_MODELS_READ] read {}: {error}", path.display()));
+            return Err(format!(
+                "[PI_FAMILY_MODELS_READ] read {}: {error}",
+                path.display()
+            ));
         }
     };
 
@@ -864,7 +1020,11 @@ mod tests {
         assert!(list.store.exists);
         let anthropic = list.providers.iter().find(|p| p.id == "anthropic").unwrap();
         assert_eq!(anthropic.state, "configured");
-        assert!(anthropic.masked_key.as_deref().unwrap().contains("········"));
+        assert!(anthropic
+            .masked_key
+            .as_deref()
+            .unwrap()
+            .contains("········"));
         assert_eq!(list.oauth_providers, vec!["openai-codex".to_string()]);
 
         // Raw file still carries the preserved entries.
@@ -876,14 +1036,21 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(dir.join("auth.json")).unwrap().permissions().mode();
+            let mode = std::fs::metadata(dir.join("auth.json"))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
 
         pi_delete_credential(&dir, "anthropic").unwrap();
         let list = pi_list(&dir).unwrap();
         assert_eq!(
-            list.providers.iter().find(|p| p.id == "anthropic").unwrap().state,
+            list.providers
+                .iter()
+                .find(|p| p.id == "anthropic")
+                .unwrap()
+                .state,
             "none"
         );
 
@@ -900,7 +1067,10 @@ mod tests {
         assert!(pi_list(&dir).unwrap_err().contains("CORRUPTED"));
         assert!(pi_set_api_key(&dir, "anthropic", "sk-test-value-1").is_err());
         // Never overwritten.
-        assert_eq!(std::fs::read_to_string(dir.join("auth.json")).unwrap(), "{not json");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("auth.json")).unwrap(),
+            "{not json"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -931,9 +1101,11 @@ mod tests {
 
     fn omp_revision(dir: &std::path::Path) -> i64 {
         let conn = rusqlite::Connection::open(dir.join("agent.db")).unwrap();
-        conn.query_row("SELECT revision FROM auth_change_revision WHERE id = 1", [], |r| {
-            r.get(0)
-        })
+        conn.query_row(
+            "SELECT revision FROM auth_change_revision WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
         .unwrap()
     }
 
@@ -982,7 +1154,11 @@ mod tests {
         omp_delete_credential(&dir, "openai").unwrap();
         let list = omp_list(&dir).unwrap();
         assert_eq!(
-            list.providers.iter().find(|p| p.id == "openai").unwrap().state,
+            list.providers
+                .iter()
+                .find(|p| p.id == "openai")
+                .unwrap()
+                .state,
             "none"
         );
         assert_eq!(list.oauth_providers, vec!["openai-codex".to_string()]);
@@ -1000,7 +1176,8 @@ mod tests {
         assert_eq!(summaries[0].model_count, 1);
         assert!(summaries[0].has_api_key);
         assert!(
-            validate_models_config_text("pi", "{\"providers\": {\"r\": {\"models\": [{}]}}}").is_err()
+            validate_models_config_text("pi", "{\"providers\": {\"r\": {\"models\": [{}]}}}")
+                .is_err()
         );
 
         // omp: YAML.
@@ -1033,7 +1210,10 @@ mod tests {
         let read = read_models_config(&dir, "pi").unwrap();
         assert!(read.parse_error.is_some());
         assert!(write_models_config(&dir, "pi", "{also bad").is_err());
-        assert_eq!(std::fs::read_to_string(dir.join("models.json")).unwrap(), "{bad");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("models.json")).unwrap(),
+            "{bad"
+        );
 
         // omp lands on models.yml.
         write_models_config(&dir, "omp", MODELS_TEMPLATE_YAML).unwrap();

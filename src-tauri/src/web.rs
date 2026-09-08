@@ -10,8 +10,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Query, State as AxumState, WebSocketUpgrade};
 use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{Query, State as AxumState, WebSocketUpgrade};
 use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -60,9 +60,9 @@ pub async fn web_access_start(app: tauri::AppHandle) -> Result<WebAccessInfo, St
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     // Lagging receivers drop events rather than back-pressuring the app.
     let (events_tx, _) = broadcast::channel::<String>(512);
-    let emit_id = state
-        .emitters
-        .add(Arc::new(WsEmit { tx: events_tx.clone() }));
+    let emit_id = state.emitters.add(Arc::new(WsEmit {
+        tx: events_tx.clone(),
+    }));
     let (stop_watch, _) = watch::channel(false);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
@@ -156,9 +156,9 @@ impl Emit for WsEmit {
         let Ok(name) = serde_json::to_string(name) else {
             return;
         };
-        let _ = self
-            .tx
-            .send(format!("{{\"type\":\"event\",\"name\":{name},\"payload\":{raw_json}}}"));
+        let _ = self.tx.send(format!(
+            "{{\"type\":\"event\",\"name\":{name},\"payload\":{raw_json}}}"
+        ));
     }
 }
 
@@ -431,6 +431,7 @@ struct SendMessageArgs {
     image_paths: Option<Vec<String>>,
     model: Option<String>,
     effort: Option<String>,
+    permission: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -498,6 +499,12 @@ struct IdArgs {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SetWorkspaceGroupArgs {
+    id: String,
+    group_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WriteFileArgs {
     path: String,
     content: String,
@@ -507,6 +514,12 @@ struct WriteFileArgs {
 struct RenameItemArgs {
     from: String,
     to: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PasteItemArgs {
+    source: String,
+    target_dir: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -586,7 +599,12 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         "get_cli_config" => ser(crate::config::get_cli_config()),
         "upsert_provider" => {
             let a: UpsertProviderArgs = parse_args(&raw)?;
-            ser(crate::config::upsert_provider(app.state(), a.engine, a.id, a.json))
+            ser(crate::config::upsert_provider(
+                app.state(),
+                a.engine,
+                a.id,
+                a.json,
+            ))
         }
         "delete_provider" => {
             let a: EngineIdArgs = parse_args(&raw)?;
@@ -594,19 +612,33 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         }
         "set_current_provider" => {
             let a: EngineIdArgs = parse_args(&raw)?;
-            ser(crate::config::set_current_provider(app.state(), a.engine, a.id))
+            ser(crate::config::set_current_provider(
+                app.state(),
+                a.engine,
+                a.id,
+            ))
         }
         "provider_file_paths" => {
             let a: EngineArgs = parse_args(&raw)?;
-            ser(Ok::<_, String>(crate::provider_files::provider_file_paths(a.engine)))
+            ser(Ok::<_, String>(crate::provider_files::provider_file_paths(
+                a.engine,
+            )))
         }
         "reorder_providers" => {
             let a: ReorderProvidersArgs = parse_args(&raw)?;
-            ser(crate::config::reorder_providers(app.state(), a.engine, a.ids))
+            ser(crate::config::reorder_providers(
+                app.state(),
+                a.engine,
+                a.ids,
+            ))
         }
         "set_engine_enabled" => {
             let a: SetEngineEnabledArgs = parse_args(&raw)?;
-            ser(crate::config::set_engine_enabled(app.state(), a.engine, a.enabled))
+            ser(crate::config::set_engine_enabled(
+                app.state(),
+                a.engine,
+                a.enabled,
+            ))
         }
         // cc-switch interop
         "check_cc_switch" => ser(crate::cc_switch::check_cc_switch().await),
@@ -652,11 +684,16 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
                 a.image_paths,
                 a.model,
                 a.effort,
-            ).await)
+                a.permission,
+            )
+            .await)
         }
         "interrupt_session" => {
             let a: SessionIdArgs = parse_args(&raw)?;
-            ser(Ok(crate::engine::interrupt_session(app.state(), a.session_id)))
+            ser(Ok(crate::engine::interrupt_session(
+                app.state(),
+                a.session_id,
+            )))
         }
         "list_engines" => ser(Ok(crate::engine::list_engines())),
         "list_engine_models" => {
@@ -665,7 +702,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         }
         "save_pasted_image" => {
             let a: SavePastedImageArgs = parse_args(&raw)?;
-            ser(crate::engine::images::save_pasted_image(a.data_base64, a.extension))
+            ser(crate::engine::images::save_pasted_image(
+                a.data_base64,
+                a.extension,
+            ))
         }
         "import_attachments" => {
             let a: PathsArgs = parse_args(&raw)?;
@@ -681,7 +721,8 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
                 a.session_id,
                 a.limit,
                 a.before_seq,
-            ).await)
+            )
+            .await)
         }
         "delete_session" => {
             let a: EngineSessionArgs = parse_args(&raw)?;
@@ -689,11 +730,21 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         }
         "pin_session" => {
             let a: PinSessionArgs = parse_args(&raw)?;
-            ser(crate::history::reader::pin_session(app.state(), a.engine, a.session_id, a.pinned))
+            ser(crate::history::reader::pin_session(
+                app.state(),
+                a.engine,
+                a.session_id,
+                a.pinned,
+            ))
         }
         "rename_session" => {
             let a: RenameSessionArgs = parse_args(&raw)?;
-            ser(crate::history::reader::rename_session(app.state(), a.engine, a.session_id, a.title))
+            ser(crate::history::reader::rename_session(
+                app.state(),
+                a.engine,
+                a.session_id,
+                a.title,
+            ))
         }
         "rescan_sessions" => {
             crate::history::reader::rescan_sessions(app.state());
@@ -706,11 +757,22 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         }
         "reorder_workspaces" => {
             let a: IdsArgs = parse_args(&raw)?;
-            ser(crate::history::reader::reorder_workspaces(app.state(), a.ids))
+            ser(crate::history::reader::reorder_workspaces(
+                app.state(),
+                a.ids,
+            ))
         }
         "remove_workspace" => {
             let a: IdArgs = parse_args(&raw)?;
             ser(crate::history::reader::remove_workspace(app.state(), a.id))
+        }
+        "set_workspace_group" => {
+            let a: SetWorkspaceGroupArgs = parse_args(&raw)?;
+            ser(crate::history::reader::set_workspace_group(
+                app.state(),
+                a.id,
+                a.group_id,
+            ))
         }
         // files
         "list_dir" => {
@@ -729,6 +791,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
             let a: PathArgs = parse_args(&raw)?;
             ser(crate::files::create_dir(app.state(), a.path))
         }
+        "create_file" => {
+            let a: PathArgs = parse_args(&raw)?;
+            ser(crate::files::create_file(app.state(), a.path))
+        }
         "rename_item" => {
             let a: RenameItemArgs = parse_args(&raw)?;
             ser(crate::files::rename_item(app.state(), a.from, a.to))
@@ -736,6 +802,18 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         "trash_item" => {
             let a: PathArgs = parse_args(&raw)?;
             ser(crate::files::trash_item(app.state(), a.path))
+        }
+        "duplicate_item" => {
+            let a: PathArgs = parse_args(&raw)?;
+            ser(crate::files::duplicate_item(app.state(), a.path))
+        }
+        "paste_item" => {
+            let a: PasteItemArgs = parse_args(&raw)?;
+            ser(crate::files::paste_item(
+                app.state(),
+                a.source,
+                a.target_dir,
+            ))
         }
         "search_text" => {
             let a: SearchTextArgs = parse_args(&raw)?;
@@ -842,7 +920,9 @@ fn lan_ip() -> Option<String> {
     // Fallback: a UDP "connect" picks the outbound interface without sending
     // a single packet.
     let socket = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    socket.connect((std::net::Ipv4Addr::new(192, 0, 2, 1), 80)).ok()?;
+    socket
+        .connect((std::net::Ipv4Addr::new(192, 0, 2, 1), 80))
+        .ok()?;
     let ip = socket.local_addr().ok()?.ip();
     if ip.is_loopback() {
         None

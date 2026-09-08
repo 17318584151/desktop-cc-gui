@@ -456,9 +456,11 @@ fn tier1_gate(db: &crate::db::Db, signature: String) -> Result<Option<Tier1>, St
         .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
         .unwrap_or(0);
     let title_version: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key='title_version'", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT value FROM meta WHERE key='title_version'",
+            [],
+            |r| r.get(0),
+        )
         .ok();
     // One-time migration: titles derived before envelope stripping
     // (`<file …` / `[Image #…` / `<user_info>`) or rows with no timestamps
@@ -596,11 +598,7 @@ fn prepare_candidate(
 
 /// Phase B (one lock, one transaction): upsert every prepared row, then
 /// record the signature that makes the next scan a short-circuit.
-fn upsert_rows(
-    db: &crate::db::Db,
-    rows: &[PreparedUpsert],
-    tier1: &Tier1,
-) -> Result<(), String> {
+fn upsert_rows(db: &crate::db::Db, rows: &[PreparedUpsert], tier1: &Tier1) -> Result<(), String> {
     let mut conn = db.0.lock();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for row in rows {
@@ -926,7 +924,10 @@ mod tests {
             .map_err(|e| e.to_string())?
         };
         assert_eq!(title, "这个鼠标移动上去");
-        assert!(updated_at.is_some() && updated_at.unwrap() > 0, "expected mtime fallback, got {updated_at:?}");
+        assert!(
+            updated_at.is_some() && updated_at.unwrap() > 0,
+            "expected mtime fallback, got {updated_at:?}"
+        );
         drop(db);
         std::fs::remove_dir_all(&home).ok();
         Ok(())
@@ -941,7 +942,12 @@ mod tests {
         let home = scratch_dir("scan-codex-home");
         let workspace = home.join("ws");
         std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
-        let rollout_dir = home.join(".codex").join("sessions").join("2026").join("09").join("06");
+        let rollout_dir = home
+            .join(".codex")
+            .join("sessions")
+            .join("2026")
+            .join("09")
+            .join("06");
         std::fs::create_dir_all(&rollout_dir).map_err(|e| e.to_string())?;
         let big_instructions = "x".repeat(40 * 1024);
         std::fs::write(

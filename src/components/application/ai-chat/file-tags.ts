@@ -188,7 +188,7 @@ function chipHtml(path: string): string {
   const name = baseName(path);
   // Same heuristic as desktop-cc-gui: an extension-less name is a folder.
   const isDir = !name.includes(".");
-  const icon = getFileTreeIconSvg(name, isDir, false);
+  const icon = getFileTreeIconSvg(name, isDir);
   const escapedPath = escapeHtmlText(path);
   const escapedMention = escapeHtmlText(mentionToken(path));
   return (

@@ -158,7 +158,9 @@ fn open_with_app_candidates(
     target_label: &str,
 ) -> Result<(), String> {
     let Some(candidates) = open_app_command_candidates(app) else {
-        return Err(format!("Failed to open app ({target_label}): app is not allowed"));
+        return Err(format!(
+            "Failed to open app ({target_label}): app is not allowed"
+        ));
     };
     let mut last_not_found: Option<std::io::Error> = None;
     for candidate in candidates {
@@ -204,7 +206,9 @@ pub(crate) async fn open_workspace_in(
     #[cfg(target_os = "macos")]
     {
         if !ALLOWED_MACOS_APPS.contains(&app.as_str()) {
-            return Err(format!("Failed to open app ({target_label}): app is not allowed"));
+            return Err(format!(
+                "Failed to open app ({target_label}): app is not allowed"
+            ));
         }
         let mut cmd = tokio::process::Command::new("open");
         cmd.arg("-a").arg(&app).arg(&path);

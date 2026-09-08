@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -7,10 +7,9 @@ import { mentionToken } from "@/components/application/ai-chat/file-tags";
 import { AddMenu } from "@/components/application/ai-chat/add-menu";
 import {
   PermissionMenu,
-  type ComposerPermission,
 } from "@/components/application/ai-chat/permission-menu";
 import { CliMenu, type EffortLevel } from "@/components/application/ai-chat/cli-menu";
-import { useChatStore, sessionKey, type ActiveSession, type QueuedMessage } from "../store";
+import { effectivePermission, useChatStore, sessionKey, type ActiveSession, type QueuedMessage } from "../store";
 import { recordPrompt } from "../prompt-history";
 import { MessageTimeline } from "./MessageTimeline";
 import { ConversationFooter } from "./ConversationFooter";
@@ -102,6 +101,7 @@ export const ChatConversation = memo(function ChatConversation({
     send,
     queueMessage,
     removeQueued,
+    clearQueue,
     interrupt,
   } = useChatStore(
     useShallow((s) => ({
@@ -115,16 +115,19 @@ export const ChatConversation = memo(function ChatConversation({
       send: s.send,
       queueMessage: s.queueMessage,
       removeQueued: s.removeQueued,
+      clearQueue: s.clearQueue,
       interrupt: s.interrupt,
     })),
   );
   const { branch, branches, branchError, handleBranchSelect } = useBranchSwitcher(active);
-  // Permission mode is UI-only until engines consume it; kept here so the
-  // selection survives session switches and is reachable for future wiring.
-  const [permission, setPermission] = useState<ComposerPermission>("auto");
+  // Permission mode lives in the store (persisted) and flows into every
+  // send; engines that cannot honor the selected mode fall back to their
+  // first supported one, which is what the chip displays.
+  const permission = useChatStore((s) => s.permission);
+  const setPermission = useChatStore((s) => s.setPermission);
   const { images, previews, imageError, removeImage, clearImages, pasteImages } =
     useComposerImages();
-  const { catalogs, modelsByEngine } = useEngineModels(engines, models, pinModels);
+  const { catalogs, modelsByEngine, refresh: refreshModels } = useEngineModels(engines, models, pinModels);
 
   // The catalog's context window beats the 200k assumption when the
   // selected model reports one.
@@ -225,6 +228,7 @@ export const ChatConversation = memo(function ChatConversation({
           onModelChange={handleModelChange}
           efforts={efforts}
           onEffortChange={handleEffortChange}
+          onRefreshModels={refreshModels}
         />
       ),
     [
@@ -239,11 +243,18 @@ export const ChatConversation = memo(function ChatConversation({
       handleModelChange,
       efforts,
       handleEffortChange,
+      refreshModels,
     ],
   );
   const permissionMenu = useMemo(
-    () => <PermissionMenu value={permission} onChange={setPermission} />,
-    [permission],
+    () => (
+      <PermissionMenu
+        value={effectivePermission(engines, activeEngine, permission)}
+        onChange={setPermission}
+        supported={engineInfo?.permissions}
+      />
+    ),
+    [engines, activeEngine, permission, setPermission, engineInfo],
   );
 
   return (
@@ -281,6 +292,7 @@ export const ChatConversation = memo(function ChatConversation({
         workspaces={workspaces}
         queue={queue}
         onRemoveQueued={removeQueued}
+        onClearQueued={clearQueue}
         imageError={imageError}
         branchError={branchError}
         images={images}

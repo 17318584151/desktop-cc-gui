@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { ipc, type AppSettings, type Message, type SessionMeta, type Workspace, type EngineInfo } from "@/lib/ipc";
+import { ipc, type AppSettings, type Message, type SessionMeta, type Workspace, type WorkspaceGroup, type EngineInfo } from "@/lib/ipc";
 import type { EffortLevel } from "@/components/application/ai-chat/cli-menu";
+import type { ComposerPermission } from "@/components/application/ai-chat/permission-menu";
 import { listenEngineEvents, listenSessionsChanged } from "@/lib/events";
 import { errorText } from "@/lib/errors";
 import { writeStored } from "@/lib/storage";
@@ -9,6 +10,8 @@ import { subscribeTauriEvent } from "@/hooks/use-tauri-event";
 import { CLI_CONFIG_CHANGED_EVENT } from "@/features/settings/providers";
 import {
   ENGINE_PREF_KEY,
+  PERMISSION_PREF_KEY,
+  dedupeTabs,
   persistTabs,
   readPersistedActive,
   readPersistedTabs,
@@ -39,6 +42,14 @@ export { sessionKey } from "./store/persistence";
 export type { ActiveSession } from "./store/persistence";
 export type { QueuedMessage, SessionState } from "./store/stream";
 
+/** Sidebar workspace groups (工作区二级分类), ordered by sortOrder then name. */
+export function sortedWorkspaceGroups(groups: WorkspaceGroup[]): WorkspaceGroup[] {
+  return groups.slice().sort((a, b) => {
+    const diff = (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER);
+    return diff !== 0 ? diff : a.name.localeCompare(b.name);
+  });
+}
+
 /** Unlisteners for the module-scope event subscriptions set up in init. */
 const eventTeardowns: Array<() => void> = [];
 /** History lists hide sessions of CLIs the user disabled in settings. An
@@ -52,6 +63,28 @@ function visibleSessions(sessions: SessionMeta[], engines: EngineInfo[]): Sessio
   }
   return sessions.filter((s) => enabled.has(s.engine));
 }
+const PERMISSION_MODES: readonly ComposerPermission[] = ["auto", "manual", "plan", "bypass"];
+
+/** Persisted composer permission, validated against the known modes. */
+function readPermissionPref(): ComposerPermission {
+  const raw = localStorage.getItem(PERMISSION_PREF_KEY);
+  return PERMISSION_MODES.includes(raw as ComposerPermission)
+    ? (raw as ComposerPermission)
+    : "auto";
+}
+
+/** The mode actually sent for an engine: the user's pick when the engine
+ * honors it, else the engine's first supported mode (same fallback the
+ * Rust side applies). */
+export function effectivePermission(
+  engines: EngineInfo[],
+  engine: string,
+  selected: ComposerPermission,
+): ComposerPermission {
+  const supported = engines.find((e) => e.id === engine)?.permissions;
+  if (!supported || supported.length === 0) return selected;
+  return supported.includes(selected) ? selected : (supported[0] as ComposerPermission);
+}
 
 export interface ChatStore {
   workspaces: Workspace[];
@@ -61,12 +94,22 @@ export interface ChatStore {
   /** Open conversation tabs, in display order. Persisted in localStorage. */
   openTabs: ActiveSession[];
   activeEngine: string;
+  /** Composer permission mode ("auto" | "manual" | "plan" | "bypass"),
+   * persisted in localStorage; engines resolve unsupported modes to their
+   * first supported one at send time (and the picker greys them out). */
+  permission: ComposerPermission;
   /** Per-engine reasoning effort ("low" | … | "max"), persisted in app settings. */
   efforts: Record<string, EffortLevel>;
   /** Per-engine model override ("" = CLI/provider default), persisted in app settings. */
   models: Record<string, string>;
   /** Max sessions listed per workspace in the sidebar, persisted in app settings. */
   threadLimit: number;
+  /** Sidebar workspace groups, persisted in app settings. The assignment
+   *  lives on each workspace (`Workspace.groupId`), same as the legacy app. */
+  workspaceGroups: WorkspaceGroup[];
+  /** Workspace id -> sidebar display alias, persisted in app settings;
+   *  workspaces missing here show their folder name. */
+  workspaceAliases: Record<string, string>;
   /** Composer send gesture ("enter" | "cmdEnter"), persisted in app settings. */
   sendShortcut: string;
   bySession: Record<string, SessionState>;
@@ -104,12 +147,25 @@ export interface ChatStore {
   moveTab: (engine: string, sessionId: string | null, workspacePath: string, toIndex: number) => void;
   startNewChat: (workspacePath: string) => void;
   setActiveEngine: (engine: string) => void;
+  setPermission: (permission: ComposerPermission) => void;
   setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
   setModel: (engine: string, model: string) => Promise<void>;
   /** Pin several engines' models at once (startup defaulting); one settings
    * write instead of one per engine. */
   pinModels: (updates: Record<string, string>) => Promise<void>;
   setThreadLimit: (limit: number) => void;
+  /** Create a named sidebar group; throws on empty/duplicate names. */
+  createWorkspaceGroup: (name: string) => Promise<WorkspaceGroup | null>;
+  /** Rename a group; throws on empty/duplicate names. */
+  renameWorkspaceGroup: (id: string, name: string) => Promise<boolean>;
+  /** Persist a new sidebar group order (ids in display order). */
+  reorderWorkspaceGroups: (orderedIds: string[]) => Promise<void>;
+  /** Delete a group; its workspaces fall back to ungrouped. */
+  deleteWorkspaceGroup: (id: string) => Promise<void>;
+  /** Put a workspace into a group (null = ungrouped). */
+  assignWorkspaceGroup: (workspaceId: string, groupId: string | null) => Promise<void>;
+  /** Set (or clear, null/empty/name-equal) the sidebar alias of a workspace. */
+  setWorkspaceAlias: (workspaceId: string, alias: string | null) => Promise<void>;
   setSendShortcut: (shortcut: string) => void;
   setDraft: (key: string, text: string) => void;
   /** Ask the active composer to insert an @path mention at the caret. */
@@ -124,6 +180,8 @@ export interface ChatStore {
   queueMessage: (text: string, images: string[]) => void;
   /** Drop a queued message from the active session. */
   removeQueued: (id: string) => void;
+  /** Drop every queued message from the active session. */
+  clearQueue: () => void;
   interrupt: () => Promise<void>;
   deleteSession: (engine: string, sessionId: string) => Promise<void>;
   pinSession: (engine: string, sessionId: string, pinned: boolean) => Promise<void>;
@@ -238,6 +296,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         imagePaths: images.length ? images : null,
         model: get().models[engine] || null,
         effort: get().efforts[engine] ?? null,
+        permission: effectivePermission(get().engines, engine, get().permission),
       });
       if (result.sessionId && !tab.sessionId) {
         // Preassigned native id (grok): adopt immediately.
@@ -249,10 +308,22 @@ export const useChatStore = create<ChatStore>((set, get) => {
             if (newKey !== key) delete bySession[key];
           }
           runRouting.set(result.runId, newKey);
-          const openTabs = s.openTabs.map((t) =>
-            t.engine === engine && t.sessionId === null && t.workspacePath === tab.workspacePath
-              ? { ...t, sessionId: result.sessionId }
-              : t,
+          // Stamp only the tab that owns this run; blanketing every pending
+          // tab of this engine+workspace would create duplicate session tabs.
+          let stamped = false;
+          const openTabs = dedupeTabs(
+            s.openTabs.map((t) => {
+              if (
+                stamped ||
+                t.engine !== engine ||
+                t.sessionId !== null ||
+                t.workspacePath !== tab.workspacePath
+              ) {
+                return t;
+              }
+              stamped = true;
+              return { ...t, sessionId: result.sessionId };
+            }),
           );
           // Only the active tab adopts the native id on `active`; a
           // background drain leaves the user's current tab untouched.
@@ -332,9 +403,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
     active: null,
     openTabs: [],
     activeEngine: localStorage.getItem(ENGINE_PREF_KEY) ?? "claude",
+    permission: readPermissionPref(),
     efforts: {},
     models: {},
     threadLimit: 10,
+    workspaceGroups: [],
+    workspaceAliases: {},
     sendShortcut: "enter",
     bySession: {},
     streamingByKey: {},
@@ -399,6 +473,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
             efforts: (settings.defaultEfforts ?? {}) as Record<string, EffortLevel>,
             models: settings.defaultModels ?? {},
             threadLimit: settings.sidebarThreadLimit ?? 5,
+            workspaceGroups: settings.workspaceGroups ?? [],
+            workspaceAliases: settings.workspaceAliases ?? {},
             sendShortcut: settings.composerSendShortcut ?? "enter",
           }),
         )
@@ -594,6 +670,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
         };
       });
     },
+
+    setPermission: (permission) => {
+      writeStored(PERMISSION_PREF_KEY, permission);
+      set({ permission });
+    },
     setEffort: async (engine, effort) => {
       set({ efforts: { ...get().efforts, [engine]: effort } });
       await persistSettings((settings) => ({
@@ -625,6 +706,104 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     setThreadLimit: (limit) => {
       set({ threadLimit: Math.max(1, Math.floor(limit)) });
+    },
+    createWorkspaceGroup: async (name) => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("Group name is required.");
+      const current = get().workspaceGroups;
+      if (current.some((g) => g.name === trimmed)) {
+        throw new Error("Group name already exists.");
+      }
+      const group: WorkspaceGroup = {
+        id: newId(),
+        name: trimmed,
+        sortOrder: current.reduce((max, g) => Math.max(max, g.sortOrder ?? -1), -1) + 1,
+      };
+      const workspaceGroups = [...current, group];
+      set({ workspaceGroups });
+      await persistSettings((settings) => ({
+        workspaceGroups: [...(settings.workspaceGroups ?? []), group],
+      }));
+      return group;
+    },
+    renameWorkspaceGroup: async (id, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("Group name is required.");
+      const current = get().workspaceGroups;
+      if (current.some((g) => g.id !== id && g.name === trimmed)) {
+        throw new Error("Group name already exists.");
+      }
+      set({
+        workspaceGroups: current.map((g) => (g.id === id ? { ...g, name: trimmed } : g)),
+      });
+      await persistSettings((settings) => ({
+        workspaceGroups: (settings.workspaceGroups ?? []).map((g) =>
+          g.id === id ? { ...g, name: trimmed } : g,
+        ),
+      }));
+      return true;
+    },
+    reorderWorkspaceGroups: async (orderedIds) => {
+      const current = get().workspaceGroups;
+      const byId = new Map(current.map((g) => [g.id, g]));
+      const ordered = orderedIds
+        .map((id) => byId.get(id))
+        .filter((g): g is WorkspaceGroup => Boolean(g));
+      // Groups missing from the submitted order keep trailing positions.
+      const rest = current.filter((g) => !orderedIds.includes(g.id));
+      const workspaceGroups = [...ordered, ...rest].map((g, i) => ({ ...g, sortOrder: i }));
+      set({ workspaceGroups });
+      await persistSettings(() => ({ workspaceGroups }));
+    },
+    deleteWorkspaceGroup: async (id) => {
+      const affected = get().workspaces.filter((w) => w.groupId === id);
+      const workspaceGroups = get().workspaceGroups.filter((g) => g.id !== id);
+      set({
+        workspaceGroups,
+        workspaces: get().workspaces.map((w) =>
+          w.groupId === id ? { ...w, groupId: null } : w,
+        ),
+      });
+      await persistSettings((settings) => ({
+        workspaceGroups: (settings.workspaceGroups ?? []).filter((g) => g.id !== id),
+      }));
+      // Members of the deleted group fall back to ungrouped.
+      await Promise.all(
+        affected.map((w) => ipc.setWorkspaceGroup(w.id, null).catch(() => {})),
+      );
+    },
+    assignWorkspaceGroup: async (workspaceId, groupId) => {
+      const valid = groupId && get().workspaceGroups.some((g) => g.id === groupId);
+      const resolved = valid ? groupId : null;
+      set({
+        workspaces: get().workspaces.map((w) =>
+          w.id === workspaceId ? { ...w, groupId: resolved } : w,
+        ),
+      });
+      try {
+        await ipc.setWorkspaceGroup(workspaceId, resolved);
+      } catch (error) {
+        // Roll back to the persisted truth.
+        await get().refreshWorkspaces();
+        throw error;
+      }
+    },
+    setWorkspaceAlias: async (workspaceId, alias) => {
+      // An alias equal to the folder name is no alias at all — same rule the
+      // sidebar display applies — so it clears the entry instead of storing.
+      const name = get().workspaces.find((w) => w.id === workspaceId)?.name;
+      const trimmed = alias?.trim() ?? "";
+      const resolved = trimmed && trimmed !== name ? trimmed : null;
+      const workspaceAliases = { ...get().workspaceAliases };
+      if (resolved) workspaceAliases[workspaceId] = resolved;
+      else delete workspaceAliases[workspaceId];
+      set({ workspaceAliases });
+      await persistSettings((settings) => {
+        const next = { ...(settings.workspaceAliases ?? {}) };
+        if (resolved) next[workspaceId] = resolved;
+        else delete next[workspaceId];
+        return { workspaceAliases: next };
+      });
     },
     setSendShortcut: (shortcut) => {
       set({ sendShortcut: shortcut });
@@ -709,6 +888,21 @@ export const useChatStore = create<ChatStore>((set, get) => {
           bySession: {
             ...s.bySession,
             [key]: { ...prev, queue: prev.queue.filter((item) => item.id !== id) },
+          },
+        };
+      });
+    },
+    clearQueue: () => {
+      const { active } = get();
+      if (!active) return;
+      const key = sessionKey(active.engine, active.sessionId, active.workspacePath);
+      set((s) => {
+        const prev = s.bySession[key];
+        if (!prev || prev.queue.length === 0) return {};
+        return {
+          bySession: {
+            ...s.bySession,
+            [key]: { ...prev, queue: [] },
           },
         };
       });

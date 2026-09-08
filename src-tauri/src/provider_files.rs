@@ -62,7 +62,9 @@ struct Target {
 /// paths. Engines without writable provider config return an empty list.
 fn targets(engine: &str) -> Vec<Target> {
     let home = |env_key: Option<&str>, default: &str| crate::engine::engine_home(env_key, default);
-    let backup_dir = crate::paths::app_home().join("provider-backups").join(engine);
+    let backup_dir = crate::paths::app_home()
+        .join("provider-backups")
+        .join(engine);
     let target = |path: PathBuf, name: &str| Target {
         path,
         backup: backup_dir.join(name),
@@ -225,7 +227,9 @@ fn non_empty_str(value: Option<&Value>) -> Option<String> {
 
 /// A channel's raw env maps: cc-switch's `settingsConfig.env` first (the
 /// legacy claude/grok shape), then the flat `env` escape hatch.
-fn channel_env_maps(provider: &Value) -> impl Iterator<Item = &serde_json::Map<String, Value>> + '_ {
+fn channel_env_maps(
+    provider: &Value,
+) -> impl Iterator<Item = &serde_json::Map<String, Value>> + '_ {
     [
         provider.get("settingsConfig").and_then(|s| s.get("env")),
         provider.get("env"),
@@ -292,10 +296,13 @@ fn claude_channel_env(provider: &Value) -> Vec<(String, String)> {
 fn apply_claude(target: &Target, provider: &Value) -> Result<(), String> {
     snapshot_once(target)?;
     let base = base_content(target, "{}")?;
-    let mut doc: Value = serde_json::from_str(&base)
-        .map_err(|e| format!("parse {}: {e}", target.path.display()))?;
+    let mut doc: Value =
+        serde_json::from_str(&base).map_err(|e| format!("parse {}: {e}", target.path.display()))?;
     if !doc.is_object() {
-        return Err(format!("{}: root is not a JSON object", target.path.display()));
+        return Err(format!(
+            "{}: root is not a JSON object",
+            target.path.display()
+        ));
     }
     // cc-switch channels carry a full settingsConfig: merge its top-level
     // keys (env deep-merged below), keeping the user's unrelated settings.
@@ -346,7 +353,10 @@ fn apply_codex(config: &Target, auth: &Target, provider: &Value) -> Result<(), S
         let mut doc: Value = serde_json::from_str(&base)
             .map_err(|e| format!("parse {}: {e}", auth.path.display()))?;
         if !doc.is_object() {
-            return Err(format!("{}: root is not a JSON object", auth.path.display()));
+            return Err(format!(
+                "{}: root is not a JSON object",
+                auth.path.display()
+            ));
         }
         doc["OPENAI_API_KEY"] = Value::String(key);
         let content = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
@@ -448,7 +458,11 @@ fn apply_grok(target: &Target, provider: &Value) -> Result<(), String> {
         .map_err(|e| format!("parse {}: {e}", target.path.display()))?;
     if let Some(base_url) = channel_field("grok", provider, "baseUrl") {
         let base_url = base_url.trim_end_matches('/').to_string();
-        for key in ["models_base_url", "xai_api_base_url", "cli_chat_proxy_base_url"] {
+        for key in [
+            "models_base_url",
+            "xai_api_base_url",
+            "cli_chat_proxy_base_url",
+        ] {
             doc["endpoints"][key] = value(base_url.clone());
         }
         doc["endpoints"]["models_list_url"] = value(format!("{base_url}/models"));
@@ -704,7 +718,16 @@ mod tests {
             Some("https://acme.example/v1")
         );
         // The user's notify survives; the channel's is not a managed key.
-        assert_eq!(doc["notify"].as_array().unwrap().iter().next().unwrap().as_str(), Some("x"));
+        assert_eq!(
+            doc["notify"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .next()
+                .unwrap()
+                .as_str(),
+            Some("x")
+        );
         let auth_doc: Value =
             serde_json::from_str(&std::fs::read_to_string(&auth.path).unwrap()).unwrap();
         assert_eq!(auth_doc["OPENAI_API_KEY"], "sk-ccs");

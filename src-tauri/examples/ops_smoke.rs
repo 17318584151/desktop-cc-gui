@@ -32,7 +32,8 @@ async fn git_smoke() {
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
         let sig = git2::Signature::now("smoke", "smoke@test").unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+            .unwrap();
     }
     // git identity for our commands comes from repo config; set it.
     let mut config = repo.config().unwrap();
@@ -68,7 +69,11 @@ async fn git_smoke() {
     git::git_unstage(path.clone(), vec!["b.txt".into()]).unwrap();
     let status = git::git_status(path.clone()).await.unwrap();
     assert_eq!(status.staged.len(), 1);
-    assert_eq!(status.untracked.len(), 1, "b.txt back to untracked: {status:?}");
+    assert_eq!(
+        status.untracked.len(),
+        1,
+        "b.txt back to untracked: {status:?}"
+    );
     println!("unstage: ok");
 
     let oid = git::git_commit(path.clone(), "second commit".into()).unwrap();
@@ -86,7 +91,10 @@ async fn git_smoke() {
         .unwrap();
     let branches = git::git_branches(path.clone()).unwrap();
     assert!(branches.iter().any(|b| b.name == "feature-x"));
-    println!("branches: {:?}", branches.iter().map(|b| &b.name).collect::<Vec<_>>());
+    println!(
+        "branches: {:?}",
+        branches.iter().map(|b| &b.name).collect::<Vec<_>>()
+    );
 
     let not_repo = git::git_status("/tmp".into()).await.unwrap_err();
     assert_eq!(not_repo, "NOT_A_REPO");

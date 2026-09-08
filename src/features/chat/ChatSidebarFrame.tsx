@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   AiChatSidebar,
   type AiChatRepo,
+  type AiChatRepoSection,
   type ThreadAction,
 } from "@/components/application/ai-chat/ai-chat-sidebar";
 import { cx } from "@/utils/cx";
@@ -21,10 +22,12 @@ export function ChatSidebarFrame({
   onResizeStart,
   onClose,
   repos,
+  sections,
   onThreadSelect,
   onThreadAction,
   onAddWorkspace,
   onRemoveWorkspace,
+  onWorkspaceAlias,
   onNewSessionInWorkspace,
   onNewSession,
   onReorderWorkspaces,
@@ -38,10 +41,13 @@ export function ChatSidebarFrame({
   onResizeStart: (e: React.PointerEvent) => void;
   onClose: () => void;
   repos: AiChatRepo[];
+  /** Grouped repo tree (工作区二级分类); undefined = flat list. */
+  sections?: AiChatRepoSection[];
   onThreadSelect: (id: string) => void;
   onThreadAction: (id: string, action: ThreadAction) => void;
   onAddWorkspace: () => void;
   onRemoveWorkspace: (workspaceId: string) => void;
+  onWorkspaceAlias: (workspaceId: string) => void;
   onNewSessionInWorkspace: (workspaceId: string) => void;
   onNewSession: () => void;
   onReorderWorkspaces: (orderedIds: string[]) => void;
@@ -64,11 +70,13 @@ export function ChatSidebarFrame({
           "max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl",
         )}
         repos={repos}
+        sections={sections}
         activeThreadId={active?.sessionId ? `${active.engine}/${active.sessionId}` : undefined}
         onThreadSelect={onThreadSelect}
         onThreadAction={onThreadAction}
         onAddWorkspace={onAddWorkspace}
         onRemoveWorkspace={onRemoveWorkspace}
+        onWorkspaceAlias={onWorkspaceAlias}
         onNewSessionInWorkspace={onNewSessionInWorkspace}
         onNewSession={onNewSession}
         onReorderWorkspaces={onReorderWorkspaces}

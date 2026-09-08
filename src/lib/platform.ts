@@ -18,7 +18,9 @@ export function openExternal(url: string) {
     window.open(url, "_blank", "noopener,noreferrer");
     return;
   }
-  void tauriInvoke("plugin:opener|open_url", { url }).catch(() => {});
+  void tauriInvoke("plugin:opener|open_url", { url }).catch((error) => {
+    console.error("[openExternal] failed to open", url, error);
+  });
 }
 
 /** App version: bundle metadata natively, bridge hello frame on web. */

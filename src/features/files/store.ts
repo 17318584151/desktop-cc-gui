@@ -16,6 +16,16 @@ export function fileName(path: string): string {
   const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return idx >= 0 ? path.slice(idx + 1) : path;
 }
+export function parentPath(path: string): string {
+  const idx = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return idx >= 0 ? path.slice(0, idx) : path;
+}
+
+/** In-app copy/paste clipboard for tree items (path-based; paste copies). */
+export interface TreeClipboard {
+  path: string;
+  isDir: boolean;
+}
 
 export interface OpenFileState {
   path: string;
@@ -47,6 +57,8 @@ interface FilesStore {
   activeFilePath: string | null;
   /** Paths with unsaved editor drafts (reported by EditorPane). */
   dirtyPaths: Record<string, true>;
+  /** Tree item staged by the context menu's Copy; consumed by Paste. */
+  clipboard: TreeClipboard | null;
 
   setRoot: (path: string) => void;
   ensureDir: (path: string) => Promise<void>;
@@ -67,6 +79,12 @@ interface FilesStore {
   moveOpenFile: (path: string, toIndex: number) => void;
   /** Re-point open tabs after a rename/move (content unchanged on disk). */
   remapOpenFiles: (from: string, to: string) => void;
+  /** Stage a tree item for Paste. */
+  setClipboard: (item: TreeClipboard | null) => void;
+  /** Drop cached tree state at/under a removed path and close its tabs. */
+  removeTreePath: (path: string) => void;
+  /** Re-key cached tree state (and open tabs) after a rename/move. */
+  remapTreePath: (from: string, to: string) => void;
   /** Close every tab at or under a removed path. */
   closeFilesUnder: (path: string) => void;
   setFileDirty: (path: string, dirty: boolean) => void;
@@ -84,6 +102,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   fileStates: {},
   activeFilePath: null,
   dirtyPaths: {},
+  clipboard: null,
 
   setRoot: (path) => {
     const root = path.trim();
@@ -266,6 +285,51 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     for (const p of [...get().openFiles]) {
       if (p === path || p.startsWith(path + "/")) get().closeFile(p);
     }
+  },
+  setClipboard: (item) => set({ clipboard: item }),
+
+  removeTreePath: (path) => {
+    const prune = <T,>(map: Record<string, T>) => {
+      const next: Record<string, T> = {};
+      for (const [k, v] of Object.entries(map)) {
+        if (k !== path && !k.startsWith(path + "/")) next[k] = v;
+      }
+      return next;
+    };
+    set((s) => ({
+      children: prune(s.children),
+      expanded: prune(s.expanded),
+      loadingDirs: prune(s.loadingDirs),
+      dirErrors: prune(s.dirErrors),
+      selectedPath:
+        s.selectedPath && (s.selectedPath === path || s.selectedPath.startsWith(path + "/"))
+          ? null
+          : s.selectedPath,
+      clipboard:
+        s.clipboard && (s.clipboard.path === path || s.clipboard.path.startsWith(path + "/"))
+          ? null
+          : s.clipboard,
+    }));
+    get().closeFilesUnder(path);
+  },
+
+  remapTreePath: (from, to) => {
+    const mapPath = (p: string) =>
+      p === from ? to : p.startsWith(from + "/") ? to + p.slice(from.length) : p;
+    const remap = <T,>(map: Record<string, T>) => {
+      const next: Record<string, T> = {};
+      for (const [k, v] of Object.entries(map)) next[mapPath(k)] = v;
+      return next;
+    };
+    set((s) => ({
+      children: remap(s.children),
+      expanded: remap(s.expanded),
+      loadingDirs: remap(s.loadingDirs),
+      dirErrors: remap(s.dirErrors),
+      selectedPath: s.selectedPath ? mapPath(s.selectedPath) : s.selectedPath,
+      clipboard: s.clipboard ? { ...s.clipboard, path: mapPath(s.clipboard.path) } : s.clipboard,
+    }));
+    get().remapOpenFiles(from, to);
   },
 
   setFileDirty: (path, dirty) =>

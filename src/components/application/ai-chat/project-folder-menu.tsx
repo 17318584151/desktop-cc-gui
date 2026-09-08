@@ -3,7 +3,7 @@
 import { useTranslation } from "react-i18next";
 import Check from "lucide-react/dist/esm/icons/check";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
-import Folder from "lucide-react/dist/esm/icons/folder";
+import FolderSymlink from "lucide-react/dist/esm/icons/folder-symlink";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
@@ -47,7 +47,7 @@ export function ProjectFolderMenu({
         ref={triggerRef}
         className="flex cursor-pointer items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
       >
-        <Folder className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
+        <FolderSymlink className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
         <span className="flex items-center">
           <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
             {selectedName ?? t("chat.noProjectSelected")}
@@ -91,7 +91,7 @@ export function ProjectFolderMenu({
                       : "hover:bg-background-primary-hover focus-visible:bg-background-primary-hover",
                   )}
                 >
-                  <Folder
+                  <FolderSymlink
                     className="size-5 shrink-0 text-foreground-icon-secondary"
                     aria-hidden
                   />

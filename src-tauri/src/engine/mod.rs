@@ -1,12 +1,12 @@
 pub mod claude;
 pub mod codex;
 pub mod dsh;
-pub mod pi_family;
-pub mod pi_family_auth;
 pub mod grok;
 pub mod images;
 pub mod kimi;
 pub mod models;
+pub mod pi_family;
+pub mod pi_family_auth;
 
 use crate::event_sink;
 use serde::Serialize;
@@ -37,6 +37,10 @@ pub struct SendRequest {
     /// Reasoning effort ("low" | "medium" | "high" | "xhigh" | "max"); engines without an
     /// effort knob ignore it, engines with a narrower knob clamp.
     pub effort: Option<String>,
+    /// Permission mode ("auto" | "manual" | "plan" | "bypass"); each engine
+    /// resolves it against the modes it can actually honor at spawn (see
+    /// `Engine::resolve_permission`).
+    pub permission: Option<String>,
 }
 
 pub struct BuiltCommand {
@@ -98,6 +102,21 @@ pub trait Engine: Send + Sync {
     fn parse_line(&self, line: &str, out: &mut Vec<EngineEvent>);
     /// Whether this engine accepts image attachments.
     fn supports_images(&self) -> bool;
+    /// Permission modes this engine can honor at spawn ("auto" | "manual" |
+    /// "plan" | "bypass"). These are one-shot headless launches that cannot
+    /// ask mid-turn, so most engines support only a subset; the UI greys out
+    /// the rest rather than promising a mode the CLI would silently ignore.
+    fn supported_permissions(&self) -> &'static [&'static str] {
+        &["auto"]
+    }
+    /// Effective mode for one send: the requested mode when this engine
+    /// supports it, otherwise the engine's first supported mode.
+    fn resolve_permission(&self, requested: Option<&str>) -> &'static str {
+        let supported = self.supported_permissions();
+        requested
+            .and_then(|mode| supported.iter().copied().find(|m| *m == mode))
+            .unwrap_or(supported[0])
+    }
 }
 
 pub fn engine_by_id(id: &str) -> Option<Box<dyn Engine>> {
@@ -209,7 +228,9 @@ impl ProcessRegistry {
 
     pub fn kill(&self, key: &str) -> bool {
         let entry = match self.0.lock() {
-            Ok(map) => map.get(key).map(|e| (e.pid, Arc::clone(&e.child), Arc::clone(&e.killed))),
+            Ok(map) => map
+                .get(key)
+                .map(|e| (e.pid, Arc::clone(&e.child), Arc::clone(&e.killed))),
             Err(_) => None,
         };
         // Fallback: the frontend may cancel by run id after the entry was
@@ -326,6 +347,9 @@ pub struct EngineInfo {
     /// from pickers and history lists rather than erroring on launch.
     pub enabled: bool,
     pub supports_images: bool,
+    /// Permission modes the engine honors at spawn; drives the composer
+    /// picker's disabled options.
+    pub permissions: Vec<String>,
 }
 
 fn engine_bin(settings: &crate::settings::AppSettings, engine_id: &str) -> String {
@@ -364,11 +388,14 @@ pub fn list_engines() -> Vec<EngineInfo> {
             EngineInfo {
                 id: id.to_string(),
                 available,
-                enabled: config
-                    .section(id)
-                    .and_then(|s| s.current.as_deref())
+                enabled: config.section(id).and_then(|s| s.current.as_deref())
                     != Some(crate::config::DISABLED_PROVIDER_ID),
                 supports_images: engine.supports_images(),
+                permissions: engine
+                    .supported_permissions()
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect(),
             }
         })
         .collect()
@@ -394,6 +421,7 @@ fn prepare_launch(
     image_paths: Option<Vec<String>>,
     model: Option<String>,
     effort: Option<String>,
+    permission: Option<String>,
 ) -> Result<Launch, String> {
     let engine_impl = engine_by_id(engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
     // Channels live in each CLI's native config file (provider_files); the
@@ -415,6 +443,7 @@ fn prepare_launch(
         images: image_paths.unwrap_or_default(),
         model,
         effort,
+        permission: permission.filter(|p| !p.trim().is_empty()),
     };
     let bin = engine_bin(&settings, engine);
     let built = engine_impl.build_command(&req, &bin)?;
@@ -489,7 +518,14 @@ impl TurnState {
         }
     }
 
-    fn push(&mut self, sink: &Arc<event_sink::EventSink>, run_id: &str, engine_id: &str, kind: &str, data: Value) {
+    fn push(
+        &mut self,
+        sink: &Arc<event_sink::EventSink>,
+        run_id: &str,
+        engine_id: &str,
+        kind: &str,
+        data: Value,
+    ) {
         self.seq += 1;
         sink.push(serde_json::json!({
             "runId": run_id,
@@ -528,24 +564,44 @@ impl RunContext {
         state.native_session_id = Some(id.to_string());
         self.registry.rekey(&self.run_id, id.to_string());
         if announce {
-            state.push(&self.sink, &self.run_id, &self.engine_id, "session", Value::String(id.to_string()));
+            state.push(
+                &self.sink,
+                &self.run_id,
+                &self.engine_id,
+                "session",
+                Value::String(id.to_string()),
+            );
         }
     }
 
     fn dispatch_event(&self, state: &mut TurnState, event: EngineEvent) {
         match event {
-            EngineEvent::Delta(text) => {
-                state.push(&self.sink, &self.run_id, &self.engine_id, "delta", Value::String(text))
-            }
-            EngineEvent::Thinking(text) => {
-                state.push(&self.sink, &self.run_id, &self.engine_id, "thinking", Value::String(text))
-            }
+            EngineEvent::Delta(text) => state.push(
+                &self.sink,
+                &self.run_id,
+                &self.engine_id,
+                "delta",
+                Value::String(text),
+            ),
+            EngineEvent::Thinking(text) => state.push(
+                &self.sink,
+                &self.run_id,
+                &self.engine_id,
+                "thinking",
+                Value::String(text),
+            ),
             EngineEvent::Message { role, text, path } => {
                 let mut payload = serde_json::json!({ "role": role, "text": text });
                 if let Some(path) = path {
                     payload["path"] = Value::String(path);
                 }
-                state.push(&self.sink, &self.run_id, &self.engine_id, "message", payload)
+                state.push(
+                    &self.sink,
+                    &self.run_id,
+                    &self.engine_id,
+                    "message",
+                    payload,
+                )
             }
             EngineEvent::SessionId(id) => self.adopt_session_id(state, &id, true),
             EngineEvent::Usage(usage) => {
@@ -553,19 +609,37 @@ impl RunContext {
             }
             EngineEvent::Error(error) => {
                 state.saw_error = true;
-                state.push(&self.sink, &self.run_id, &self.engine_id, "error", Value::String(error));
+                state.push(
+                    &self.sink,
+                    &self.run_id,
+                    &self.engine_id,
+                    "error",
+                    Value::String(error),
+                );
             }
             EngineEvent::Warn(error) => {
                 // Not terminal: no saw_error — EOF settle still decides the
                 // turn's fate if the CLI gives up after this notice.
-                state.push(&self.sink, &self.run_id, &self.engine_id, "warn", Value::String(error));
+                state.push(
+                    &self.sink,
+                    &self.run_id,
+                    &self.engine_id,
+                    "warn",
+                    Value::String(error),
+                );
             }
             EngineEvent::Done { session_id, usage } => {
                 state.saw_done = true;
                 if let Some(id) = session_id {
                     self.adopt_session_id(state, &id, false);
                 }
-                state.push(&self.sink, &self.run_id, &self.engine_id, "done", serde_json::json!({ "usage": usage }));
+                state.push(
+                    &self.sink,
+                    &self.run_id,
+                    &self.engine_id,
+                    "done",
+                    serde_json::json!({ "usage": usage }),
+                );
             }
         }
     }
@@ -620,7 +694,13 @@ async fn run_reader(stdout: ChildStdout, ctx: RunContext) {
         if killed {
             // User-initiated stop: commit whatever streamed so far as a
             // normal turn end — a SIGKILL'd child is not a failure.
-            state.push(&ctx.sink, &ctx.run_id, &ctx.engine_id, "done", serde_json::json!({ "usage": null }));
+            state.push(
+                &ctx.sink,
+                &ctx.run_id,
+                &ctx.engine_id,
+                "done",
+                serde_json::json!({ "usage": null }),
+            );
         } else if failed || !state.saw_any_output {
             let mut message = format!(
                 "{} exited with status {}",
@@ -632,10 +712,22 @@ async fn run_reader(stdout: ChildStdout, ctx: RunContext) {
             if !stderr_tail.is_empty() {
                 message.push_str(&format!(": {}", redact_secrets(&stderr_tail)));
             }
-            state.push(&ctx.sink, &ctx.run_id, &ctx.engine_id, "error", Value::String(message));
+            state.push(
+                &ctx.sink,
+                &ctx.run_id,
+                &ctx.engine_id,
+                "error",
+                Value::String(message),
+            );
         } else {
             // Clean EOF without an explicit done line (kimi).
-            state.push(&ctx.sink, &ctx.run_id, &ctx.engine_id, "done", serde_json::json!({ "usage": null }));
+            state.push(
+                &ctx.sink,
+                &ctx.run_id,
+                &ctx.engine_id,
+                "done",
+                serde_json::json!({ "usage": null }),
+            );
         }
     }
     ctx.sink.flush();
@@ -651,6 +743,7 @@ pub async fn send_message(
     image_paths: Option<Vec<String>>,
     model: Option<String>,
     effort: Option<String>,
+    permission: Option<String>,
 ) -> Result<SendResult, String> {
     if state.processes.len() >= MAX_CONCURRENT_RUNS {
         return Err(format!(
@@ -665,6 +758,7 @@ pub async fn send_message(
         image_paths,
         model,
         effort,
+        permission,
     )?;
 
     let mut command = launch.built.command;
@@ -750,9 +844,109 @@ pub async fn send_message(
 }
 
 #[tauri::command]
-pub fn interrupt_session(
-    state: tauri::State<'_, crate::AppState>,
-    session_id: String,
-) -> bool {
+pub fn interrupt_session(state: tauri::State<'_, crate::AppState>, session_id: String) -> bool {
     state.processes.kill(&session_id)
+}
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+
+    fn req(permission: Option<&str>) -> SendRequest {
+        SendRequest {
+            session_id: None,
+            workspace: PathBuf::from("/tmp"),
+            prompt: "hi".to_string(),
+            images: Vec::new(),
+            model: None,
+            effort: None,
+            permission: permission.map(str::to_string),
+        }
+    }
+
+    fn argv(engine: &dyn Engine, req: &SendRequest) -> Vec<String> {
+        let built = engine.build_command(req, "fake-bin").unwrap();
+        built
+            .command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn unsupported_mode_falls_back_to_first_supported() {
+        let codex = codex::CodexEngine;
+        assert_eq!(codex.resolve_permission(Some("plan")), "auto");
+        assert_eq!(codex.resolve_permission(Some("manual")), "manual");
+        assert_eq!(codex.resolve_permission(None), "auto");
+        let grok = grok::GrokEngine;
+        assert_eq!(grok.resolve_permission(Some("auto")), "bypass");
+    }
+
+    #[test]
+    fn claude_maps_modes_to_permission_flags() {
+        let e = claude::ClaudeEngine;
+        let auto = argv(&e, &req(Some("auto")));
+        assert!(auto.contains(&"--permission-mode".to_string()));
+        assert!(auto.contains(&"acceptEdits".to_string()));
+        assert!(!auto.contains(&"--dangerously-skip-permissions".to_string()));
+
+        let manual = argv(&e, &req(Some("manual")));
+        assert!(manual.contains(&"default".to_string()));
+
+        let plan = argv(&e, &req(Some("plan")));
+        assert!(plan.contains(&"plan".to_string()));
+
+        let bypass = argv(&e, &req(Some("bypass")));
+        assert!(bypass.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(!bypass.contains(&"--permission-mode".to_string()));
+    }
+
+    #[test]
+    fn codex_maps_modes_to_sandbox_flags() {
+        let e = codex::CodexEngine;
+        let auto = argv(&e, &req(Some("auto")));
+        assert!(auto.contains(&"workspace-write".to_string()));
+        assert!(!auto.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+
+        let manual = argv(&e, &req(Some("manual")));
+        assert!(manual.contains(&"read-only".to_string()));
+
+        let bypass = argv(&e, &req(Some("bypass")));
+        assert!(bypass.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+    }
+
+    #[test]
+    fn kimi_maps_plan_and_bypass() {
+        let e = kimi::KimiEngine;
+        let auto = argv(&e, &req(Some("auto")));
+        assert!(!auto.contains(&"--yolo".to_string()));
+        assert!(!auto.contains(&"--plan".to_string()));
+
+        let plan = argv(&e, &req(Some("plan")));
+        assert!(plan.contains(&"--plan".to_string()));
+
+        let bypass = argv(&e, &req(Some("bypass")));
+        assert!(bypass.contains(&"--yolo".to_string()));
+
+        // Manual is unsupported: falls back to auto (no flags).
+        let manual = argv(&e, &req(Some("manual")));
+        assert!(!manual.contains(&"--yolo".to_string()));
+        assert!(!manual.contains(&"--plan".to_string()));
+    }
+
+    #[test]
+    fn grok_always_approves_regardless_of_request() {
+        let e = grok::GrokEngine;
+        for mode in [
+            Some("auto"),
+            Some("manual"),
+            Some("plan"),
+            Some("bypass"),
+            None,
+        ] {
+            assert!(argv(&e, &req(mode)).contains(&"--always-approve".to_string()));
+        }
+    }
 }

@@ -42,6 +42,7 @@ pub fn parse_grok_config_models(content: &str) -> Vec<EngineModel> {
             .map(|id| EngineModel {
                 id,
                 name: None,
+                description: None,
                 provider: "grok".to_string(),
                 context_window: None,
             })

@@ -1,6 +1,6 @@
 import { ipc, type SessionMeta } from "@/lib/ipc";
 import type { EngineEventPayload } from "@/lib/events";
-import { persistTabs, sessionKey } from "./persistence";
+import { dedupeTabs, persistTabs, sessionKey } from "./persistence";
 import {
   EMPTY_SESSION,
   appendToolMessage,
@@ -159,18 +159,34 @@ function onSession(event: EngineEventPayload, key: string, deps: EngineEventDeps
     }
     const streamingByKey = moveStreamingFlag(s.streamingByKey, key, newKey);
     const activeNext =
-      s.active && s.active.engine === event.engine && s.active.sessionId === null
+      s.active &&
+      s.active.engine === event.engine &&
+      s.active.sessionId === null &&
+      s.active.workspacePath === workspacePath
         ? { ...s.active, sessionId: nativeId }
         : s.active;
     return { bySession, drafts, streamingByKey, active: activeNext };
   });
-  // The pending tab adopts the native id too. Match by the resolved
+  // The pending tab owning this run adopts the native id. Stamp only the
+  // first match: blanketing every pending tab of this engine+workspace
+  // would turn a second "new chat" tab into a duplicate of this session
+  // (identical React keys break the tab strip). Match by the resolved
   // workspace, so a background tab updates itself, not the foreground tab.
   deps.set((s) => {
-    const openTabs = s.openTabs.map((t) =>
-      t.engine === event.engine && t.sessionId === null && t.workspacePath === workspacePath
-        ? { ...t, sessionId: nativeId }
-        : t,
+    let stamped = false;
+    const openTabs = dedupeTabs(
+      s.openTabs.map((t) => {
+        if (
+          stamped ||
+          t.engine !== event.engine ||
+          t.sessionId !== null ||
+          t.workspacePath !== workspacePath
+        ) {
+          return t;
+        }
+        stamped = true;
+        return { ...t, sessionId: nativeId };
+      }),
     );
     persistTabs(openTabs, s.active);
     return { openTabs };

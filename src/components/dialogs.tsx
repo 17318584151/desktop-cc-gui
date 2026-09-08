@@ -49,13 +49,26 @@ export function ModalShell({
 interface PromptDialogProps {
   title: string;
   initial?: string;
+  /** Helper text under the field. */
+  hint?: string;
+  placeholder?: string;
+  /** Allow submitting the empty string (e.g. clearing an alias). */
+  allowEmpty?: boolean;
   onSubmit: (value: string) => void;
   onCancel: () => void;
 }
 
 /** Single-field name prompt (new folder / rename). window.prompt is not
  * reliable inside Tauri's WKWebView, so this is a real modal. */
-export function PromptDialog({ title, initial = "", onSubmit, onCancel }: PromptDialogProps) {
+export function PromptDialog({
+  title,
+  initial = "",
+  hint,
+  placeholder,
+  allowEmpty = false,
+  onSubmit,
+  onCancel,
+}: PromptDialogProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState(initial);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,13 +87,15 @@ export function PromptDialog({ title, initial = "", onSubmit, onCancel }: Prompt
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (trimmed) onSubmit(trimmed);
+          if (trimmed || allowEmpty) onSubmit(trimmed);
         }}
         className="flex flex-col gap-3"
       >
         <Input
           ref={inputRef}
           label={title}
+          hint={hint}
+          placeholder={placeholder}
           value={value}
           onChange={setValue}
           size="small"
@@ -89,7 +104,7 @@ export function PromptDialog({ title, initial = "", onSubmit, onCancel }: Prompt
           <Button variant="secondary" size="small" onClick={onCancel}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" variant="primary" size="small" disabled={!trimmed}>
+          <Button type="submit" variant="primary" size="small" disabled={!allowEmpty && !trimmed}>
             {t("common.confirm")}
           </Button>
         </div>

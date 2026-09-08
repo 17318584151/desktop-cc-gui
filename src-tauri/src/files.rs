@@ -105,7 +105,10 @@ pub(crate) fn ensure_allowed(path: &str, db: &crate::db::Db) -> Result<PathBuf, 
 }
 
 #[tauri::command]
-pub fn list_dir(db: tauri::State<'_, Arc<crate::db::Db>>, path: String) -> Result<Vec<DirEntry>, String> {
+pub fn list_dir(
+    db: tauri::State<'_, Arc<crate::db::Db>>,
+    path: String,
+) -> Result<Vec<DirEntry>, String> {
     let dir = ensure_allowed(&path, &db)?;
     let entries = std::fs::read_dir(&dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
     let mut out: Vec<DirEntry> = entries
@@ -231,6 +234,18 @@ pub fn create_dir(db: tauri::State<'_, Arc<crate::db::Db>>, path: String) -> Res
     let dir = ensure_allowed(&path, &db)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))
 }
+/// "New file" from the tree context menu: `create_new` fails instead of
+/// clobbering when the name is taken (write_file overwrites by design).
+#[tauri::command]
+pub fn create_file(db: tauri::State<'_, Arc<crate::db::Db>>, path: String) -> Result<(), String> {
+    let file = ensure_allowed(&path, &db)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file)
+        .map(|_| ())
+        .map_err(|e| format!("create {}: {e}", file.display()))
+}
 
 #[tauri::command]
 pub fn rename_item(
@@ -248,6 +263,134 @@ pub fn rename_item(
 pub fn trash_item(db: tauri::State<'_, Arc<crate::db::Db>>, path: String) -> Result<(), String> {
     let target = ensure_allowed(&path, &db)?;
     trash::delete(&target).map_err(|e| format!("trash {}: {e}", target.display()))
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileOpResult {
+    pub path: String,
+    pub is_dir: bool,
+}
+
+/// Finder-style copy naming: `name copy`, `name copy 2`, …; files keep
+/// their extension (`name copy.txt`).
+fn copy_destination_name(source: &Path, is_dir: bool, counter: u32) -> Result<String, String> {
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("invalid source name {}", source.display()))?;
+    let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
+    let extension = source.extension().and_then(|e| e.to_str());
+    let suffix = if counter == 0 {
+        " copy".to_string()
+    } else {
+        format!(" copy {counter}")
+    };
+    Ok(match (is_dir, extension) {
+        (false, Some(ext)) => format!("{stem}{suffix}.{ext}"),
+        _ => format!("{stem}{suffix}"),
+    })
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
+    let entries = std::fs::read_dir(src).map_err(|e| format!("read {}: {e}", src.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read entry in {}: {e}", src.display()))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = std::fs::symlink_metadata(&src_path)
+            .map_err(|e| format!("stat {}: {e}", src_path.display()))?
+            .file_type();
+        if file_type.is_symlink() {
+            return Err(format!("cannot copy symlink {}", src_path.display()));
+        }
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("copy {}: {e}", src_path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy `source` into `target_dir`, picking a collision-free destination
+/// (`prefer_original_name` keeps the plain name when it is free — paste;
+/// duplicates always take the " copy" suffix). Returns the destination.
+fn copy_item_into_dir(
+    source: &Path,
+    is_dir: bool,
+    target_dir: &Path,
+    prefer_original_name: bool,
+) -> Result<PathBuf, String> {
+    if is_dir && target_dir.starts_with(source) {
+        return Err("cannot paste a folder into itself or its descendant".to_string());
+    }
+    let source_name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("invalid source name {}", source.display()))?;
+    let mut destination = target_dir.join(source_name);
+    if !prefer_original_name || destination.exists() {
+        destination = (0..=999u32)
+            .map(|counter| copy_destination_name(source, is_dir, counter))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|name| target_dir.join(name))
+            .find(|candidate| !candidate.exists())
+            .ok_or_else(|| "too many copies exist".to_string())?;
+    }
+    if is_dir {
+        copy_dir_recursive(source, &destination)?;
+    } else {
+        std::fs::copy(source, &destination)
+            .map_err(|e| format!("copy {}: {e}", source.display()))?;
+    }
+    Ok(destination)
+}
+
+#[tauri::command]
+pub fn duplicate_item(
+    db: tauri::State<'_, Arc<crate::db::Db>>,
+    path: String,
+) -> Result<FileOpResult, String> {
+    let source = ensure_allowed(&path, &db)?;
+    let meta = std::fs::symlink_metadata(&source)
+        .map_err(|e| format!("stat {}: {e}", source.display()))?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("cannot copy symlink {}", source.display()));
+    }
+    let parent = source
+        .parent()
+        .ok_or_else(|| format!("invalid path {}", source.display()))?;
+    let destination = copy_item_into_dir(&source, meta.is_dir(), parent, false)?;
+    Ok(FileOpResult {
+        path: destination.to_string_lossy().into_owned(),
+        is_dir: meta.is_dir(),
+    })
+}
+
+#[tauri::command]
+pub fn paste_item(
+    db: tauri::State<'_, Arc<crate::db::Db>>,
+    source: String,
+    target_dir: String,
+) -> Result<FileOpResult, String> {
+    let source = ensure_allowed(&source, &db)?;
+    let dir = ensure_allowed(&target_dir, &db)?;
+    if !dir.is_dir() {
+        return Err(format!("{} is not a directory", dir.display()));
+    }
+    let meta = std::fs::symlink_metadata(&source)
+        .map_err(|e| format!("stat {}: {e}", source.display()))?;
+    if meta.file_type().is_symlink() {
+        return Err(format!("cannot copy symlink {}", source.display()));
+    }
+    let destination = copy_item_into_dir(&source, meta.is_dir(), &dir, true)?;
+    Ok(FileOpResult {
+        path: destination.to_string_lossy().into_owned(),
+        is_dir: meta.is_dir(),
+    })
 }
 
 /// Case-insensitive substring check. ASCII haystack+needle take an
@@ -344,10 +487,7 @@ pub async fn search_text(
 /// walker): .gitignore/.git/info/exclude/global excludes are honored even
 /// outside a git repo (require_git(false)); hidden files are skipped and
 /// node_modules/target are dropped even when a repo forgot to ignore them.
-fn list_file_index_blocking(
-    db: &crate::db::Db,
-    path: &str,
-) -> Result<Vec<FileIndexEntry>, String> {
+fn list_file_index_blocking(db: &crate::db::Db, path: &str) -> Result<Vec<FileIndexEntry>, String> {
     let root = ensure_allowed(path, db)?;
     let mut out: Vec<FileIndexEntry> = Vec::new();
     let walker = ignore::WalkBuilder::new(&root)

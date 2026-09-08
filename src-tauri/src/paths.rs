@@ -25,6 +25,14 @@ pub fn legacy_workspaces_path() -> PathBuf {
         .join("workspaces.json")
 }
 
+/// Legacy app's settings next to its workspace list: holds `workspaceGroups`
+/// (sidebar 分组定义), imported on upgrade so groups survive the switch.
+pub fn legacy_settings_path() -> PathBuf {
+    let base = dirs::config_dir().unwrap_or_else(home_dir);
+    base.join("com.zhukunpenglinyutong.ccgui")
+        .join("settings.json")
+}
+
 pub fn config_path() -> PathBuf {
     app_home().join("config.json")
 }

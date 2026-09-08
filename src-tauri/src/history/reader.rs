@@ -219,7 +219,11 @@ fn delete_session_disk(engine: &str, path: &Path) -> Result<(), String> {
             };
             let home = crate::engine::engine_home(
                 None,
-                if engine == "kimi" { ".kimi-code" } else { ".grok" },
+                if engine == "kimi" {
+                    ".kimi-code"
+                } else {
+                    ".grok"
+                },
             );
             let anchored = crate::files::canonicalize_lenient(session_dir)
                 .map(|resolved| {
@@ -337,15 +341,15 @@ pub struct Workspace {
     pub name: String,
     pub last_opened_at: Option<i64>,
     pub sort_order: Option<i64>,
+    /// Sidebar group (工作区分组) this workspace belongs to; None = ungrouped.
+    pub group_id: Option<String>,
 }
 
 #[tauri::command]
-pub fn list_workspaces(
-    state: tauri::State<'_, crate::AppState>,
-) -> Result<Vec<Workspace>, String> {
+pub fn list_workspaces(state: tauri::State<'_, crate::AppState>) -> Result<Vec<Workspace>, String> {
     query_rows(
         &state,
-        "SELECT id, path, name, last_opened_at, sort_order FROM workspaces
+        "SELECT id, path, name, last_opened_at, sort_order, group_id FROM workspaces
          ORDER BY sort_order IS NULL, sort_order, COALESCE(last_opened_at, 0) DESC",
         |r| {
             Ok(Workspace {
@@ -354,6 +358,7 @@ pub fn list_workspaces(
                 name: r.get(2)?,
                 last_opened_at: r.get(3)?,
                 sort_order: r.get(4)?,
+                group_id: r.get(5)?,
             })
         },
     )
@@ -398,7 +403,34 @@ pub fn add_workspace(
         name,
         last_opened_at: Some(now),
         sort_order: None,
+        group_id: None,
     })
+}
+
+/// Assign a workspace to a sidebar group (None = ungrouped). The group must
+/// exist in app settings so a deleted group never lingers on a row.
+#[tauri::command]
+pub fn set_workspace_group(
+    state: tauri::State<'_, crate::AppState>,
+    id: String,
+    group_id: Option<String>,
+) -> Result<(), String> {
+    if let Some(gid) = group_id.as_deref() {
+        let exists = crate::settings::read_settings()?
+            .workspace_groups
+            .iter()
+            .any(|g| g.id == gid);
+        if !exists {
+            return Err(format!("unknown group: {gid}"));
+        }
+    }
+    let conn = state.db.0.lock();
+    conn.execute(
+        "UPDATE workspaces SET group_id=?2 WHERE id=?1",
+        rusqlite::params![id, group_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

@@ -64,7 +64,10 @@ pub fn import_attachments(paths: Vec<String>) -> Result<Vec<String>, String> {
             .unwrap_or("")
             .to_ascii_lowercase();
         if !PASTED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-            eprintln!("[images] import skipped (bad extension): {}", path.display());
+            eprintln!(
+                "[images] import skipped (bad extension): {}",
+                path.display()
+            );
             continue;
         }
         let result = std::fs::metadata(&path)
@@ -108,7 +111,9 @@ mod tests {
         let written = std::fs::read(&path).unwrap();
         assert_eq!(
             written,
-            base64::engine::general_purpose::STANDARD.decode(PNG_B64).unwrap()
+            base64::engine::general_purpose::STANDARD
+                .decode(PNG_B64)
+                .unwrap()
         );
         assert!(path.contains("pasted-images"));
         assert!(path.ends_with(".png"));
@@ -195,8 +200,8 @@ pub fn load_image(
     if meta.len() > 8 * 1024 * 1024 {
         return Err(format!("image {} exceeds 8MB", resolved.display()));
     }
-    let bytes = std::fs::read(&resolved)
-        .map_err(|e| format!("read image {}: {e}", resolved.display()))?;
+    let bytes =
+        std::fs::read(&resolved).map_err(|e| format!("read image {}: {e}", resolved.display()))?;
     let mime = match resolved
         .extension()
         .and_then(|e| e.to_str())
@@ -287,7 +292,10 @@ pub fn grok_prompt_json(
         .iter()
         .all(|b| b.get("type").and_then(Value::as_str) != Some("text"))
     {
-        blocks.insert(0, json!({ "type": "text", "text": "Please analyze the attached image(s)." }));
+        blocks.insert(
+            0,
+            json!({ "type": "text", "text": "Please analyze the attached image(s)." }),
+        );
     }
     serde_json::to_string(&blocks)
         .map(Some)

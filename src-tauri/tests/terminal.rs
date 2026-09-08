@@ -15,7 +15,11 @@ use std::time::{Duration, Instant};
 use tauri::{Listener, Manager};
 
 fn temp_home(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("ccgui-terminal-test-{}-{}", tag, std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "ccgui-terminal-test-{}-{}",
+        tag,
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -34,10 +38,7 @@ fn build_app(home: &std::path::Path) -> tauri::App<tauri::test::MockRuntime> {
     app.manage(AppState {
         db: Arc::new(Db::open_at(&home.join("app.db")).unwrap()),
         sink: EventSink::new(Arc::new(app.handle().clone())),
-        terminal_sink: EventSink::with_name(
-            Arc::new(app.handle().clone()),
-            TERMINAL_OUTPUT_EVENT,
-        ),
+        terminal_sink: EventSink::with_name(Arc::new(app.handle().clone()), TERMINAL_OUTPUT_EVENT),
         terminals: terminal::TerminalRegistry::default(),
         processes: Arc::new(ProcessRegistry::default()),
         emitters: ccgui_next_lib::event_sink::BroadcastEmit::new(Arc::new(app.handle().clone())),
@@ -47,9 +48,17 @@ fn build_app(home: &std::path::Path) -> tauri::App<tauri::test::MockRuntime> {
     app
 }
 
-fn invoke(app: &tauri::App<tauri::test::MockRuntime>, cmd: &str, body: Value) -> Result<Value, Value> {
+fn invoke(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    cmd: &str,
+    body: Value,
+) -> Result<Value, Value> {
     static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let label = format!("w-{}-{}", cmd, COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let label = format!(
+        "w-{}-{}",
+        cmd,
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let webview = tauri::WebviewWindowBuilder::new(app, label, Default::default())
         .build()
         .unwrap();
@@ -76,11 +85,12 @@ fn terminal_session_roundtrip() {
 
     let batches: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let captured = Arc::clone(&batches);
-    app.handle().listen_any(TERMINAL_OUTPUT_EVENT, move |event| {
-        if let Ok(batch) = serde_json::from_str::<Vec<Value>>(event.payload()) {
-            captured.lock().unwrap().extend(batch);
-        }
-    });
+    app.handle()
+        .listen_any(TERMINAL_OUTPUT_EVENT, move |event| {
+            if let Ok(batch) = serde_json::from_str::<Vec<Value>>(event.payload()) {
+                captured.lock().unwrap().extend(batch);
+            }
+        });
 
     // Open a shell in the temp workspace.
     invoke(
@@ -136,7 +146,9 @@ fn terminal_session_roundtrip() {
     )
     .unwrap_err();
     assert!(
-        err.as_str().unwrap_or("").contains("Terminal session not found"),
+        err.as_str()
+            .unwrap_or("")
+            .contains("Terminal session not found"),
         "expected not-found error after close, got: {err}"
     );
 }

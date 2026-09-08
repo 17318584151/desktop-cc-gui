@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ModelOption } from "@/components/application/ai-chat/cli-menu";
 import { ipc, type CliConfig, type EngineCatalog, type EngineInfo } from "@/lib/ipc";
 import {
@@ -75,8 +75,15 @@ export function useEngineModels(
       const known = [
         ...new Set([...providerModels, ...catalog.map((m) => m.id), ...(current ? [current] : [])]),
       ];
-      const nameById = new Map(catalog.map((m) => [m.id, m.name]));
-      result[engine.id] = known.map((m) => ({ id: m, label: nameById.get(m) || m }));
+      const byId = new Map(catalog.map((m) => [m.id, m]));
+      result[engine.id] = known.map((m) => {
+        const entry = byId.get(m);
+        return {
+          id: m,
+          label: entry?.name || m,
+          description: entry?.description ?? undefined,
+        };
+      });
     }
     return result;
   }, [engines, cliConfig, catalogs, models]);
@@ -128,5 +135,23 @@ export function useEngineModels(
     if (Object.keys(updates).length > 0) void pinModels(updates);
   }, [engines, models, modelsByEngine, catalogs, knownIdsByEngine, pinModels]);
 
-  return { catalogs, modelsByEngine };
+  // Manual refresh from the flyout: re-read provider configs and re-probe
+  // every engine's catalog (the mount effect skips engines already probed,
+  // so settings edits otherwise only land after an app restart).
+  const refresh = useCallback(async () => {
+    await ipc.getCliConfig().then(setCliConfig).catch(() => {});
+    await Promise.all(
+      engines.map(async (engine) => {
+        try {
+          const list = await ipc.listEngineModels(engine.id);
+          setCatalogs((prev) => ({ ...prev, [engine.id]: list }));
+        } catch {
+          // A failed probe keeps the stale catalog rather than blanking the
+          // flyout.
+        }
+      }),
+    );
+  }, [engines]);
+
+  return { catalogs, modelsByEngine, refresh };
 }

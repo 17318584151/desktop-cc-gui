@@ -29,11 +29,15 @@ fn open_repo(path: &str) -> Result<Repository, String> {
 fn status_label(status: git2::Status) -> &'static str {
     if status.contains(git2::Status::WT_DELETED) || status.contains(git2::Status::INDEX_DELETED) {
         "deleted"
-    } else if status.contains(git2::Status::WT_RENAMED) || status.contains(git2::Status::INDEX_RENAMED) {
+    } else if status.contains(git2::Status::WT_RENAMED)
+        || status.contains(git2::Status::INDEX_RENAMED)
+    {
         "renamed"
     } else if status.contains(git2::Status::WT_NEW) || status.contains(git2::Status::INDEX_NEW) {
         "added"
-    } else if status.contains(git2::Status::WT_TYPECHANGE) || status.contains(git2::Status::INDEX_TYPECHANGE) {
+    } else if status.contains(git2::Status::WT_TYPECHANGE)
+        || status.contains(git2::Status::INDEX_TYPECHANGE)
+    {
         "typechange"
     } else {
         "modified"
@@ -233,10 +237,7 @@ pub fn git_diff(path: String, file: String, staged: bool) -> Result<String, Stri
     let mut opts = git2::DiffOptions::new();
     opts.pathspec(&file);
     let diff = if staged {
-        let head_tree = repo
-            .head()
-            .and_then(|h| h.peel_to_tree())
-            .ok();
+        let head_tree = repo.head().and_then(|h| h.peel_to_tree()).ok();
         repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
     } else {
         repo.diff_index_to_workdir(None, Some(&mut opts))
@@ -261,7 +262,12 @@ pub fn git_stage(path: String, files: Vec<String>) -> Result<(), String> {
     let mut index = repo.index().map_err(|e| e.to_string())?;
     for file in &files {
         let file_path = std::path::Path::new(file);
-        if repo.workdir().map(|w| w.join(file_path)).map(|p| p.exists()).unwrap_or(false) {
+        if repo
+            .workdir()
+            .map(|w| w.join(file_path))
+            .map(|p| p.exists())
+            .unwrap_or(false)
+        {
             index.add_path(file_path).map_err(|e| e.to_string())?;
         } else {
             index.remove_path(file_path).map_err(|e| e.to_string())?;
@@ -326,13 +332,10 @@ pub fn git_commit(path: String, message: String) -> Result<String, String> {
     let mut index = repo.index().map_err(|e| e.to_string())?;
     let tree_id = index.write_tree().map_err(|e| e.to_string())?;
     let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
-    let sig = repo.signature().map_err(|e| {
-        format!("git identity not configured (user.name/user.email): {e}")
-    })?;
-    let parent = repo
-        .head()
-        .and_then(|h| h.peel_to_commit())
-        .ok();
+    let sig = repo
+        .signature()
+        .map_err(|e| format!("git identity not configured (user.name/user.email): {e}"))?;
+    let parent = repo.head().and_then(|h| h.peel_to_commit()).ok();
     let parents: Vec<&git2::Commit> = parent.iter().collect();
     let oid = repo
         .commit(Some("HEAD"), &sig, &sig, trimmed, &tree, &parents)
@@ -428,7 +431,9 @@ fn git_pull_blocking(path: &str) -> Result<(), String> {
     remote
         .fetch(std::slice::from_ref(&branch), None, None)
         .map_err(map_remote_error)?;
-    let fetch_head = repo.find_reference("FETCH_HEAD").map_err(|e| e.to_string())?;
+    let fetch_head = repo
+        .find_reference("FETCH_HEAD")
+        .map_err(|e| e.to_string())?;
     let fetch_commit = repo
         .reference_to_annotated_commit(&fetch_head)
         .map_err(|e| e.to_string())?;
@@ -515,12 +520,15 @@ pub fn git_checkout(path: String, branch: String) -> Result<(), String> {
     let (object, reference) = repo
         .revparse_ext(&branch)
         .map_err(|e| format!("unknown branch {branch}: {e}"))?;
-    repo.checkout_tree(&object, None).map_err(|e| e.to_string())?;
+    repo.checkout_tree(&object, None)
+        .map_err(|e| e.to_string())?;
     match reference {
         Some(r) => repo
             .set_head(r.name().ok_or("invalid ref name")?)
             .map_err(|e| e.to_string()),
-        None => repo.set_head_detached(object.id()).map_err(|e| e.to_string()),
+        None => repo
+            .set_head_detached(object.id())
+            .map_err(|e| e.to_string()),
     }
 }
 
@@ -535,9 +543,15 @@ pub fn git_create_branch(path: String, name: String) -> Result<(), String> {
         .head()
         .and_then(|h| h.peel_to_commit())
         .map_err(|e| e.to_string())?;
-    let branch = repo.branch(trimmed, &head, false).map_err(|e| e.to_string())?;
-    let refname = format!("refs/heads/{}", branch.name().map_err(|e| e.to_string())?.unwrap_or(trimmed));
+    let branch = repo
+        .branch(trimmed, &head, false)
+        .map_err(|e| e.to_string())?;
+    let refname = format!(
+        "refs/heads/{}",
+        branch.name().map_err(|e| e.to_string())?.unwrap_or(trimmed)
+    );
     let object = head.as_object().clone();
-    repo.checkout_tree(&object, None).map_err(|e| e.to_string())?;
+    repo.checkout_tree(&object, None)
+        .map_err(|e| e.to_string())?;
     repo.set_head(&refname).map_err(|e| e.to_string())
 }

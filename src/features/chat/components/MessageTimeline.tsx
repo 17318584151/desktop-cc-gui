@@ -14,6 +14,7 @@ import { MessageAnchorRail, type MessageAnchor } from "./MessageAnchorRail";
 import { buildRows, collectToolKeys, rowKey, type TimelineRow } from "./timeline-rows";
 import { ProcessDisclosure } from "./ProcessDisclosure";
 import { useScrollFollow, useTailPin } from "./use-scroll-follow";
+import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { useAnchorRailScroll } from "./use-anchor-rail-scroll";
 import { useLoadEarlier } from "./use-load-earlier";
 
@@ -272,7 +273,7 @@ export const MessageTimeline = memo(function MessageTimeline({
       index < rows.length ? rowKey(rows[index]) : "streaming-tail",
   });
 
-  const { atBottomRef, userPausedRef, isFollowing, scrollToBottom } = useScrollFollow({ scrollRef });
+  const { atBottomRef, userPausedRef, isFollowing, scrollToBottom, resumeFollow } = useScrollFollow({ scrollRef });
   const { activeAnchorId, handleScrollToAnchor } = useAnchorRailScroll({
     scrollRef,
     anchors,
@@ -300,6 +301,7 @@ export const MessageTimeline = memo(function MessageTimeline({
         getFallbackTitle={(index) => t("chat.anchorUserTitle", { index: index + 1 })}
         onScrollToAnchor={handleScrollToAnchor}
       />
+      <ScrollToBottomButton scrollRef={scrollRef} contentSignal={count} onJump={resumeFollow} />
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4">
         <div data-sentinel className="h-px" />
         {session.nextBefore && (

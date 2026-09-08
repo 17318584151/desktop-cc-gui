@@ -1,24 +1,29 @@
 "use client";
 
-import type { ComponentType, PointerEvent as ReactPointerEvent, Ref, RefObject } from "react";
+import type { ComponentType, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, Ref, RefObject } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
 import FolderPlus from "lucide-react/dist/esm/icons/folder-plus";
 import Menu from "lucide-react/dist/esm/icons/menu";
-import Folder from "lucide-react/dist/esm/icons/folder";
+import MessageSquarePlus from "lucide-react/dist/esm/icons/message-square-plus";
 import FolderOpen from "lucide-react/dist/esm/icons/folder-open";
+import FolderSymlink from "lucide-react/dist/esm/icons/folder-symlink";
 import Pencil from "lucide-react/dist/esm/icons/pencil";
 import Pin from "lucide-react/dist/esm/icons/pin";
 import PanelLeft from "lucide-react/dist/esm/icons/panel-left";
 import Plus from "lucide-react/dist/esm/icons/plus";
-import Search from "lucide-react/dist/esm/icons/search";
+import ScanSearch from "lucide-react/dist/esm/icons/scan-search";
 import Settings from "lucide-react/dist/esm/icons/settings";
-import SquarePen from "lucide-react/dist/esm/icons/square-pen";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2";
 import X from "lucide-react/dist/esm/icons/x";
 import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { CloseButton } from "@/components/base/buttons/close-button";
 import { WorkspaceSortableList } from "@/components/application/ai-chat/workspace-sortable-list";
+import {
+  WorkspaceContextMenu,
+  type WorkspaceMenuState,
+} from "@/components/application/ai-chat/workspace-context-menu";
 import { cx } from "@/utils/cx";
 
 /**
@@ -59,12 +64,44 @@ export interface AiChatThread {
 export interface AiChatRepo {
   id?: string;
   label: string;
+  /** Original workspace folder name when `label` is a user-set alias
+   *  (surfaced as the row tooltip). */
+  originalLabel?: string;
   /** Recent chats listed when the repo is expanded. */
   threads: AiChatThread[];
   /** Max threads listed before collapsing behind a "show more" row. */
   threadLimit?: number;
   /** Expanded on first render (folder-open icon + visible threads). */
   defaultOpen?: boolean;
+}
+/** A workspace group section (工作区二级分类): named groups render with a
+ *  collapsible header; the single `id: null` section is ungrouped repos
+ *  rendered flat, exactly as before groups existed. */
+export interface AiChatRepoSection {
+  id: string | null;
+  name: string;
+  repos: AiChatRepo[];
+}
+
+/** localStorage key for the collapsed workspace-group id set. */
+const COLLAPSED_GROUPS_KEY = "ccgui-next.sidebarCollapsedGroups:v1";
+
+function readCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_GROUPS_KEY);
+    const parsed: unknown = raw === null ? [] : JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCollapsedGroups(collapsed: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // Storage unavailable/full is non-fatal: collapse stays in memory.
+  }
 }
 
 /** Top-level nav row — icon + label, p 8, radius/2lg. */
@@ -269,7 +306,8 @@ function paginateThreads(
 }
 
 /** The repo row itself: merged folder/reorder-grip button, label, hover
- *  actions (new session / remove) and the thread count chip. */
+ *  actions (new session / remove) and the thread count chip. Right-click
+ *  bubbles to the workspace context menu via `onContextMenu`. */
 function RepoHeaderRow({
   repo,
   expanded,
@@ -280,6 +318,7 @@ function RepoHeaderRow({
   onToggleOpen,
   onNewSession,
   onRemove,
+  onContextMenu,
 }: {
   repo: AiChatRepo;
   expanded: boolean;
@@ -293,12 +332,14 @@ function RepoHeaderRow({
   onToggleOpen: () => void;
   onNewSession?: (id: string) => void;
   onRemove?: (id: string) => void;
+  onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
 }) {
   const { t } = useTranslation();
-  const Icon = expanded ? FolderOpen : Folder;
+  const Icon = expanded ? FolderOpen : FolderSymlink;
   const collapseLabel = expanded ? t("chat.collapseWorkspace") : t("chat.expandWorkspace");
   return (
     <div
+      onContextMenu={onContextMenu}
       className="group flex w-full cursor-pointer items-center gap-2 rounded-2lg p-2 transition-colors duration-150 ease hover:bg-background-secondary-hover"
     >
       <button
@@ -356,7 +397,10 @@ function RepoHeaderRow({
         onClick={onToggleOpen}
         className="flex min-w-0 flex-1 cursor-pointer items-center text-left"
       >
-        <span className="truncate text-body-2-medium whitespace-nowrap text-text-secondary">
+        <span
+          title={repo.originalLabel}
+          className="truncate text-body-2-medium whitespace-nowrap text-text-secondary"
+        >
           {repo.label}
         </span>
       </button>
@@ -488,6 +532,7 @@ function RepoItem({
   onThreadAction,
   onRemove,
   onNewSession,
+  onContextMenu,
   isDragging = false,
   dragHandleProps = null,
 }: {
@@ -500,6 +545,8 @@ function RepoItem({
   onRemove?: (id: string) => void;
   /** Per-row + button: start a new chat in this workspace. */
   onNewSession?: (id: string) => void;
+  /** Right-click on the repo header row: opens the workspace menu. */
+  onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
   /** Drag-handle reorder in progress for this row. */
   isDragging?: boolean;
   /** Immediate drag entry attached to the row's grip handle. */
@@ -534,6 +581,7 @@ function RepoItem({
         onToggleOpen={toggleOpen}
         onNewSession={onNewSession}
         onRemove={onRemove}
+        onContextMenu={onContextMenu}
       />
       <RepoThreadList
         expanded={expanded}
@@ -566,7 +614,7 @@ function SearchField({
   const { t } = useTranslation();
   return (
     <div className="flex w-full items-center gap-2 rounded-2lg bg-background-tertiary-default p-2 ring-2 ring-inset ring-border-focus-ring">
-      <Search className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
+      <ScanSearch className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
       <input
         ref={inputRef}
         type="search"
@@ -591,10 +639,46 @@ function SearchField({
   );
 }
 
-/** Workspaces section: header with the add button + the sortable repo tree. */
+/** Workspace group header (› name): click toggles the group's
+ *  repo list; collapsed state is owned (and persisted) by the sidebar. */
+function GroupHeaderRow({
+  name,
+  collapsed,
+  onToggle,
+}: {
+  name: string;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={!collapsed}
+      onClick={onToggle}
+      className="flex w-full cursor-pointer items-center gap-1 rounded-2lg px-1 py-[5px] transition-colors duration-150 ease hover:bg-background-secondary-hover"
+    >
+      <ChevronRight
+        className={cx(
+          "size-3.5 shrink-0 text-foreground-icon-secondary transition-transform duration-150",
+          !collapsed && "rotate-90",
+        )}
+        aria-hidden
+      />
+      <span className="min-w-0 flex-1 truncate text-left text-caption-1-medium text-text-tertiary">
+        {name}
+      </span>
+    </button>
+  );
+}
+
+/** Workspaces section: header with the add button + the sortable repo tree.
+ *  With workspace groups configured, repos render under collapsible group
+ *  headers (工作区二级分类); otherwise the flat list renders unchanged. */
 function WorkspaceSection({
   filteredRepos,
+  sections,
   searching,
+  collapsedGroups,
   activeThreadId,
   onThreadSelect,
   onThreadAction,
@@ -602,9 +686,14 @@ function WorkspaceSection({
   onRemoveWorkspace,
   onNewSessionInWorkspace,
   onReorderWorkspaces,
+  onToggleGroup,
+  onRepoContextMenu,
 }: {
   filteredRepos: AiChatRepo[];
+  /** Grouped repo tree; absent/empty = legacy flat list. */
+  sections?: AiChatRepoSection[];
   searching: boolean;
+  collapsedGroups: Set<string>;
   activeThreadId?: string;
   onThreadSelect?: (id: string) => void;
   onThreadAction?: (id: string, action: ThreadAction) => void;
@@ -612,8 +701,55 @@ function WorkspaceSection({
   onRemoveWorkspace?: (id: string) => void;
   onNewSessionInWorkspace?: (id: string) => void;
   onReorderWorkspaces?: (orderedIds: string[]) => void;
+  onToggleGroup?: (groupId: string) => void;
+  /** Right-click on a repo header row (workspace context menu). */
+  onRepoContextMenu?: (event: ReactMouseEvent<HTMLElement>, workspaceId: string) => void;
 }) {
   const { t } = useTranslation();
+  const hasGroups = Boolean(sections?.some((section) => section.id !== null));
+
+  const renderRepoList = (repos: AiChatRepo[], sectionId: string | null) =>
+    repos.length > 0 && (
+      <WorkspaceSortableList
+        items={repos}
+        disabled={searching}
+        onReorder={
+          onReorderWorkspaces
+            ? (orderedIds) => {
+                // Rebuild the global order: other sections keep theirs, the
+                // dragged section takes the new one.
+                const all = (sections ?? [{ id: null, name: "", repos: filteredRepos }]).flatMap(
+                  (section) =>
+                    section.id === sectionId
+                      ? orderedIds
+                      : section.repos.map((repo) => repo.id),
+                );
+                onReorderWorkspaces(all.filter((id): id is string => Boolean(id)));
+              }
+            : undefined
+        }
+        className="flex w-full flex-col gap-1"
+        renderItem={(repo, drag) => (
+          <RepoItem
+            repo={repo}
+            forceOpen={searching}
+            activeThreadId={activeThreadId}
+            onThreadSelect={onThreadSelect}
+            onThreadAction={onThreadAction}
+            onRemove={onRemoveWorkspace}
+            onNewSession={onNewSessionInWorkspace}
+            onContextMenu={
+              onRepoContextMenu && repo.id
+                ? (event) => onRepoContextMenu(event, repo.id!)
+                : undefined
+            }
+            isDragging={drag?.isDragging ?? false}
+            dragHandleProps={drag?.dragHandleProps ?? null}
+          />
+        )}
+      />
+    );
+
   return (
     <div className="flex w-full flex-col gap-2.5">
       <div className="flex w-full items-center justify-between">
@@ -630,33 +766,32 @@ function WorkspaceSection({
           <FolderPlus className="size-4" aria-hidden />
         </button>
       </div>
-      {filteredRepos.length > 0 && (
-        <WorkspaceSortableList
-          items={filteredRepos}
-          disabled={searching}
-          onReorder={onReorderWorkspaces}
-          className="flex w-full flex-col gap-1"
-          renderItem={(repo, drag) => (
-            <RepoItem
-              repo={repo}
-              forceOpen={searching}
-              activeThreadId={activeThreadId}
-              onThreadSelect={onThreadSelect}
-              onThreadAction={onThreadAction}
-              onRemove={onRemoveWorkspace}
-              onNewSession={onNewSessionInWorkspace}
-              isDragging={drag?.isDragging ?? false}
-              dragHandleProps={drag?.dragHandleProps ?? null}
-            />
-          )}
-        />
-      )}
+      {!hasGroups && renderRepoList(filteredRepos, null)}
+      {hasGroups &&
+        sections!.map((section) =>
+          section.id === null ? (
+            <div key="ungrouped" className="flex w-full flex-col">
+              {renderRepoList(section.repos, null)}
+            </div>
+          ) : (
+            <div key={section.id} className="flex w-full flex-col">
+              <GroupHeaderRow
+                name={section.name}
+                collapsed={!searching && collapsedGroups.has(section.id)}
+                onToggle={() => onToggleGroup?.(section.id!)}
+              />
+              {(searching || !collapsedGroups.has(section.id)) &&
+                renderRepoList(section.repos, section.id)}
+            </div>
+          ),
+        )}
     </div>
   );
 }
 
 export function AiChatSidebar({
   repos = [],
+  sections,
   className,
   width = 260,
   rootRef,
@@ -668,11 +803,14 @@ export function AiChatSidebar({
   onThreadAction,
   onAddWorkspace,
   onRemoveWorkspace,
+  onWorkspaceAlias,
   onOpenSettings,
   onClose,
   flat = false,
 }: {
   repos?: AiChatRepo[];
+  /** Grouped repo tree (工作区二级分类); omitted = flat `repos` list. */
+  sections?: AiChatRepoSection[];
   className?: string;
   /** Sidebar width in px; the parent owns resizing. */
   width?: number;
@@ -683,6 +821,8 @@ export function AiChatSidebar({
   onThreadAction?: (id: string, action: ThreadAction) => void;
   onAddWorkspace?: () => void;
   onRemoveWorkspace?: (id: string) => void;
+  /** Workspace context-menu action: open the set-alias dialog for the row. */
+  onWorkspaceAlias?: (id: string) => void;
   /** Per-row + button: start a new chat in that workspace. */
   onNewSessionInWorkspace?: (id: string) => void;
   /** Commit of a drag-handle reorder (ordered workspace ids). */
@@ -701,6 +841,27 @@ export function AiChatSidebar({
   const [query, setQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const normalizedQuery = query.trim().toLocaleLowerCase();
+  // Group collapse: persisted so the tree reopens the way it was left.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
+  // Workspace right-click menu (设置别名): pointer-anchored, one open at a time.
+  const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | null>(null);
+  const openWorkspaceMenu = useCallback(
+    (event: ReactMouseEvent<HTMLElement>, workspaceId: string) => {
+      if (!onWorkspaceAlias) return;
+      event.preventDefault();
+      setWorkspaceMenu({ x: event.clientX, y: event.clientY, workspaceId });
+    },
+    [onWorkspaceAlias],
+  );
+  const toggleGroup = useCallback((groupId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      writeCollapsedGroups(next);
+      return next;
+    });
+  }, []);
 
   const filteredRepos = useMemo(
     () =>
@@ -715,6 +876,29 @@ export function AiChatSidebar({
       }),
     [repos, normalizedQuery],
   );
+  // Same query filter applied per section; groups with no matches drop out
+  // while searching.
+  const filteredSections = useMemo(() => {
+    if (!sections) return undefined;
+    const matches = (repo: AiChatRepo): AiChatRepo | null => {
+      if (!normalizedQuery || repo.label.toLocaleLowerCase().includes(normalizedQuery)) {
+        return repo;
+      }
+      const threads = repo.threads.filter((thread) =>
+        thread.label.toLocaleLowerCase().includes(normalizedQuery),
+      );
+      return threads.length ? { ...repo, threads } : null;
+    };
+    return sections
+      .map((section) => ({
+        ...section,
+        repos: section.repos.flatMap((repo) => {
+          const match = matches(repo);
+          return match ? [match] : [];
+        }),
+      }))
+      .filter((section) => section.id === null || section.repos.length > 0);
+  }, [sections, normalizedQuery]);
 
   const deactivateSearch = useCallback(() => {
     setQuery("");
@@ -790,14 +974,16 @@ export function AiChatSidebar({
                 inputRef={searchInputRef}
               />
             ) : (
-              <NavItem icon={Search} label={t("common.search")} onClick={() => setSearchActive(true)} />
+              <NavItem icon={ScanSearch} label={t("common.search")} onClick={() => setSearchActive(true)} />
             )}
-            <NavItem icon={SquarePen} label={t("chat.newSession")} onClick={onNewSession} />
+            <NavItem icon={MessageSquarePlus} label={t("chat.newSession")} onClick={onNewSession} />
           </nav>
 
           <WorkspaceSection
             filteredRepos={filteredRepos}
+            sections={filteredSections}
             searching={Boolean(normalizedQuery)}
+            collapsedGroups={collapsedGroups}
             activeThreadId={activeThreadId}
             onThreadSelect={onThreadSelect}
             onThreadAction={onThreadAction}
@@ -805,6 +991,8 @@ export function AiChatSidebar({
             onRemoveWorkspace={onRemoveWorkspace}
             onNewSessionInWorkspace={onNewSessionInWorkspace}
             onReorderWorkspaces={onReorderWorkspaces}
+            onToggleGroup={toggleGroup}
+            onRepoContextMenu={openWorkspaceMenu}
           />
           {filteredRepos.length === 0 && (
             <p className="px-2 text-body-regular text-text-tertiary">{t("chat.noSessions")}</p>
@@ -818,6 +1006,14 @@ export function AiChatSidebar({
           <NavItem icon={Settings} label={t("settings.title")} onClick={onOpenSettings} />
         </nav>
       </div>
+
+      {workspaceMenu && onWorkspaceAlias && (
+        <WorkspaceContextMenu
+          menu={workspaceMenu}
+          onClose={() => setWorkspaceMenu(null)}
+          onSetAlias={onWorkspaceAlias}
+        />
+      )}
     </aside>
   );
 }

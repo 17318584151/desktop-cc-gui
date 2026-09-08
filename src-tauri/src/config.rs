@@ -63,8 +63,8 @@ pub fn read_config() -> Result<CliConfig, String> {
     if !path.exists() {
         return Ok(CliConfig::default());
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("read {}: {e}", path.display()))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
     if content.trim().is_empty() {
         return Ok(CliConfig::default());
     }

@@ -2,10 +2,10 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
 import type { ComposerInputHandle } from "@/components/application/ai-chat/ai-chat-composer";
-import type { AiChatRepo, ThreadAction } from "@/components/application/ai-chat/ai-chat-sidebar";
+import type { AiChatRepo, AiChatRepoSection, ThreadAction } from "@/components/application/ai-chat/ai-chat-sidebar";
 import type { SessionMeta } from "@/lib/ipc";
 import { pickDirectory } from "@/lib/platform";
-import { useChatStore } from "./store";
+import { useChatStore, sortedWorkspaceGroups } from "./store";
 import { relativeTime } from "./time";
 import type { ChatPageDialog } from "./ChatPageDialogs";
 
@@ -26,12 +26,14 @@ export function useChatSidebar({
   setDialog: (dialog: ChatPageDialog) => void;
 }) {
   const { t, i18n } = useTranslation();
-  const { active, workspaces, sessions, threadLimit, unseen } = useChatStore(
+  const { active, workspaces, sessions, threadLimit, workspaceGroups, workspaceAliases, unseen } = useChatStore(
     useShallow((s) => ({
       active: s.active,
       workspaces: s.workspaces,
       sessions: s.sessions,
       threadLimit: s.threadLimit,
+      workspaceGroups: s.workspaceGroups,
+      workspaceAliases: s.workspaceAliases,
       unseen: s.unseen,
     })),
   );
@@ -56,27 +58,62 @@ export function useChatSidebar({
     sessions.forEach((s, i) => {
       if (threadStreaming[i]) streamingById.set(`${s.engine}/${s.sessionId}`, true);
     });
-    return workspaces.map((w, index) => ({
-      id: w.id,
-      label: w.name,
-      defaultOpen: index === 0,
-      threadLimit,
-      threads: sorted.flatMap((s) => {
-        if (s.workspacePath !== w.path) return [];
-        return [
-          {
-            id: `${s.engine}/${s.sessionId}`,
-            label: s.customTitle || s.title || s.sessionId.slice(0, 8),
-            engine: s.engine,
-            time: relativeTime(s.updatedAt),
-            pinned: s.pinned,
-            streaming: streamingById.get(`${s.engine}/${s.sessionId}`) ?? false,
-            unseen: unseen[`${s.engine}/${s.sessionId}`] ?? false,
-          },
-        ];
-      }),
-    }));
-  }, [workspaces, sessions, threadLimit, threadStreaming, unseen, i18n.language]);
+    return workspaces.map((w, index) => {
+      // Sidebar alias: a user-set name replaces the folder name in the
+      // sidebar only; the original stays on the row tooltip.
+      const alias = workspaceAliases[w.id]?.trim();
+      return {
+        id: w.id,
+        label: alias || w.name,
+        originalLabel: alias ? w.name : undefined,
+        defaultOpen: index === 0,
+        threadLimit,
+        threads: sorted.flatMap((s) => {
+          if (s.workspacePath !== w.path) return [];
+          return [
+            {
+              id: `${s.engine}/${s.sessionId}`,
+              label: s.customTitle || s.title || s.sessionId.slice(0, 8),
+              engine: s.engine,
+              time: relativeTime(s.updatedAt),
+              pinned: s.pinned,
+              streaming: streamingById.get(`${s.engine}/${s.sessionId}`) ?? false,
+              unseen: unseen[`${s.engine}/${s.sessionId}`] ?? false,
+            },
+          ];
+        }),
+      };
+    });
+  }, [workspaces, workspaceAliases, sessions, threadLimit, threadStreaming, unseen, i18n.language]);
+  // 工作区二级分类: bucket repos by their workspace's group assignment.
+  // Ungrouped repos come first (no header), then groups in settings order;
+  // empty groups are hidden (matches the reference sidebar).
+  const sections: AiChatRepoSection[] | undefined = useMemo(() => {
+    const groups = sortedWorkspaceGroups(workspaceGroups);
+    if (groups.length === 0) return undefined;
+    const groupIds = new Set(groups.map((g) => g.id));
+    const ungrouped: AiChatRepo[] = [];
+    const byGroup = new Map<string, AiChatRepo[]>();
+    workspaces.forEach((w, index) => {
+      const repo = repos[index];
+      if (!repo) return;
+      const groupId = w.groupId;
+      if (groupId && groupIds.has(groupId)) {
+        const list = byGroup.get(groupId) ?? [];
+        list.push(repo);
+        byGroup.set(groupId, list);
+      } else {
+        ungrouped.push(repo);
+      }
+    });
+    const result: AiChatRepoSection[] = [];
+    if (ungrouped.length > 0) result.push({ id: null, name: "", repos: ungrouped });
+    groups.forEach((group) => {
+      const list = byGroup.get(group.id);
+      if (list && list.length > 0) result.push({ id: group.id, name: group.name, repos: list });
+    });
+    return result.some((s) => s.id !== null) ? result : undefined;
+  }, [repos, workspaces, workspaceGroups]);
 
   const handleAddWorkspace = useCallback(() => {
     void pickDirectory(t("chat.addWorkspace"))
@@ -112,6 +149,12 @@ export function useChatSidebar({
   const handleRemoveWorkspace = useCallback(
     (workspaceId: string) => {
       setDialog({ kind: "removeWorkspace", workspaceId });
+    },
+    [setDialog],
+  );
+  const handleWorkspaceAlias = useCallback(
+    (workspaceId: string) => {
+      setDialog({ kind: "workspaceAlias", workspaceId });
     },
     [setDialog],
   );
@@ -152,10 +195,12 @@ export function useChatSidebar({
     workspaces,
     startNewChat,
     repos,
+    sections,
     handleAddWorkspace,
     handleThreadSelect,
     handleThreadAction,
     handleRemoveWorkspace,
+    handleWorkspaceAlias,
     handleNewSession,
     handleNewSessionInWorkspace,
     handleReorderWorkspaces,

@@ -61,7 +61,9 @@ export function SettingsRow({
       <div className="flex min-w-0 flex-col">
         <p className="text-body-regular text-text-primary">{label}</p>
         {description && (
-          <p className="text-body-2-regular text-text-secondary">{description}</p>
+          <p className="truncate text-body-2-regular text-text-secondary" title={description}>
+            {description}
+          </p>
         )}
       </div>
       {children}

@@ -45,6 +45,8 @@ export interface Workspace {
   name: string;
   lastOpenedAt: number | null;
   sortOrder: number | null;
+  /** Sidebar group id (工作区分组); null = ungrouped. */
+  groupId: string | null;
 }
 
 export interface EngineInfo {
@@ -54,6 +56,9 @@ export interface EngineInfo {
    * picker and history lists; running sessions are unaffected. */
   enabled: boolean;
   supportsImages: boolean;
+  /** Permission modes the engine honors at spawn ("auto" | "manual" |
+   * "plan" | "bypass"); the composer picker greys out the rest. */
+  permissions: string[];
 }
 /** One entry of an engine's model catalog (`--list-models` probe). */
 export interface EngineModel {
@@ -61,6 +66,8 @@ export interface EngineModel {
   id: string;
   /** Display name when the catalog carries one. */
   name?: string | null;
+  /** Secondary line under the name (e.g. "Custom Opus model"). */
+  description?: string | null;
   provider: string;
   /** Context window tokens when the catalog reports one. */
   contextWindow?: number | null;
@@ -110,6 +117,14 @@ export interface ProviderModelList {
   endpoint: string;
 }
 
+export interface WorkspaceGroup {
+  id: string;
+  name: string;
+  sortOrder?: number | null;
+  /** Legacy "clone copies" folder, preserved on import round-trips. */
+  copiesFolder?: string | null;
+}
+
 export interface CliConfig {
   claude: ProviderSection;
   kimi: ProviderSection;
@@ -122,6 +137,11 @@ export interface CliConfig {
 
 export interface AppSettings {
   theme: string;
+  /** Sidebar workspace groups (工作区二级分类), ordered by sortOrder then name.
+   *  The assignment lives on each workspace (`Workspace.groupId`). */
+  workspaceGroups: WorkspaceGroup[];
+  /** Workspace id -> sidebar display alias; absent = show the folder name. */
+  workspaceAliases: Record<string, string>;
   language: string;
   claudeBin: string | null;
   kimiBin: string | null;
@@ -152,6 +172,11 @@ export interface FileContent {
   text: string | null;
   dataUrl: string | null;
   truncated: boolean;
+}
+/** Result of `duplicate_item` / `paste_item`: the created destination. */
+export interface FileOpResult {
+  path: string;
+  isDir: boolean;
 }
 
 export interface SearchHit {
@@ -302,6 +327,7 @@ export const ipc = {
     imagePaths: string[] | null;
     model: string | null;
     effort: string | null;
+    permission: string | null;
   }) => invoke<SendResult>("send_message", args),
   interruptSession: (sessionId: string) =>
     invoke<boolean>("interrupt_session", { sessionId }),
@@ -335,6 +361,8 @@ export const ipc = {
   addWorkspace: (path: string) => invoke<Workspace>("add_workspace", { path }),
   reorderWorkspaces: (ids: string[]) => invoke<void>("reorder_workspaces", { ids }),
   removeWorkspace: (id: string) => invoke<void>("remove_workspace", { id }),
+  setWorkspaceGroup: (id: string, groupId: string | null) =>
+    invoke<void>("set_workspace_group", { id, groupId }),
   // terminal
   /** Idempotent: re-opening a live session id is a no-op on the backend. */
   terminalOpen: (args: { id: string; cwd: string; cols: number; rows: number }) =>
@@ -351,8 +379,13 @@ export const ipc = {
   writeFile: (path: string, content: string) =>
     invoke<void>("write_file", { path, content }),
   createDir: (path: string) => invoke<void>("create_dir", { path }),
+  /** Fails when the file already exists (unlike write_file, which overwrites). */
+  createFile: (path: string) => invoke<void>("create_file", { path }),
   renameItem: (from: string, to: string) => invoke<void>("rename_item", { from, to }),
   trashItem: (path: string) => invoke<void>("trash_item", { path }),
+  duplicateItem: (path: string) => invoke<FileOpResult>("duplicate_item", { path }),
+  pasteItem: (source: string, targetDir: string) =>
+    invoke<FileOpResult>("paste_item", { source, targetDir }),
   searchText: (path: string, query: string) =>
     invoke<SearchHit[]>("search_text", { path, query }),
   /** Whole-tree file index for the composer @-mention picker (relative

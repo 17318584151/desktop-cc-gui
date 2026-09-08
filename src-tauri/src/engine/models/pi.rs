@@ -31,6 +31,7 @@ pub fn parse_models_json(stdout: &str) -> Result<Vec<EngineModel>, String> {
         models.push(EngineModel {
             id,
             name: str_field("name").map(str::to_string),
+            description: None,
             provider: provider.to_string(),
             context_window: row.get("contextWindow").and_then(serde_json::Value::as_u64),
         });
@@ -78,6 +79,7 @@ pub fn parse_list_models(stdout: &str) -> Vec<EngineModel> {
         models.push(EngineModel {
             id,
             name: None,
+            description: None,
             provider: provider.to_string(),
             context_window: parts.get(2).and_then(|raw| parse_token_count(raw)),
         });

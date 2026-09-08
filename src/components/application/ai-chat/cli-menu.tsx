@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Check from "lucide-react/dist/esm/icons/check";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import Search from "lucide-react/dist/esm/icons/search";
 import X from "lucide-react/dist/esm/icons/x";
 import {
@@ -182,13 +183,15 @@ export interface ModelOption {
   /** "" selects the CLI/provider default model. */
   id: string;
   label: string;
+  /** Secondary line under the label (e.g. "Custom Opus model"). */
+  description?: string;
 }
 
 /** Per-engine model flyout: pops to the right of the CLI popover, bottom-
  *  aligned with the engine list so the taller panel never clips below the
  *  composer-anchored popover. */
 const FLYOUT_CLASSES = cx(
-  "absolute left-full bottom-0 z-10 ml-2 w-72 max-w-[calc(100vw-32px)]",
+  "absolute left-full bottom-0 z-10 ml-2 w-80 max-w-[calc(100vw-32px)]",
   "rounded-lg border border-border-button-default bg-background-primary-default p-1 shadow-dropdown",
 );
 
@@ -272,19 +275,28 @@ function ModelRow({
       aria-checked={selected}
       onClick={() => onPick(engineId, option.id)}
       className={cx(
-        "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 outline-none transition-colors",
+        "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors",
         selected
           ? "bg-background-primary-hover"
           : "hover:bg-background-primary-hover focus-visible:bg-background-primary-hover",
       )}
     >
       <EngineIcon
-        engine={inferModelEngine(`${option.label} ${option.id}`) ?? engineId}
+        engine={inferModelEngine(option.label) ?? inferModelEngine(option.id) ?? engineId}
         size={18}
         className="shrink-0 text-foreground-icon-primary"
       />
-      <span className="truncate text-body-medium whitespace-nowrap text-text-primary">
-        {option.label}
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate text-body-medium whitespace-nowrap text-text-primary">
+          {option.label}
+        </span>
+        {/* CLI /model-menu style subtitle ("Custom Opus model"); absent
+            for plain catalog rows. */}
+        {option.description && (
+          <span className="truncate text-body-2-regular whitespace-nowrap text-text-secondary">
+            {option.description}
+          </span>
+        )}
       </span>
       {selected && (
         <Check
@@ -352,6 +364,7 @@ function EngineModelPanel({
   effort,
   onPickModel,
   onEffortChange,
+  onRefresh,
   onClose,
 }: {
   option: MenuOption;
@@ -362,15 +375,19 @@ function EngineModelPanel({
   effort: EffortLevel;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  /** Re-probe provider configs and model catalogs without an app restart. */
+  onRefresh?: () => void | Promise<void>;
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
+  const [refreshing, setRefreshing] = useState(false);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredModels = normalizedQuery
     ? models.filter(
         (m) =>
           m.label.toLowerCase().includes(normalizedQuery) ||
-          m.id.toLowerCase().includes(normalizedQuery),
+          m.id.toLowerCase().includes(normalizedQuery) ||
+          (m.description ?? "").toLowerCase().includes(normalizedQuery),
       )
     : models;
   // Pin the active model to the top so the current pick is always the first
@@ -390,15 +407,38 @@ function EngineModelPanel({
             name: CLI_DISPLAY_NAMES[option.id] ?? option.label,
           })}
         </span>
-        {onClose && (
-          <button
-            type="button"
-            aria-label={t("common.close")}
-            onClick={onClose}
-            className="mr-1 flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
-          >
-            <X className="size-4" aria-hidden />
-          </button>
+        {(onRefresh || onClose) && (
+          <span className="mr-1 flex shrink-0 items-center">
+            {onRefresh && (
+              <button
+                type="button"
+                aria-label={t("common.refresh")}
+                title={t("common.refresh")}
+                disabled={refreshing}
+                onClick={() => {
+                  if (refreshing) return;
+                  setRefreshing(true);
+                  Promise.resolve(onRefresh()).finally(() => setRefreshing(false));
+                }}
+                className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary disabled:cursor-default"
+              >
+                <RefreshCw
+                  className={cx("size-3.5", refreshing && "animate-spin")}
+                  aria-hidden
+                />
+              </button>
+            )}
+            {onClose && (
+              <button
+                type="button"
+                aria-label={t("common.close")}
+                onClick={onClose}
+                className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            )}
+          </span>
         )}
       </div>
       <div className="relative mx-1 -mt-1.5 pb-1">
@@ -473,6 +513,7 @@ export function CliMenu({
   onModelChange,
   efforts,
   onEffortChange,
+  onRefreshModels,
 }: {
   options: MenuOption[];
   value: string;
@@ -485,6 +526,8 @@ export function CliMenu({
   /** Per-engine reasoning effort, rendered under each flyout's model list. */
   efforts: Record<string, EffortLevel>;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  /** Re-probe provider configs and model catalogs (flyout refresh button). */
+  onRefreshModels?: () => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const { isOpen, triggerRef, popoverRef, close, setOpen } = usePopoverState();
@@ -635,6 +678,7 @@ export function CliMenu({
                   effort={efforts[flyoutOption.id] ?? "medium"}
                   onPickModel={pickModel}
                   onEffortChange={onEffortChange}
+                  onRefresh={onRefreshModels}
                 />
               )}
             </div>
@@ -657,6 +701,7 @@ export function CliMenu({
           effort={efforts[dialogOption.id] ?? "medium"}
           onPickModel={pickModel}
           onEffortChange={onEffortChange}
+          onRefresh={onRefreshModels}
           onClose={() => setDialogEngine(null)}
         />
       </ModalShell>

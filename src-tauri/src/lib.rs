@@ -1,17 +1,17 @@
-pub mod config;
 pub mod baidu_tongji;
 pub mod cc_switch;
+pub mod config;
 pub mod db;
 pub mod engine;
 pub mod event_sink;
 pub mod files;
 pub mod git;
 pub mod history;
+pub mod metrics;
+pub mod open_app;
 pub mod paths;
 pub mod provider_files;
 pub mod provider_models;
-pub mod metrics;
-pub mod open_app;
 pub mod settings;
 pub mod terminal;
 pub mod web;
@@ -50,6 +50,12 @@ pub fn run() {
                 // Import failure must never block startup; the sidebar simply
                 // starts empty and the user adds workspaces by hand.
                 eprintln!("[db] legacy workspace import failed: {error}");
+            }
+
+            if let Err(error) = settings::import_legacy_groups_once(&db) {
+                // Same non-fatal rule: groups stay unassigned and the user can
+                // redo them in Settings → 工作区.
+                eprintln!("[settings] legacy group import failed: {error}");
             }
             // files.rs commands inject State<'_, Arc<db::Db>> for workspace
             // confinement, so the Arc itself must be managed alongside.
@@ -145,6 +151,7 @@ pub fn run() {
             history::reader::add_workspace,
             history::reader::reorder_workspaces,
             history::reader::remove_workspace,
+            history::reader::set_workspace_group,
             // files
             files::list_dir,
             files::read_file,
@@ -152,6 +159,9 @@ pub fn run() {
             files::create_dir,
             files::rename_item,
             files::trash_item,
+            files::duplicate_item,
+            files::paste_item,
+            files::create_file,
             files::search_text,
             files::list_file_index,
             // git
