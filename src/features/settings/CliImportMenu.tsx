@@ -35,16 +35,16 @@ export function CliImportMenu({
       <DropdownPopover
         aria-label={t("settings.cliImportEntry")}
         placement="bottom end"
-        className="w-64"
+        className="w-max min-w-64"
       >
-        <DropdownItem className="px-2 py-1.5" onSelect={onSyncAuto}>
+        <DropdownItem className="px-2 py-1.5 whitespace-nowrap" onSelect={onSyncAuto}>
           <ArrowLeftRight
             className="size-4 shrink-0 text-foreground-icon-secondary"
             aria-hidden
           />
           {t("settings.cliImportAuto")}
         </DropdownItem>
-        <DropdownItem className="px-2 py-1.5" onSelect={onImportFile}>
+        <DropdownItem className="px-2 py-1.5 whitespace-nowrap" onSelect={onImportFile}>
           <FileText
             className="size-4 shrink-0 text-foreground-icon-secondary"
             aria-hidden

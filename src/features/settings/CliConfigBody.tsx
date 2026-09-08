@@ -39,7 +39,7 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
     currentId,
     health,
     mutate,
-    activate,
+    requestActivate,
     setDialog,
     setPendingDelete,
     testConnection,
@@ -66,7 +66,7 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
         officialActive={officialActive}
         busy={busy}
         onToggleEnabled={(on) => void mutate(() => ipc.setEngineEnabled(engine, on))}
-        onActivateOfficial={() => activate(PSEUDO_LOCAL)}
+        onActivateOfficial={() => requestActivate(PSEUDO_LOCAL)}
       />
 
       {(engine === "pi" || engine === "omp") && <PiFamilyAuthSection engine={engine} />}
@@ -111,7 +111,7 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
                   health={health[`${engine}:${entry.id}`] ?? { state: "idle" }}
                   busy={busy}
                   drag={drag}
-                  onToggle={(on) => activate(on ? entry.id : PSEUDO_LOCAL)}
+                  onToggle={(on) => requestActivate(on ? entry.id : PSEUDO_LOCAL)}
                   onEdit={() => setDialog({ entry })}
                   onDelete={() => setPendingDelete(entry)}
                   onTest={() => void testConnection(entry)}

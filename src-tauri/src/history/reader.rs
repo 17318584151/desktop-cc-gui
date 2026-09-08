@@ -17,7 +17,7 @@ fn query_rows<T>(
     sql: &str,
     map_row: impl Fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
 ) -> Result<Vec<T>, String> {
-    let conn = state.db.0.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.0.lock();
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], map_row).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
@@ -36,7 +36,7 @@ fn mutate_sessions(
     sql: &str,
     params: impl rusqlite::Params,
 ) -> Result<(), String> {
-    let conn = state.db.0.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.0.lock();
     conn.execute(sql, params).map_err(|e| e.to_string())?;
     drop(conn);
     state.sink.emit_sessions_changed();
@@ -75,7 +75,7 @@ fn session_file_path(
     engine: &str,
     session_id: &str,
 ) -> Result<PathBuf, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let conn = db.0.lock();
     conn.query_row(
         "SELECT file_path FROM sessions WHERE engine=?1 AND session_id=?2",
         rusqlite::params![engine, session_id],
@@ -263,7 +263,7 @@ fn delete_session_blocking(
 ) -> Result<(), String> {
     let path = session_file_path(db, engine, session_id)?;
     delete_session_disk(engine, &path)?;
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let conn = db.0.lock();
     conn.execute(
         "DELETE FROM sessions WHERE engine=?1 AND session_id=?2",
         rusqlite::params![engine, session_id],
@@ -383,7 +383,7 @@ pub fn add_workspace(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     {
-        let conn = state.db.0.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.0.lock();
         conn.execute(
             "INSERT INTO workspaces(id, path, name, last_opened_at) VALUES(?1,?2,?3,?4)
              ON CONFLICT(path) DO UPDATE SET last_opened_at=excluded.last_opened_at",
@@ -406,7 +406,7 @@ pub fn reorder_workspaces(
     state: tauri::State<'_, crate::AppState>,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let conn = state.db.0.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.0.lock();
     for (index, id) in ids.iter().enumerate() {
         conn.execute(
             "UPDATE workspaces SET sort_order=?2 WHERE id=?1",
@@ -422,7 +422,7 @@ pub fn remove_workspace(
     state: tauri::State<'_, crate::AppState>,
     id: String,
 ) -> Result<(), String> {
-    let conn = state.db.0.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.0.lock();
     let path: Option<String> = conn
         .query_row(
             "SELECT path FROM workspaces WHERE id=?1",

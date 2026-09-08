@@ -103,13 +103,16 @@ interface ConfirmDialogProps {
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Extra body content (e.g. the file list of the switch confirmation). */
+  children?: ReactNode;
 }
 
-export function ConfirmDialog({ message, danger = false, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ message, danger = false, onConfirm, onCancel, children }: ConfirmDialogProps) {
   const { t } = useTranslation();
   return (
     <ModalShell onClose={onCancel}>
       <p className="text-body-medium text-text-primary">{message}</p>
+      {children}
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="secondary" size="small" onClick={onCancel}>
           {t("common.cancel")}

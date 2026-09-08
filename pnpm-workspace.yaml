@@ -2,6 +2,12 @@
 # Delay installs of package versions published less than 7 days ago so
 # malicious releases can be caught and unpublished before we pick them up.
 minimumReleaseAge: 10080
+
+patchedDependencies:
+  # Reorder auto-scroll (motion 12.23+) is opt-in via data-reorder-autoscroll;
+  # default off — edge scrolling fights the drag offset and stutters upward drags.
+  framer-motion@12.43.0: patches/framer-motion@12.43.0.patch
+
 # Refuse resolutions whose trust signals (provenance/signatures) weaken
 # between updates.
 trustPolicy: no-downgrade

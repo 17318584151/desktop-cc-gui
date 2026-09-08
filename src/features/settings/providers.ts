@@ -107,6 +107,42 @@ export function stripConventionEnv(engine: EngineId, raw: unknown): Record<strin
   return o;
 }
 
+/** claude edit-dialog seed: the channel's settings.json text — its
+ *  settingsConfig, or the flat env escape hatch wrapped in an object.
+ *  "" when neither exists (the dialog falls back to the default template). */
+export function claudeSettingsJson(raw: unknown): string {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const sc = o.settingsConfig;
+  if (sc && typeof sc === "object" && Object.keys(sc).length > 0) {
+    return JSON.stringify(sc, null, 2);
+  }
+  const env = o.env;
+  if (env && typeof env === "object" && Object.keys(env).length > 0) {
+    return JSON.stringify({ env }, null, 2);
+  }
+  return "";
+}
+
+/** codex edit-dialog seed: the channel's verbatim config.toml
+ *  (settingsConfig.config), "" for flat channels. */
+export function codexConfigToml(raw: unknown): string {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const sc = o.settingsConfig as Record<string, unknown> | undefined;
+  return asString(sc?.config);
+}
+
+/** codex edit-dialog seed: the channel's auth.json text
+ *  (settingsConfig.auth pretty-printed), "" when absent. */
+export function codexAuthJson(raw: unknown): string {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const sc = o.settingsConfig as Record<string, unknown> | undefined;
+  const auth = sc?.auth;
+  if (auth && typeof auth === "object" && Object.keys(auth).length > 0) {
+    return JSON.stringify(auth, null, 2);
+  }
+  return "";
+}
+
 /** One channel row of an engine's provider map, flattened for the UI. */
 export interface ProviderEntry {
   /** Map key — the id `set_current_provider` expects. */

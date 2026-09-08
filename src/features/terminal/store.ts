@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ipc } from "@/lib/ipc";
 import { readStoredNumber, writeStored } from "@/lib/storage";
+import { newId } from "@/lib/id";
 import { clearTerminalSessionState } from "./sessions";
 
 const HEIGHT_KEY = "ccgui-next.terminalHeight";
@@ -65,7 +66,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   newTab: (workspacePath) => {
-    const id = crypto.randomUUID();
+    const id = newId();
     set((s) => ({
       tabsByWorkspace: {
         ...s.tabsByWorkspace,

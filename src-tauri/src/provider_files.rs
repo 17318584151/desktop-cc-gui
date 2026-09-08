@@ -94,6 +94,16 @@ fn targets(engine: &str) -> Vec<Target> {
 fn absent_marker(backup: &Path) -> PathBuf {
     backup.with_extension("absent")
 }
+/// Native config files a channel switch on `engine` would rewrite, shown in
+/// the UI's switch confirmation so the user can back them up first. Empty for
+/// engines whose providers are display-only (pi/omp/dsh).
+#[tauri::command]
+pub fn provider_file_paths(engine: String) -> Vec<String> {
+    targets(&engine)
+        .iter()
+        .map(|t| t.path.display().to_string())
+        .collect()
+}
 
 /// Snapshot the file before the first managed write. An existing backup wins
 /// (it is the pre-cc-gui original); a missing file is recorded with an

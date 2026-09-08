@@ -444,7 +444,7 @@ struct Tier1 {
 }
 
 fn tier1_gate(db: &crate::db::Db, signature: String) -> Result<Option<Tier1>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let conn = db.0.lock();
     let previous: Option<String> = conn
         .query_row(
             "SELECT value FROM meta WHERE key='stat_signature'",
@@ -496,7 +496,7 @@ fn prefetch_stat_keys(
     ),
     String,
 > {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let conn = db.0.lock();
     let mut stmt = conn
         .prepare("SELECT file_path, file_size, file_mtime_ms FROM sessions")
         .map_err(|e| e.to_string())?;
@@ -601,7 +601,7 @@ fn upsert_rows(
     rows: &[PreparedUpsert],
     tier1: &Tier1,
 ) -> Result<(), String> {
-    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut conn = db.0.lock();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for row in rows {
         // Engines whose jsonl has no per-line timestamps would otherwise land
@@ -845,7 +845,7 @@ mod tests {
         let _guard = HomeGuard::set(&home);
         let db = crate::db::Db::open_at(&home.join("app.db")).map_err(|e| e.to_string())?;
         {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let conn = db.0.lock();
             conn.execute(
                 "INSERT INTO workspaces(id, path, name) VALUES('w1', ?1, 'ws')",
                 [workspace.to_string_lossy().to_string()],
@@ -855,7 +855,7 @@ mod tests {
         let report = scan_with(&db, || {})?;
         assert_eq!(report.reparsed, 1);
         let title: String = {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let conn = db.0.lock();
             conn.query_row(
                 "SELECT title FROM sessions WHERE engine='omp' AND session_id='sid-1'",
                 [],
@@ -907,7 +907,7 @@ mod tests {
         let _guard = HomeGuard::set(&home);
         let db = crate::db::Db::open_at(&home.join("app.db")).map_err(|e| e.to_string())?;
         {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let conn = db.0.lock();
             conn.execute(
                 "INSERT INTO workspaces(id, path, name) VALUES('w1', ?1, 'ws')",
                 [workspace.to_string_lossy().to_string()],
@@ -917,7 +917,7 @@ mod tests {
         let report = scan_with(&db, || {})?;
         assert_eq!(report.reparsed, 1);
         let (title, updated_at): (String, Option<i64>) = {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let conn = db.0.lock();
             conn.query_row(
                 "SELECT title, updated_at FROM sessions WHERE engine='grok' AND session_id='sid-grok'",
                 [],
@@ -960,7 +960,7 @@ mod tests {
         let _guard = HomeGuard::set(&home);
         let db = crate::db::Db::open_at(&home.join("app.db")).map_err(|e| e.to_string())?;
         {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let conn = db.0.lock();
             conn.execute(
                 "INSERT INTO workspaces(id, path, name) VALUES('w1', ?1, 'ws')",
                 [workspace.to_string_lossy().to_string()],
@@ -970,7 +970,7 @@ mod tests {
         let report = scan_with(&db, || {})?;
         assert_eq!(report.reparsed, 1);
         let title: String = {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let conn = db.0.lock();
             conn.query_row(
                 "SELECT title FROM sessions WHERE engine='codex' AND session_id='sid-codex'",
                 [],

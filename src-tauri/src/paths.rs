@@ -16,6 +16,15 @@ pub fn legacy_home() -> PathBuf {
     home_dir().join(".ccgui")
 }
 
+/// Legacy desktop-cc-gui's workspace list: its Tauri app-data dir (bundle id
+/// `com.zhukunpenglinyutong.ccgui`) holds workspaces.json — the sidebar the
+/// upgrade imports on first launch so old users keep their workspaces.
+pub fn legacy_workspaces_path() -> PathBuf {
+    let base = dirs::config_dir().unwrap_or_else(home_dir);
+    base.join("com.zhukunpenglinyutong.ccgui")
+        .join("workspaces.json")
+}
+
 pub fn config_path() -> PathBuf {
     app_home().join("config.json")
 }

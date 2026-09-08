@@ -4,6 +4,7 @@ import type { EffortLevel } from "@/components/application/ai-chat/cli-menu";
 import { listenEngineEvents, listenSessionsChanged } from "@/lib/events";
 import { errorText } from "@/lib/errors";
 import { writeStored } from "@/lib/storage";
+import { newId } from "@/lib/id";
 import { subscribeTauriEvent } from "@/hooks/use-tauri-event";
 import { CLI_CONFIG_CHANGED_EVENT } from "@/features/settings/providers";
 import {
@@ -689,7 +690,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
               ...prev,
               queue: [
                 ...prev.queue,
-                { id: crypto.randomUUID(), text, images, queuedAt: Date.now() },
+                { id: newId(), text, images, queuedAt: Date.now() },
               ],
             },
           },

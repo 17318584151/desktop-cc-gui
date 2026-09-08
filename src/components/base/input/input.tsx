@@ -241,6 +241,7 @@ export interface InputProps
       | "leadingIcon"
       | "trailingIcon"
       | "leadingAddon"
+      | "list"
       | "fieldClassName"
       | "groupRef"
       | "ref"
@@ -260,6 +261,7 @@ export function Input({
   leadingIcon,
   trailingIcon,
   leadingAddon,
+  list,
   fieldClassName,
   ref,
   groupRef,
@@ -295,6 +297,7 @@ export function Input({
             leadingIcon={leadingIcon}
             trailingIcon={trailingIcon}
             leadingAddon={leadingAddon}
+            list={list}
             fieldClassName={fieldClassName}
           />
           {hint && <HintText isInvalid={isInvalid}>{hint}</HintText>}

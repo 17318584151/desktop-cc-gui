@@ -103,6 +103,12 @@ export interface CcSwitchImportResult {
   skipped: number;
   removed: number;
 }
+/** Result of `fetch_provider_models`: model ids plus the candidate URL that
+ *  answered (a derivation of the channel's base URL). */
+export interface ProviderModelList {
+  models: string[];
+  endpoint: string;
+}
 
 export interface CliConfig {
   claude: ProviderSection;
@@ -243,6 +249,10 @@ export const ipc = {
     invoke<void>("delete_provider", { engine, id }),
   setCurrentProvider: (engine: string, id: string) =>
     invoke<void>("set_current_provider", { engine, id }),
+  /** Native config files a channel switch would overwrite (shown in the
+   *  switch confirmation); empty for display-only engines. */
+  providerFilePaths: (engine: string) =>
+    invoke<string[]>("provider_file_paths", { engine }),
   reorderProviders: (engine: string, ids: string[]) =>
     invoke<void>("reorder_providers", { engine, ids }),
   setEngineEnabled: (engine: string, enabled: boolean) =>
@@ -268,6 +278,9 @@ export const ipc = {
     invoke<CcSwitchImportResult>("import_cc_switch_from_path", { path, engine }),
   testProviderConnection: (url: string) =>
     invoke<number>("test_provider_connection", { url }),
+  /** 拉取模型: probe the channel's /v1/models endpoint for its model list. */
+  fetchProviderModels: (baseUrl: string, apiKey: string) =>
+    invoke<ProviderModelList>("fetch_provider_models", { baseUrl, apiKey }),
   // settings
   getAppSettings: () =>
     (settingsPromise ??= invoke<AppSettings>("get_app_settings").catch((e) => {

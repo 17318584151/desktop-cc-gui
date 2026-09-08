@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ipc, type CcSwitchStatus, type CliConfig } from "@/lib/ipc";
+import { newId } from "@/lib/id";
 import { pickFile } from "@/lib/platform";
 import {
   PSEUDO_DISABLED,
@@ -25,6 +26,14 @@ import type { Health } from "./CliChannelRow";
 /** Add (no entry) or edit (with entry) dialog state. */
 type DialogState = { entry?: ProviderEntry } | null;
 
+/** A channel switch awaiting the user's overwrite confirmation. `paths` are
+ *  the native config files the switch would rewrite. */
+export interface PendingSwitch {
+  engine: EngineId;
+  id: string;
+  paths: string[];
+}
+
 export interface CliConfigState {
   t: TFunction;
   config: CliConfig | null;
@@ -37,6 +46,8 @@ export interface CliConfigState {
   setDialog: Dispatch<SetStateAction<DialogState>>;
   pendingDelete: ProviderEntry | null;
   setPendingDelete: Dispatch<SetStateAction<ProviderEntry | null>>;
+  pendingSwitch: PendingSwitch | null;
+  setPendingSwitch: Dispatch<SetStateAction<PendingSwitch | null>>;
   ccStatus: CcSwitchStatus | null;
   health: Record<string, Health>;
   currentId: string;
@@ -45,6 +56,8 @@ export interface CliConfigState {
   officialActive: boolean;
   mutate: <T>(fn: () => Promise<T>) => Promise<T | undefined>;
   activate: (id: string) => void;
+  requestActivate: (id: string) => void;
+  confirmSwitch: () => void;
   saveProvider: (value: ProviderFormValue) => void;
   confirmDelete: () => void;
   testConnection: (entry: ProviderEntry) => Promise<void>;
@@ -74,6 +87,7 @@ export function useCliConfig(): CliConfigState {
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [pendingDelete, setPendingDelete] = useState<ProviderEntry | null>(null);
+  const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [ccStatus, setCcStatus] = useState<CcSwitchStatus | null>(null);
   /** Per-channel connection probe results, keyed `${engine}:${id}`. */
   const [health, setHealth] = useState<Record<string, Health>>({});
@@ -126,18 +140,89 @@ export function useCliConfig(): CliConfigState {
   const activate = (id: string) => {
     if (id !== currentId) void mutate(() => ipc.setCurrentProvider(engine, id));
   };
+  /** Switching rewrites the CLI's own config files, so gate it on a
+   *  confirmation that lists exactly which paths will be overwritten.
+   *  Engines without writable provider config (pi/omp/dsh) switch directly. */
+  const requestActivate = (id: string) => {
+    if (id === currentId) return;
+    void ipc
+      .providerFilePaths(engine)
+      .then((paths) => {
+        if (paths.length === 0) activate(id);
+        else setPendingSwitch({ engine, id, paths });
+      })
+      .catch((e) => setError(String(e)));
+  };
+
+  const confirmSwitch = () => {
+    if (!pendingSwitch) return;
+    const { engine: switchEngine, id } = pendingSwitch;
+    setPendingSwitch(null);
+    void mutate(() => ipc.setCurrentProvider(switchEngine, id));
+  };
 
   const saveProvider = (value: ProviderFormValue) => {
-    // stripConventionEnv keeps unknown fields (source, customModels, …), so
-    // editing a cc-switch-imported channel preserves its origin marker.
-    const base = dialog?.entry ? stripConventionEnv(engine, dialog.entry.raw) : {};
-    const next: Record<string, unknown> = { ...base };
-    for (const [key, val] of Object.entries({ ...value })) {
+    const rawObj =
+      dialog?.entry?.raw && typeof dialog.entry.raw === "object"
+        ? (dialog.entry.raw as Record<string, unknown>)
+        : {};
+    let next: Record<string, unknown>;
+    if (engine === "claude" || engine === "codex") {
+      // The claude/codex dialogs own env/settingsConfig outright (JSON and
+      // TOML editors); unknown top-level keys (source, customModels, …)
+      // survive.
+      next = { ...rawObj };
+      for (const key of ["name", "remark", "baseUrl", "apiKey", "model", "settingsConfig", "env"]) {
+        delete next[key];
+      }
+    } else {
+      // stripConventionEnv keeps unknown fields (source, customModels, …), so
+      // editing a cc-switch-imported channel preserves its origin marker.
+      next = dialog?.entry ? stripConventionEnv(engine, rawObj) : {};
+    }
+    const put = (key: string, val: string) => {
       const trimmed = val.trim();
       if (trimmed) next[key] = trimmed;
-      else delete next[key];
+    };
+    put("name", value.name);
+    put("remark", value.remark);
+    put("baseUrl", value.baseUrl);
+    put("apiKey", value.apiKey);
+    if (engine === "claude") {
+      // The JSON editor is the source of truth for env; the flat `model`
+      // field is migrated into it (ANTHROPIC_MODEL) at dialog open.
+      try {
+        const parsed: unknown = JSON.parse(value.settingsJson || "{}");
+        if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) {
+          next.settingsConfig = parsed;
+        }
+      } catch {
+        // The dialog blocks submit on invalid JSON.
+      }
+    } else if (engine === "codex") {
+      put("model", value.model);
+      // The TOML/auth editors own settingsConfig.config/auth; other keys a
+      // cc-switch import may have added survive.
+      const sc: Record<string, unknown> = {};
+      const prevSc = rawObj.settingsConfig;
+      if (prevSc && typeof prevSc === "object") {
+        for (const [k, v] of Object.entries(prevSc)) {
+          if (k !== "config" && k !== "auth") sc[k] = v;
+        }
+      }
+      if (value.configToml.trim()) sc.config = value.configToml.trim();
+      if (value.authJson.trim()) {
+        try {
+          sc.auth = JSON.parse(value.authJson);
+        } catch {
+          // The dialog blocks submit on invalid JSON.
+        }
+      }
+      if (Object.keys(sc).length > 0) next.settingsConfig = sc;
+    } else {
+      put("model", value.model);
     }
-    const id = dialog?.entry?.id ?? crypto.randomUUID();
+    const id = dialog?.entry?.id ?? newId();
     setDialog(null);
     void mutate(() => ipc.upsertProvider(engine, id, next));
   };
@@ -216,6 +301,8 @@ export function useCliConfig(): CliConfigState {
     setDialog,
     pendingDelete,
     setPendingDelete,
+    pendingSwitch,
+    setPendingSwitch,
     ccStatus,
     health,
     currentId,
@@ -224,6 +311,8 @@ export function useCliConfig(): CliConfigState {
     officialActive,
     mutate,
     activate,
+    requestActivate,
+    confirmSwitch,
     saveProvider,
     confirmDelete,
     testConnection,

@@ -1,4 +1,5 @@
 pub mod config;
+pub mod baidu_tongji;
 pub mod cc_switch;
 pub mod db;
 pub mod engine;
@@ -8,6 +9,7 @@ pub mod git;
 pub mod history;
 pub mod paths;
 pub mod provider_files;
+pub mod provider_models;
 pub mod metrics;
 pub mod open_app;
 pub mod settings;
@@ -44,6 +46,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let db = Arc::new(db::Db::open().expect("failed to open app db"));
+            if let Err(error) = db::import_legacy_workspaces_once(&db) {
+                // Import failure must never block startup; the sidebar simply
+                // starts empty and the user adds workspaces by hand.
+                eprintln!("[db] legacy workspace import failed: {error}");
+            }
             // files.rs commands inject State<'_, Arc<db::Db>> for workspace
             // confinement, so the Arc itself must be managed alongside.
             app.manage(Arc::clone(&db));
@@ -70,6 +77,7 @@ pub fn run() {
             // before manage()".
             app.manage(config::ConfigStore::default());
             app.manage(metrics::MetricsState::new());
+            app.manage(baidu_tongji::BaiduTongjiState::load());
             // Initial history scan, non-blocking.
             history::scanner::spawn_scan(scan_db, scan_sink);
             // Dev convenience: `CCGUI_WEB_AUTOSTART=1 pnpm dev` starts the LAN
@@ -101,6 +109,7 @@ pub fn run() {
             config::upsert_provider,
             config::delete_provider,
             config::set_current_provider,
+            provider_files::provider_file_paths,
             config::reorder_providers,
             config::set_engine_enabled,
             // cc-switch interop
@@ -109,6 +118,7 @@ pub fn run() {
             cc_switch::import_cc_switch,
             cc_switch::import_cc_switch_from_path,
             cc_switch::test_provider_connection,
+            provider_models::fetch_provider_models,
             // settings
             settings::get_app_settings,
             settings::update_app_settings,
@@ -169,6 +179,9 @@ pub fn run() {
             web::web_access_start,
             web::web_access_stop,
             web::web_access_status,
+            // baidu tongji (Linux-native transport; rejected elsewhere)
+            baidu_tongji::load_baidu_tongji_script,
+            baidu_tongji::send_baidu_tongji_beacon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

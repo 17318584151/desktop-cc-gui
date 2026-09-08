@@ -411,6 +411,13 @@ struct UrlArgs {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct FetchProviderModelsArgs {
+    base_url: String,
+    #[serde(default)]
+    api_key: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UpdateSettingsArgs {
     settings: crate::settings::AppSettings,
 }
@@ -589,6 +596,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
             let a: EngineIdArgs = parse_args(&raw)?;
             ser(crate::config::set_current_provider(app.state(), a.engine, a.id))
         }
+        "provider_file_paths" => {
+            let a: EngineArgs = parse_args(&raw)?;
+            ser(Ok::<_, String>(crate::provider_files::provider_file_paths(a.engine)))
+        }
         "reorder_providers" => {
             let a: ReorderProvidersArgs = parse_args(&raw)?;
             ser(crate::config::reorder_providers(app.state(), a.engine, a.ids))
@@ -618,6 +629,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         "test_provider_connection" => {
             let a: UrlArgs = parse_args(&raw)?;
             ser(crate::cc_switch::test_provider_connection(a.url).await)
+        }
+        "fetch_provider_models" => {
+            let a: FetchProviderModelsArgs = parse_args(&raw)?;
+            ser(crate::provider_models::fetch_provider_models(a.base_url, a.api_key).await)
         }
         // settings
         "get_app_settings" => ser(crate::settings::get_app_settings()),

@@ -35,6 +35,7 @@ trash = "5"
 # .gitignore-aware directory walking for the @-mention file index.
 ignore = "0.4"
 uuid = { version = "1", features = ["v4"] }
+parking_lot = "0.12"
 base64 = "0.22"
 zstd = "0.13"
 which = "7"
@@ -48,6 +49,9 @@ axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
 include_dir = "0.7"
 serde_yaml = "0.9"
+# Linux-native Baidu Tongji transport: fixed hm.js fetch + hm.gif beacon with
+# rustls so it never touches the vendored-openssl stack or WebKit networking.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
