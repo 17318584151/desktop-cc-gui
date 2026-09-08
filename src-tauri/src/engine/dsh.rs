@@ -1,5 +1,4 @@
-use super::{safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
-use tokio::process::Command;
+use super::{command_for_binary, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
 
 /// DeepSeek Harness (dsh) one-shot: `dsh --profile headless "<task>"`.
 /// Headless profile prints the final assistant message as plain text and
@@ -16,7 +15,7 @@ impl Engine for DshEngine {
     }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
-        let mut cmd = Command::new(bin);
+        let mut cmd = command_for_binary(bin);
         cmd.arg("--profile");
         cmd.arg("headless");
         cmd.arg(safe_prompt_arg(&req.prompt));

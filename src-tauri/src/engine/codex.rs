@@ -1,8 +1,8 @@
 use super::{
-    images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest,
+    command_for_binary, images, push_session_id, safe_prompt_arg, BuiltCommand, Engine,
+    EngineEvent, SendRequest,
 };
 use serde_json::Value;
-use tokio::process::Command;
 
 /// Codex one-shot: `codex exec --json` (verified against codex CLI live).
 /// The legacy app used the persistent app-server JSON-RPC; exec mode gives
@@ -22,7 +22,7 @@ impl Engine for CodexEngine {
     }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
-        let mut cmd = Command::new(bin);
+        let mut cmd = command_for_binary(bin);
         cmd.arg("exec");
         let mut preassigned = None;
         if let Some(session_id) = req.session_id.as_deref() {

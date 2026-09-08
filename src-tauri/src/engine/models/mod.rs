@@ -47,7 +47,7 @@ const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// lossy UTF-8 on success. `probe` names the subcommand in error messages
 /// ("models --json").
 pub(super) async fn run_probe(bin: &str, args: &[&str], probe: &str) -> Result<String, String> {
-    let mut cmd = tokio::process::Command::new(bin);
+    let mut cmd = super::command_for_binary(bin);
     for arg in args {
         cmd.arg(arg);
     }

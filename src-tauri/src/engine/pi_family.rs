@@ -1,8 +1,8 @@
 use super::{
-    images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest,
+    command_for_binary, images, push_session_id, safe_prompt_arg, BuiltCommand, Engine,
+    EngineEvent, SendRequest,
 };
 use serde_json::Value;
-use tokio::process::Command;
 
 /// pi and omp are the same CLI protocol (omp is a fork of pi): identical
 /// spawn args and NDJSON event stream, different binary + home dir.
@@ -40,7 +40,7 @@ impl Engine for PiFamilyEngine {
     // flags: only "auto" is honest (the trait default).
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
-        let mut cmd = Command::new(bin);
+        let mut cmd = command_for_binary(bin);
         cmd.arg("--print");
         cmd.arg("--mode");
         cmd.arg("json");

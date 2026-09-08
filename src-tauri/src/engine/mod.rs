@@ -7,6 +7,9 @@ pub mod kimi;
 pub mod models;
 pub mod pi_family;
 pub mod pi_family_auth;
+pub mod resolve;
+
+pub(crate) use resolve::command_for_binary;
 
 use crate::event_sink;
 use serde::Serialize;
@@ -302,8 +305,28 @@ fn kill_process_group(pid: u32) {
     unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
 }
 
+/// Windows has no process groups; npm CLIs spawn as `cmd /c x.cmd`, so the
+/// real CLI is a grandchild. Killing only the direct child (start_kill)
+/// orphans node — the turn keeps streaming and burning API calls, and its
+/// inherited stdout pipe never reaches EOF. `taskkill /T /F` takes the
+/// whole tree down. Fire-and-forget: the callers' start_kill still handles
+/// the direct child synchronously.
 #[cfg(not(unix))]
-fn kill_process_group(_pid: u32) {}
+fn kill_process_group(pid: u32) {
+    let mut command = std::process::Command::new("taskkill");
+    command
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let _ = command.spawn();
+}
 
 // ==================== stderr redaction ====================
 
@@ -359,16 +382,16 @@ fn engine_bin(settings: &crate::settings::AppSettings, engine_id: &str) -> Strin
             // Defense in depth: settings write validates too, but the file
             // may have been hand-edited since.
             match crate::settings::validate_bin_override(trimmed) {
-                Ok(path) => return path.to_string_lossy().to_string(),
+                Ok(path) => {
+                    return resolve::resolve_launchable_cli_binary(&path.to_string_lossy())
+                }
                 Err(reason) => {
                     eprintln!("[engine] ignoring invalid {engine_id} bin override: {reason}");
                 }
             }
         }
     }
-    which::which(engine_id)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| engine_id.to_string())
+    resolve::resolve_launchable_cli_binary(engine_id)
 }
 
 #[tauri::command]
@@ -383,7 +406,7 @@ pub fn list_engines() -> Vec<EngineInfo> {
                 Some(custom) if !custom.trim().is_empty() => {
                     crate::settings::validate_bin_override(custom).is_ok()
                 }
-                _ => which::which(id).is_ok(),
+                _ => resolve::find_cli_binary(id, None).is_some(),
             };
             EngineInfo {
                 id: id.to_string(),

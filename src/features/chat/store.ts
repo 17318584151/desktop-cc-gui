@@ -912,20 +912,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const { active } = get();
       if (!active) return;
       const key = sessionKey(active.engine, active.sessionId, active.workspacePath);
-      // Registry is keyed by native session id once known; before that the
-      // run id routes. Try both.
-      if (active.sessionId) await ipc.interruptSession(active.sessionId).catch(() => false);
-      const deadRunIds: string[] = [];
-      for (const [runId, routed] of runRouting) {
-        if (routed === key) deadRunIds.push(runId);
-      }
-      // Independent kills, one IPC call per routed run — fired together.
-      await Promise.all(deadRunIds.map((runId) => ipc.interruptSession(runId).catch(() => false)));
-      // The runs are dead: drop their routing entries so the map cannot grow
-      // forever. (A late done event would also remove them.)
-      for (const runId of deadRunIds) runRouting.delete(runId);
-      // Settle locally: chunks already received stay on screen as ordinary
-      // rows even if the backend's done event never arrives (kill missed).
+      // Settle locally FIRST: the killed run's done event can arrive while
+      // the kill IPCs below are still in flight, and onDone drains the queue
+      // whenever interrupted is still false — that would fire the next
+      // queued message right after the user pressed stop.
       const pending = drainPending(key);
       set((s) => {
         const cur = s.bySession[key] ?? EMPTY_SESSION;
@@ -942,6 +932,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
           streamingByKey: setStreamingFlag(s.streamingByKey, key, false),
         };
       });
+      // Registry is keyed by native session id once known; before that the
+      // run id routes. Try both.
+      if (active.sessionId) await ipc.interruptSession(active.sessionId).catch(() => false);
+      const deadRunIds: string[] = [];
+      for (const [runId, routed] of runRouting) {
+        if (routed === key) deadRunIds.push(runId);
+      }
+      // Independent kills, one IPC call per routed run — fired together.
+      await Promise.all(deadRunIds.map((runId) => ipc.interruptSession(runId).catch(() => false)));
+      // The runs are dead: drop their routing entries so the map cannot grow
+      // forever. (A late done event would also remove them.)
+      for (const runId of deadRunIds) runRouting.delete(runId);
     },
 
     deleteSession: async (engine, sessionId) => {

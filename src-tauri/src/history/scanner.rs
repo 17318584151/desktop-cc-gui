@@ -83,31 +83,64 @@ fn peek_head_json_lines(
 }
 
 fn discover_claude(workspace: &Path) -> Vec<SessionFile> {
-    let encoded = super::claude_encode_project_path(&workspace.to_string_lossy());
-    let dir = crate::engine::engine_home(None, ".claude")
-        .join("projects")
-        .join(encoded);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
+    // The CLI's config root honors CLAUDE_CONFIG_DIR; pinning ~/.claude here
+    // would lose the history of users who relocate it.
+    let base = crate::engine::engine_home(Some("CLAUDE_CONFIG_DIR"), ".claude").join("projects");
     let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+    let mut seen_sessions = std::collections::HashSet::new();
+    for dir in claude_project_dirs(&base, workspace) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        if stem == "history" {
-            continue;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if stem == "history" || !seen_sessions.insert(stem.to_string()) {
+                continue;
+            }
+            out.push(SessionFile {
+                engine: "claude",
+                session_id: stem.to_string(),
+                workspace_path: workspace.to_string_lossy().to_string(),
+                file_path: path,
+            });
         }
-        out.push(SessionFile {
-            engine: "claude",
-            session_id: stem.to_string(),
-            workspace_path: workspace.to_string_lossy().to_string(),
-            file_path: path,
-        });
+    }
+    out
+}
+
+/// Strip the `\\?\` verbatim prefix Windows `canonicalize` adds — the CLI
+/// encodes the plain path, so the prefix would break the match.
+fn strip_verbatim_prefix(path: &str) -> &str {
+    path.strip_prefix(r"\\?\").unwrap_or(path)
+}
+
+/// Candidate `<projects>/<encoded>` dirs for one workspace. Windows terminals
+/// disagree on drive-letter case, slash direction, and trailing separators,
+/// and the CLI encodes whatever cwd spelling it saw — so try the raw
+/// spelling, a trailing-separator-trimmed one, and the canonicalized path.
+fn claude_project_dirs(base: &Path, workspace: &Path) -> Vec<PathBuf> {
+    fn push(out: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<String>, base: &Path, spelling: &str) {
+        if !spelling.is_empty() && seen.insert(spelling.to_string()) {
+            out.push(base.join(super::claude_encode_project_path(spelling)));
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let raw = workspace.to_string_lossy().to_string();
+    let trimmed = raw.trim_end_matches(['/', '\\']).to_string();
+    push(&mut out, &mut seen, base, &raw);
+    push(&mut out, &mut seen, base, &trimmed);
+    for spelling in [&raw, &trimmed] {
+        if let Ok(canonical) = std::fs::canonicalize(spelling) {
+            let canonical = strip_verbatim_prefix(&canonical.to_string_lossy()).to_string();
+            push(&mut out, &mut seen, base, &canonical);
+        }
     }
     out
 }
@@ -815,6 +848,59 @@ mod tests {
             Some(("old".to_string(), "/tmp/ws".to_string()))
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Env-mutating guard for CLAUDE_CONFIG_DIR; shares HOME_LOCK so every
+    /// env-dependent scanner test stays serialized.
+    struct ClaudeConfigDirGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prev: Option<std::ffi::OsString>,
+    }
+    impl ClaudeConfigDirGuard {
+        fn set(dir: &Path) -> Self {
+            let lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var_os("CLAUDE_CONFIG_DIR");
+            std::env::set_var("CLAUDE_CONFIG_DIR", dir);
+            Self { _lock: lock, prev }
+        }
+    }
+    impl Drop for ClaudeConfigDirGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(value) => std::env::set_var("CLAUDE_CONFIG_DIR", value),
+                None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
+            }
+        }
+    }
+
+    #[test]
+    fn strip_verbatim_prefix_removes_windows_prefix_only() {
+        assert_eq!(strip_verbatim_prefix(r"\\?\C:\Users\zlt\proj"), r"C:\Users\zlt\proj");
+        assert_eq!(strip_verbatim_prefix(r"C:\Users\zlt\proj"), r"C:\Users\zlt\proj");
+        assert_eq!(strip_verbatim_prefix("/Users/demo/proj"), "/Users/demo/proj");
+    }
+
+    /// A workspace recorded with a trailing separator must still find the
+    /// history the CLI wrote under the trimmed spelling, and the config root
+    /// must honor CLAUDE_CONFIG_DIR.
+    #[test]
+    fn discover_claude_matches_trailing_slash_spelling_under_config_dir() {
+        let home = scratch_dir("discover-claude");
+        let config_dir = home.join("claude-config");
+        let workspace = home.join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let encoded = super::super::claude_encode_project_path(&workspace.to_string_lossy());
+        let project_dir = config_dir.join("projects").join(&encoded);
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("s1.jsonl"), "{}\n").unwrap();
+
+        let _guard = ClaudeConfigDirGuard::set(&config_dir);
+        let spelled = PathBuf::from(format!("{}/", workspace.to_string_lossy()));
+        let found = discover_claude(&spelled);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].session_id, "s1");
+
+        std::fs::remove_dir_all(&home).ok();
     }
 
     /// End-to-end: an omp file with a prepended title line is attributed to

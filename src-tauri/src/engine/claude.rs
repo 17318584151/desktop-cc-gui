@@ -1,6 +1,5 @@
-use super::{images, push_session_id, BuiltCommand, Engine, EngineEvent, SendRequest};
+use super::{command_for_binary, images, push_session_id, BuiltCommand, Engine, EngineEvent, SendRequest};
 use serde_json::Value;
-use tokio::process::Command;
 
 pub struct ClaudeEngine;
 
@@ -17,7 +16,7 @@ impl Engine for ClaudeEngine {
     }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
-        let mut cmd = Command::new(bin);
+        let mut cmd = command_for_binary(bin);
         cmd.arg("-p");
         cmd.arg("--input-format");
         cmd.arg("stream-json");

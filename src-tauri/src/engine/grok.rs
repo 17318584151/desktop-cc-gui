@@ -1,6 +1,5 @@
-use super::{images, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
+use super::{command_for_binary, images, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest};
 use serde_json::Value;
-use tokio::process::Command;
 
 pub struct GrokEngine;
 
@@ -17,7 +16,7 @@ impl Engine for GrokEngine {
     }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
-        let mut cmd = Command::new(bin);
+        let mut cmd = command_for_binary(bin);
         cmd.arg("--output-format");
         cmd.arg("streaming-json");
         // The only verified headless behavior: without --always-approve the CLI

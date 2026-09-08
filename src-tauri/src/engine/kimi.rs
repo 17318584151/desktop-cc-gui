@@ -1,8 +1,8 @@
 use super::{
-    images, push_session_id, safe_prompt_arg, BuiltCommand, Engine, EngineEvent, SendRequest,
+    command_for_binary, images, push_session_id, safe_prompt_arg, BuiltCommand, Engine,
+    EngineEvent, SendRequest,
 };
 use serde_json::Value;
-use tokio::process::Command;
 
 pub struct KimiEngine;
 
@@ -24,7 +24,7 @@ impl Engine for KimiEngine {
     }
 
     fn build_command(&self, req: &SendRequest, bin: &str) -> Result<BuiltCommand, String> {
-        let mut cmd = Command::new(bin);
+        let mut cmd = command_for_binary(bin);
         cmd.arg("--output-format");
         cmd.arg("stream-json");
         match self.resolve_permission(req.permission.as_deref()) {
