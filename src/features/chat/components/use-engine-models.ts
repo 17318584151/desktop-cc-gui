@@ -82,6 +82,9 @@ export function useEngineModels(
           id: m,
           label: entry?.name || m,
           description: entry?.description ?? undefined,
+          // Channel/override ids keep the "provider/model" shape, so the
+          // prefix stands in when the catalog doesn't name the provider.
+          provider: entry?.provider ?? (m.includes("/") ? m.slice(0, m.indexOf("/")) : undefined),
         };
       });
     }

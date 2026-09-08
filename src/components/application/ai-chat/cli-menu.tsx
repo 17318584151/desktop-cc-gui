@@ -185,6 +185,10 @@ export interface ModelOption {
   label: string;
   /** Secondary line under the label (e.g. "Custom Opus model"). */
   description?: string;
+  /** Catalog provider ("kimi-code"); derived from the "provider/model" id
+   *  when the catalog entry is missing. Two or more distinct providers turn
+   *  the flyout list into labeled sections. */
+  provider?: string;
 }
 
 /** Per-engine model flyout: pops to the right of the CLI popover, bottom-
@@ -310,6 +314,32 @@ function ModelRow({
 
 /** The flyout's effort section: label with a keyed blur-in value, the
  *  faster/smarter captions, and the five-stop slider. */
+interface ModelGroup {
+  /** Provider id, "" for rows with no provider. */
+  key: string;
+  rows: ModelOption[];
+}
+
+/** Bucket rows by provider, first-appearance order. Returns a single
+ *  keyless group when fewer than two providers are present — layering only
+ *  earns its headers when it actually separates sources. */
+function groupModelsByProvider(models: ModelOption[]): ModelGroup[] {
+  const groups: ModelGroup[] = [];
+  const byKey = new Map<string, ModelGroup>();
+  for (const model of models) {
+    const key = model.provider ?? "";
+    let group = byKey.get(key);
+    if (!group) {
+      group = { key, rows: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.rows.push(model);
+  }
+  const labeled = groups.filter((g) => g.key !== "");
+  return labeled.length > 1 ? groups : [{ key: "", rows: models }];
+}
+
 function FlyoutEffortSection({
   effort,
   onChange,
@@ -390,14 +420,28 @@ function EngineModelPanel({
           (m.description ?? "").toLowerCase().includes(normalizedQuery),
       )
     : models;
-  // Pin the active model to the top so the current pick is always the first
-  // row; search results keep the original order.
-  const orderedModels = normalizedQuery
-    ? filteredModels
-    : [...filteredModels].sort(
+  // Provider sections layer the list when the engine's catalog mixes sources
+  // (OMP serving several relays). Pinning the active row to the top would
+  // tear it out of its section, so grouped lists keep the catalog order and
+  // mark the pick in place; flat and searched lists keep the pin.
+  const groups = useMemo(() => groupModelsByProvider(filteredModels), [filteredModels]);
+  const layered = !normalizedQuery && groups.length > 1;
+  const orderedModels =
+    normalizedQuery || layered
+      ? filteredModels
+      : [...filteredModels].sort(
+          (a, b) =>
+            Number(b.id === selectedModelId) - Number(a.id === selectedModelId),
+        );
+  // The section holding the current pick leads so the selection is never
+  // scrolled out of view; within sections the catalog order stands.
+  const visibleGroups = layered
+    ? [...groups].sort(
         (a, b) =>
-          Number(b.id === selectedModelId) - Number(a.id === selectedModelId),
-      );
+          Number(b.rows.some((m) => m.id === selectedModelId)) -
+          Number(a.rows.some((m) => m.id === selectedModelId)),
+      )
+    : null;
 
   return (
     <div className="flex w-full flex-col gap-1.5">
@@ -459,14 +503,23 @@ function EngineModelPanel({
         role="radiogroup"
         aria-label={t("chat.modelPicker")}
       >
-        {orderedModels.map((model) => (
-          <ModelRow
-            key={model.id || "__default__"}
-            option={model}
-            selected={model.id === selectedModelId}
-            engineId={option.id}
-            onPick={onPickModel}
-          />
+        {(visibleGroups ?? [{ key: "", rows: orderedModels }]).map((group) => (
+          <div key={group.key || "__flat__"} className="flex w-full flex-col">
+            {group.key && (
+              <span className="sticky top-0 z-10 bg-background-primary-default px-2 pt-1.5 pb-0.5 text-body-2-medium text-text-tertiary">
+                {group.key}
+              </span>
+            )}
+            {group.rows.map((model) => (
+              <ModelRow
+                key={model.id || "__default__"}
+                option={model}
+                selected={model.id === selectedModelId}
+                engineId={option.id}
+                onPick={onPickModel}
+              />
+            ))}
+          </div>
         ))}
         {orderedModels.length === 0 && (
           <span className="p-2 text-body-medium text-text-tertiary">

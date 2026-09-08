@@ -15,7 +15,8 @@
 //! Claude runs entirely on the CLI's own configuration: the catalog is
 //! the built-in aliases `claude --model` resolves (the /model menu's
 //! entries) in menu order; the configured default from ~/.claude/settings.json is named
-//! in the "default" row's subtitle. No
+//! in the "default" row's subtitle, and each alias names the concrete model
+//! id the CLI binary's embedded registry resolves it to. No
 //! relay probe: the /model menu is built into the CLI binary. The app's
 //! provider channels never feed
 //! it. Kimi keeps its own
@@ -162,8 +163,12 @@ fn grok_catalog() -> EngineCatalog {
 fn claude_catalog() -> EngineCatalog {
     // CLI-sourced, and every entry is something `claude --model`
     // resolves — authoritative, so the frontend resets stale stored
-    // picks (e.g. leftovers from the removed channel probe).
-    EngineCatalog::authoritative(claude::claude_models())
+    // picks (e.g. leftovers from the removed channel probe). The binary
+    // path feeds the embedded-registry read (alias → concrete model id).
+    let settings = crate::settings::read_settings().unwrap_or_default();
+    let bin = super::engine_bin(&settings, "claude");
+    let bin_path = super::resolve::find_cli_binary("claude", Some(&bin));
+    EngineCatalog::authoritative(claude::claude_models(bin_path.as_deref()))
 }
 
 async fn pi_family_catalog(engine: &str) -> EngineCatalog {

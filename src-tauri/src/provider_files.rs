@@ -304,6 +304,20 @@ fn apply_claude(target: &Target, provider: &Value) -> Result<(), String> {
             target.path.display()
         ));
     }
+    // Provider-selection keys in the base are residue from whatever managed
+    // the file before cc-gui (another provider switcher captured in the
+    // snapshot). A channel owns them outright: strip them so a polluted
+    // snapshot can't resurrect foreign endpoints/credentials/model mappings
+    // on every apply. The 官方配置 restore path is untouched — it still
+    // returns the snapshot byte-for-byte.
+    if let Some(env) = doc.get_mut("env").and_then(Value::as_object_mut) {
+        for key in CLAUDE_MANAGED_ENV_KEYS {
+            env.remove(key);
+        }
+        if env.is_empty() {
+            doc.as_object_mut().unwrap().remove("env");
+        }
+    }
     // cc-switch channels carry a full settingsConfig: merge its top-level
     // keys (env deep-merged below), keeping the user's unrelated settings.
     if let Some(sc) = provider.get("settingsConfig").and_then(Value::as_object) {
@@ -325,6 +339,22 @@ fn apply_claude(target: &Target, provider: &Value) -> Result<(), String> {
     let content = serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?;
     crate::settings::atomic_write(&target.path, &content)
 }
+
+/// Provider-selection env keys a claude channel owns outright once cc-gui
+/// manages settings.json: endpoint, credentials, and model routing. The three
+/// convention keys mirror env_mapping("claude"); ANTHROPIC_API_KEY is the
+/// alternate credential key the dialog recognizes.
+const CLAUDE_MANAGED_ENV_KEYS: [&str; 9] = [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+];
 
 // ── codex: config.toml + auth.json ──────────────────────────────────────────
 
@@ -612,6 +642,48 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&target.path).unwrap()).unwrap();
         assert!(out["env"].get("EXTRA_A").is_none());
         assert_eq!(out["env"]["ANTHROPIC_MODEL"], "m-d");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    #[test]
+    fn claude_snapshot_provider_keys_are_not_resurrected() {
+        let (dir, target) = fixture("claude-residue", "settings.json");
+        // The pre-cc-gui file was last written by another provider manager:
+        // its endpoint/credential/model-routing keys sit in the snapshot.
+        let original = r#"{"model":"opus","env":{"USER_KEY":"keep","ANTHROPIC_BASE_URL":"https://old.example","ANTHROPIC_AUTH_TOKEN":"sk-old","ANTHROPIC_DEFAULT_OPUS_MODEL":"kimi-k3","ANTHROPIC_DEFAULT_SONNET_MODEL":"kimi-k3","ANTHROPIC_DEFAULT_HAIKU_MODEL":"kimi-k3","ANTHROPIC_DEFAULT_FABLE_MODEL":"kimi-k3","ANTHROPIC_SMALL_FAST_MODEL":"kimi-k3-mini"}}"#;
+        std::fs::write(&target.path, original).unwrap();
+        let p = channel(&[("baseUrl", "https://a.example"), ("apiKey", "sk-a")]);
+        apply_claude(&target, &p).unwrap();
+        let out: Value =
+            serde_json::from_str(&std::fs::read_to_string(&target.path).unwrap()).unwrap();
+        assert_eq!(out["env"]["USER_KEY"], "keep");
+        assert_eq!(out["env"]["ANTHROPIC_BASE_URL"], "https://a.example");
+        assert_eq!(out["env"]["ANTHROPIC_AUTH_TOKEN"], "sk-a");
+        for key in [
+            "ANTHROPIC_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL",
+            "ANTHROPIC_SMALL_FAST_MODEL",
+        ] {
+            assert!(out["env"].get(key).is_none(), "{key} must not survive");
+        }
+        // 官方配置 restore still returns the polluted original byte-for-byte.
+        restore(&target).unwrap();
+        assert_eq!(std::fs::read_to_string(&target.path).unwrap(), original);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn claude_strip_drops_emptied_env_object() {
+        let (dir, target) = fixture("claude-strip-empty", "settings.json");
+        std::fs::write(&target.path, r#"{"env":{"ANTHROPIC_MODEL":"m-old"}}"#).unwrap();
+        apply_claude(&target, &channel(&[])).unwrap();
+        let out: Value =
+            serde_json::from_str(&std::fs::read_to_string(&target.path).unwrap()).unwrap();
+        assert!(out.get("env").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
