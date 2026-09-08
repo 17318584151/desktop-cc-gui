@@ -1,3 +1,4 @@
+mod codex_titles;
 mod extract;
 pub mod reader;
 pub mod scanner;

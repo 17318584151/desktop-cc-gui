@@ -698,6 +698,9 @@ fn scan_inner(
     let candidates = gather_candidates(&workspaces);
     let (stats, signature) = stat_all(&workspaces, &candidates);
     let Some(tier1) = tier1_gate(db, signature)? else {
+        if super::codex_titles::sync(db)? {
+            on_changed();
+        }
         return Ok(ScanReport {
             scanned: candidates.len(),
             reparsed: 0,
@@ -743,6 +746,7 @@ fn scan_inner(
     // Phase B: the db lock is held only for the upsert transaction.
     let reparsed = rows.len();
     upsert_rows(db, &rows, &tier1)?;
+    super::codex_titles::sync(db)?;
     on_changed();
     if total > 0 {
         on_progress(crate::event_sink::ScanProgress {
