@@ -7,7 +7,7 @@
 //! route reject anything without it. The token rides in the URL (?token=…)
 //! because <img> tags cannot set auth headers.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::ws::{Message, WebSocket};
@@ -248,39 +248,23 @@ async fn handle_socket(ctx: WebCtx, socket: WebSocket) {
 
 // ==================== Static frontend ====================
 
-/// Release builds embed dist/ so the shipped .app is self-contained. Debug
-/// builds read dist/ from disk instead: include_dir does not track its inputs,
-/// so an embedded copy would silently go stale across `pnpm build` runs.
-#[cfg(not(debug_assertions))]
-static DIST: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../dist");
-
-fn load_static(rel: &str) -> Option<(Vec<u8>, &'static str)> {
+/// Static files resolve through Tauri's own embedded frontendDist (the same
+/// bytes the webview loads), so dist/ is not duplicated in the binary by a
+/// second embed. Dev builds fall back to reading dist/ from disk inside
+/// Tauri, keeping the embedded copy from going stale across `pnpm build` runs.
+fn load_static(app: &tauri::AppHandle, rel: &str) -> Option<(Vec<u8>, String)> {
     if rel.split('/').any(|seg| seg == "..") {
         return None;
     }
-    let mime = content_type(rel);
-    #[cfg(debug_assertions)]
-    {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist");
-        let canon = std::fs::canonicalize(root.join(rel)).ok()?;
-        if !canon.starts_with(std::fs::canonicalize(&root).ok()?) {
-            return None;
-        }
-        let bytes = std::fs::read(canon).ok()?;
-        Some((bytes, mime))
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        let file = DIST.get_file(rel)?;
-        Some((file.contents().to_vec(), mime))
-    }
+    let asset = app.asset_resolver().get(rel.to_string())?;
+    Some((asset.bytes, asset.mime_type))
 }
 
-async fn static_handler(uri: Uri) -> Response {
+async fn static_handler(AxumState(ctx): AxumState<WebCtx>, uri: Uri) -> Response {
     let rel = uri.path().trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
     // SPA fallback: unknown paths still get the app shell.
-    match load_static(rel).or_else(|| load_static("index.html")) {
+    match load_static(&ctx.app, rel).or_else(|| load_static(&ctx.app, "index.html")) {
         Some((bytes, mime)) => ([(header::CONTENT_TYPE, mime)], bytes).into_response(),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,

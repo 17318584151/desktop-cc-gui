@@ -47,7 +47,6 @@ libc = "0.2"
 # surface over a token-authenticated WebSocket (see src/web.rs).
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
-include_dir = "0.7"
 serde_yaml = "0.9"
 # Linux-native Baidu Tongji transport: fixed hm.js fetch + hm.gif beacon with
 # rustls so it never touches the vendored-openssl stack or WebKit networking.
@@ -61,5 +60,5 @@ tauri = { version = "2", features = ["test"] }
 # child processes get reaped instead of leaked.
 codegen-units = 1
 lto = "thin"
-opt-level = 3
+opt-level = "z"
 strip = true
