@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Bump when title derivation changes so unchanged files still re-title.
-const TITLE_VERSION: &str = "6";
+const TITLE_VERSION: &str = "7";
 
 /// Titles matching these prefixes were derived before envelope stripping
 /// existed; one migration pass re-derives them even when files are unchanged.
@@ -17,7 +17,7 @@ const NOISE_TITLE_WHERE: &str = "title LIKE '<file %' ESCAPE '\\'
      OR title LIKE '<environment\\_context%' ESCAPE '\\'
      OR title LIKE '<agents-instructions%'
      OR title LIKE '<skill>%'
-     OR title LIKE '<recommended\\_plugins%' ESCAPE '\'
+     OR title LIKE '<recommended\\_plugins%' ESCAPE '\\'
      OR title LIKE '<command-message%'
      OR title LIKE '<command-name%'
      OR title LIKE '<INSTRUCTIONS>%'";
@@ -510,7 +510,7 @@ fn tier1_gate(db: &crate::db::Db, signature: String) -> Result<Option<Tier1>, St
                 [],
                 |r| r.get::<_, i64>(0),
             )
-            .unwrap_or(0)
+            .map_err(|e| e.to_string())?
             > 0;
     if previous.as_deref() == Some(signature.as_str()) && row_count > 0 && !retitle_pending {
         return Ok(None);
@@ -951,6 +951,42 @@ mod tests {
             .map_err(|e| e.to_string())?
         };
         assert_eq!(title, "hello");
+
+        // Simulate a v6 cache with an unchanged rollout and an injected title.
+        // The migration must bypass both stat caches and preserve custom titles.
+        {
+            let conn = db.0.lock();
+            conn.execute(
+                "UPDATE sessions SET title='<recommended_plugins>plugins', custom_title='My title'",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("UPDATE meta SET value='6' WHERE key='title_version'", [])
+                .map_err(|e| e.to_string())?;
+        }
+        let report = scan_with(&db, || {})?;
+        assert_eq!(report.reparsed, 1);
+        {
+            let conn = db.0.lock();
+            let (title, custom): (String, String) = conn
+                .query_row(
+                    "SELECT title, custom_title FROM sessions WHERE session_id='sid-1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?;
+            assert_eq!(title, "hello");
+            assert_eq!(custom, "My title");
+            let version: String = conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key='title_version'",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            assert_eq!(version, TITLE_VERSION);
+        }
+        assert_eq!(scan_with(&db, || {})?.reparsed, 0);
         drop(db);
         std::fs::remove_dir_all(&home).ok();
         Ok(())

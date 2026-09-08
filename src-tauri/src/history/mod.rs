@@ -285,25 +285,25 @@ pub(crate) fn clean_user_turn(text: &str) -> String {
     if let Some(display) = slash_command_display(rest) {
         return display;
     }
-    // The `# AGENTS.md instructions` heading precedes the `<INSTRUCTIONS>`
-    // block; drop it only when that block actually follows.
-    if let Some(after) = rest.strip_prefix("# AGENTS.md instructions") {
-        let after = after.trim_start();
-        // Codex appends the workspace path: `# AGENTS.md instructions for
-        // <path>\n\n<INSTRUCTIONS>` — skip the heading line first.
-        let after = match after.strip_prefix("for ") {
-            Some(tail) => match tail.find('\n') {
-                Some(nl) => tail[nl + 1..].trim_start(),
-                None => after,
-            },
-            None => after,
-        };
-        if after.starts_with("<INSTRUCTIONS>") {
-            rest = after;
-        }
-    }
     loop {
         let prev_len = rest.len();
+        // The `# AGENTS.md instructions` heading precedes the `<INSTRUCTIONS>`
+        // block; drop it only when that block actually follows.
+        if let Some(after) = rest.strip_prefix("# AGENTS.md instructions") {
+            let after = after.trim_start();
+            // Codex appends the workspace path: `# AGENTS.md instructions for
+            // <path>\n\n<INSTRUCTIONS>` — skip the heading line first.
+            let after = match after.strip_prefix("for ") {
+                Some(tail) => match tail.find('\n') {
+                    Some(nl) => tail[nl + 1..].trim_start(),
+                    None => after,
+                },
+                None => after,
+            };
+            if after.starts_with("<INSTRUCTIONS>") {
+                rest = after;
+            }
+        }
         for tag in INJECTED_LEADING_TAGS {
             let open = format!("<{tag}>");
             if rest.starts_with(&open) {
@@ -485,6 +485,18 @@ mod tests {
         assert_eq!(clean_user_turn(text), "");
     }
     #[test]
+    fn clean_repeated_context_blocks_before_typed_body() {
+        let context = "<recommended_plugins>plugins</recommended_plugins># AGENTS.md instructions for /tmp/ws\n\n<INSTRUCTIONS>rules</INSTRUCTIONS><environment_context>env</environment_context>";
+        assert_eq!(clean_user_turn(context), "");
+        assert_eq!(
+            clean_user_turn(&format!("{context}{context}\n修复标题")),
+            "修复标题"
+        );
+        let typed = "# AGENTS.md instructions 是什么意思？";
+        assert_eq!(clean_user_turn(&format!("{context}{typed}")), typed);
+    }
+
+    #[test]
     fn clean_drops_recommended_plugins_envelope() {
         let text = "<recommended_plugins>Here is a list of plugins that are available but not installed. …</recommended_plugins>";
         assert_eq!(clean_user_turn(text), "");
@@ -509,7 +521,8 @@ mod tests {
 
     #[test]
     fn clean_keeps_typed_tail_after_recommended_plugins() {
-        let text = "<recommended_plugins>Here is a list of plugins…</recommended_plugins>\n继续定位一下";
+        let text =
+            "<recommended_plugins>Here is a list of plugins…</recommended_plugins>\n继续定位一下";
         assert_eq!(clean_user_turn(text), "继续定位一下");
     }
 
