@@ -234,6 +234,36 @@ fn strip_leading_named_block<'a>(text: &'a str, tag: &str) -> &'a str {
         None => trimmed,
     }
 }
+/// Claude Code slash-command envelope: the CLI logs the typed command as
+/// `<command-message>/<command-name>/<command-args>` tags and the expanded
+/// prompt as a separate `isMeta` user turn. Rebuild what was typed
+/// (`/name args`) so neither the tags nor the expansion are shown.
+/// Tag order varies between versions; both machine tags must be present so
+/// a typed body merely mentioning one tag stays intact.
+pub(crate) fn slash_command_display(text: &str) -> Option<String> {
+    tagged_body(text, "command-message")?;
+    let name = tagged_body(text, "command-name")?;
+    if !name.starts_with('/') {
+        return None;
+    }
+    let args = tagged_body(text, "command-args").unwrap_or("");
+    Some(if args.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} {args}")
+    })
+}
+
+/// Body of the first `<tag>…</tag>` pair, trimmed. None when absent or
+/// unterminated.
+fn tagged_body<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)? + open.len();
+    let rest = &text[start..];
+    let end = rest.find(&close)?;
+    Some(rest[..end].trim())
+}
 /// Codex-style first-turn injections: the CLI prepends its instructions,
 /// environment context, and skill envelopes to (or ahead of) the typed
 /// body. Stripped from the front of a user turn; a typed tail after the
@@ -244,6 +274,7 @@ const INJECTED_LEADING_TAGS: &[&str] = &[
     "agents-instructions",
     "user_instructions",
     "skill",
+    "recommended_plugins",
 ];
 
 /// Clean a user turn down to the typed body: drop leading injected blocks
@@ -251,10 +282,22 @@ const INJECTED_LEADING_TAGS: &[&str] = &[
 /// `<user_query>` envelope. Noise-only turns come back empty.
 pub(crate) fn clean_user_turn(text: &str) -> String {
     let mut rest = text.trim_start();
+    if let Some(display) = slash_command_display(rest) {
+        return display;
+    }
     // The `# AGENTS.md instructions` heading precedes the `<INSTRUCTIONS>`
     // block; drop it only when that block actually follows.
     if let Some(after) = rest.strip_prefix("# AGENTS.md instructions") {
         let after = after.trim_start();
+        // Codex appends the workspace path: `# AGENTS.md instructions for
+        // <path>\n\n<INSTRUCTIONS>` — skip the heading line first.
+        let after = match after.strip_prefix("for ") {
+            Some(tail) => match tail.find('\n') {
+                Some(nl) => tail[nl + 1..].trim_start(),
+                None => after,
+            },
+            None => after,
+        };
         if after.starts_with("<INSTRUCTIONS>") {
             rest = after;
         }
@@ -293,7 +336,8 @@ fn strip_title_noise(text: &str) -> String {
     out.push_str(rest);
     // Drop `[Image #N, WxH]` placeholders wherever they appear — they sit
     // inline before the typed body. A `[Image #` run whose bracket body is
-    // not digits/`, `/`x` is user text and stays.
+    // neither dimension digits nor a `#N: path` payload is user text and
+    // stays.
     let mut cleaned = String::with_capacity(out.len());
     let mut rest = out.as_str();
     const MARK: &str = "[Image #";
@@ -302,9 +346,18 @@ fn strip_title_noise(text: &str) -> String {
         let placeholder = after
             .find(']')
             .map(|e| {
-                after[..e]
-                    .chars()
+                let body = &after[..e];
+                let digits =
+                    body.len() - body.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+                if digits == 0 {
+                    return false;
+                }
+                let tail = &body[digits..];
+                // `[Image #N, WxH]` dimensions, or the composer's
+                // `[Image #N: /path/to/file]` form.
+                tail.chars()
                     .all(|c| c.is_ascii_digit() || matches!(c, ',' | ' ' | 'x'))
+                    || tail.strip_prefix(": ").is_some_and(|p| !p.is_empty())
             })
             .unwrap_or(false);
         if placeholder {
@@ -345,6 +398,19 @@ mod tests {
             stripped("[Image #1, 1222x848] 历史记录怎么对应不上?"),
             "历史记录怎么对应不上?"
         );
+    }
+    #[test]
+    fn title_strips_image_path_placeholder() {
+        assert_eq!(
+            stripped("[Image #1: /var/folders/qj/T/cc-gui-images/abc-pasted-image-1787459160234.png] 这个报错"),
+            "这个报错"
+        );
+    }
+
+    #[test]
+    fn title_keeps_typed_image_bracket_without_digits() {
+        let text = "[Image #abc: foo] 不是占位符";
+        assert_eq!(stripped(text), text);
     }
 
     #[test]
@@ -395,6 +461,17 @@ mod tests {
         let text = "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nYOU ARE AN AUTONOMOUS AGENT\n</INSTRUCTIONS>\n<environment_context>\n  <cwd>/tmp/ws</cwd>\n</environment_context>";
         assert_eq!(clean_user_turn(text), "");
     }
+    #[test]
+    fn clean_drops_codex_instructions_with_path_heading() {
+        let text = "# AGENTS.md instructions for /Users/x/ws\n\n<INSTRUCTIONS>\nYOU ARE AN AUTONOMOUS AGENT\n</INSTRUCTIONS>";
+        assert_eq!(clean_user_turn(text), "");
+    }
+
+    #[test]
+    fn clean_keeps_typed_tail_after_path_heading_instructions() {
+        let text = "# AGENTS.md instructions for /Users/x/ws\n\n<INSTRUCTIONS>\n…\n</INSTRUCTIONS>\n\n帮我看看这个 bug";
+        assert_eq!(clean_user_turn(text), "帮我看看这个 bug");
+    }
 
     #[test]
     fn clean_keeps_typed_tail_after_agents_instructions() {
@@ -406,6 +483,34 @@ mod tests {
     fn clean_drops_skill_envelope() {
         let text = "<skill>\n<name>plan</name>\n<body>…</body>\n</skill>";
         assert_eq!(clean_user_turn(text), "");
+    }
+    #[test]
+    fn clean_drops_recommended_plugins_envelope() {
+        let text = "<recommended_plugins>Here is a list of plugins that are available but not installed. …</recommended_plugins>";
+        assert_eq!(clean_user_turn(text), "");
+    }
+    #[test]
+    fn clean_rebuilds_typed_slash_command() {
+        let text = "<command-message>aimax:code-review</command-message>\n<command-name>/aimax:code-review</command-name>\n<command-args>审查1772</command-args>";
+        assert_eq!(clean_user_turn(text), "/aimax:code-review 审查1772");
+    }
+
+    #[test]
+    fn clean_rebuilds_indented_envelope_without_args() {
+        let text = "<command-name>/clear</command-name>\n            <command-message>clear</command-message>\n            <command-args></command-args>";
+        assert_eq!(clean_user_turn(text), "/clear");
+    }
+
+    #[test]
+    fn clean_keeps_typed_body_mentioning_one_command_tag() {
+        let text = "帮我看看 <command-name> 这个标签是什么意思";
+        assert_eq!(clean_user_turn(text), text);
+    }
+
+    #[test]
+    fn clean_keeps_typed_tail_after_recommended_plugins() {
+        let text = "<recommended_plugins>Here is a list of plugins…</recommended_plugins>\n继续定位一下";
+        assert_eq!(clean_user_turn(text), "继续定位一下");
     }
 
     #[test]

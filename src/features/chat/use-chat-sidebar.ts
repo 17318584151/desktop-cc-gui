@@ -26,7 +26,7 @@ export function useChatSidebar({
   setDialog: (dialog: ChatPageDialog) => void;
 }) {
   const { t, i18n } = useTranslation();
-  const { active, workspaces, sessions, threadLimit, workspaceGroups, workspaceAliases, unseen } = useChatStore(
+  const { active, workspaces, sessions, threadLimit, workspaceGroups, workspaceAliases, archivedWorkspaces, unseen } = useChatStore(
     useShallow((s) => ({
       active: s.active,
       workspaces: s.workspaces,
@@ -34,11 +34,12 @@ export function useChatSidebar({
       threadLimit: s.threadLimit,
       workspaceGroups: s.workspaceGroups,
       workspaceAliases: s.workspaceAliases,
+      archivedWorkspaces: s.archivedWorkspaces,
       unseen: s.unseen,
     })),
   );
   // Store actions are stable references — one shallow subscription for all.
-  const { selectSession, startNewChat, addWorkspace, reorderWorkspaces, pinSession } =
+  const { selectSession, startNewChat, addWorkspace, reorderWorkspaces, pinSession, setWorkspaceArchived } =
     useChatStore(
       useShallow((s) => ({
         selectSession: s.selectSession,
@@ -46,8 +47,17 @@ export function useChatSidebar({
         addWorkspace: s.addWorkspace,
         reorderWorkspaces: s.reorderWorkspaces,
         pinSession: s.pinSession,
+        setWorkspaceArchived: s.setWorkspaceArchived,
       })),
     );
+
+  // Archived workspaces hide from the main tree; everything else (group
+  // bucketing, ordering, aliases) works on the visible subset.
+  const archivedIds = useMemo(() => new Set(archivedWorkspaces), [archivedWorkspaces]);
+  const visibleWorkspaces = useMemo(
+    () => workspaces.filter((w) => !archivedIds.has(w.id)),
+    [workspaces, archivedIds],
+  );
 
   const repos: AiChatRepo[] = useMemo(() => {
     const sorted = [...sessions].sort((a, b) => {
@@ -58,7 +68,7 @@ export function useChatSidebar({
     sessions.forEach((s, i) => {
       if (threadStreaming[i]) streamingById.set(`${s.engine}/${s.sessionId}`, true);
     });
-    return workspaces.map((w, index) => {
+    return visibleWorkspaces.map((w, index) => {
       // Sidebar alias: a user-set name replaces the folder name in the
       // sidebar only; the original stays on the row tooltip.
       const alias = workspaceAliases[w.id]?.trim();
@@ -84,7 +94,7 @@ export function useChatSidebar({
         }),
       };
     });
-  }, [workspaces, workspaceAliases, sessions, threadLimit, threadStreaming, unseen, i18n.language]);
+  }, [visibleWorkspaces, workspaceAliases, sessions, threadLimit, threadStreaming, unseen, i18n.language]);
   // 工作区二级分类: bucket repos by their workspace's group assignment.
   // Ungrouped repos come first (no header), then groups in settings order;
   // empty groups are hidden (matches the reference sidebar).
@@ -94,7 +104,7 @@ export function useChatSidebar({
     const groupIds = new Set(groups.map((g) => g.id));
     const ungrouped: AiChatRepo[] = [];
     const byGroup = new Map<string, AiChatRepo[]>();
-    workspaces.forEach((w, index) => {
+    visibleWorkspaces.forEach((w, index) => {
       const repo = repos[index];
       if (!repo) return;
       const groupId = w.groupId;
@@ -113,7 +123,26 @@ export function useChatSidebar({
       if (list && list.length > 0) result.push({ id: group.id, name: group.name, repos: list });
     });
     return result.some((s) => s.id !== null) ? result : undefined;
-  }, [repos, workspaces, workspaceGroups]);
+  }, [repos, visibleWorkspaces, workspaceGroups]);
+
+  // 已归档 section: archived workspaces in sidebar order, labels resolved
+  // with the same alias rule as the main tree. Threads stay hidden — the
+  // section exists to unarchive, not to browse.
+  const archivedRepos: AiChatRepo[] = useMemo(
+    () =>
+      workspaces
+        .filter((w) => archivedIds.has(w.id))
+        .map((w) => {
+          const alias = workspaceAliases[w.id]?.trim();
+          return {
+            id: w.id,
+            label: alias || w.name,
+            originalLabel: alias ? w.name : undefined,
+            threads: [],
+          };
+        }),
+    [workspaces, archivedIds, workspaceAliases],
+  );
 
   const handleAddWorkspace = useCallback(() => {
     void pickDirectory(t("chat.addWorkspace"))
@@ -158,12 +187,20 @@ export function useChatSidebar({
     },
     [setDialog],
   );
+  const handleSetWorkspaceArchived = useCallback(
+    (workspaceId: string, archived: boolean) => {
+      void setWorkspaceArchived(workspaceId, archived);
+    },
+    [setWorkspaceArchived],
+  );
 
   // Sidebar 新建会话 nav entry: new chat in the active workspace (fallback:
-  // first workspace; no workspace yet → add one first).
+  // first visible workspace; archived ones never pick up new chats, and no
+  // workspace yet → add one first).
   const handleNewSession = useCallback(() => {
     const workspace =
-      workspaces.find((w) => w.path === active?.workspacePath) ?? workspaces[0];
+      workspaces.find((w) => w.path === active?.workspacePath && !archivedIds.has(w.id)) ??
+      visibleWorkspaces[0];
     if (!workspace) {
       handleAddWorkspace();
       return;
@@ -171,7 +208,7 @@ export function useChatSidebar({
     startNewChat(workspace.path);
     composerInputRef.current?.focus();
     collapseSidebarOnMobile();
-  }, [workspaces, active?.workspacePath, startNewChat, handleAddWorkspace, collapseSidebarOnMobile, composerInputRef]);
+  }, [workspaces, visibleWorkspaces, archivedIds, active?.workspacePath, startNewChat, handleAddWorkspace, collapseSidebarOnMobile, composerInputRef]);
 
   // Workspace row + button: start (or re-focus) the pending new chat in that
   // workspace.
@@ -196,11 +233,13 @@ export function useChatSidebar({
     startNewChat,
     repos,
     sections,
+    archivedRepos,
     handleAddWorkspace,
     handleThreadSelect,
     handleThreadAction,
     handleRemoveWorkspace,
     handleWorkspaceAlias,
+    handleSetWorkspaceArchived,
     handleNewSession,
     handleNewSessionInWorkspace,
     handleReorderWorkspaces,

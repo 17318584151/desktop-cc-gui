@@ -11,7 +11,6 @@ import {
   SettingsSectionLabel,
   SettingsValueField,
 } from "@/components/application/settings/settings-rows";
-import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { ipc, type AppSettings, type DshCliVersion, type DshHostStatus } from "@/lib/ipc";
 import { openExternal, pickFile } from "@/lib/platform";
 import { cx } from "@/utils/cx";
@@ -26,8 +25,9 @@ const PORT_MAX = 65535;
 type HostState = "checking" | "starting" | "missing" | "connected" | "down";
 
 /**
- * DeepSeek Harness page: CLI version/update, local host status (adopt or
- * spawn on demand), and the connection settings (custom bin path, host/port,
+ * DeepSeek Harness host section, embedded in the CLI 管理 dsh page after the
+ * 引擎设置 card: CLI version/update, local host status (adopt or spawn on
+ * demand), and the connection settings (custom bin path, host/port,
  * auto-start). Probes run on mount and explicit user actions only — the
  * host has no push channel and polling would keep the app awake for nothing.
  */
@@ -229,43 +229,30 @@ export function DshHostSection() {
   }
 
   return (
-    <div className="flex w-full flex-col gap-6">
-      {/* Header: brand, docs link, version + update */}
-      <div className="flex w-full flex-wrap items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <EngineIcon engine="dsh" size={28} className="shrink-0" />
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-title-2-medium text-text-primary">{t("settings.dsh")}</h2>
-              <button
-                type="button"
-                onClick={() => openExternal(DSH_DOCS_URL)}
-                className="cursor-pointer rounded-md text-body-2-medium text-text-secondary outline-none transition-colors hover:text-text-primary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-              >
-                {t("settings.dshDocs")}
-              </button>
-            </div>
-            {cli?.installed && cli.localVersion && (
-              <p className="text-body-2-regular text-text-secondary">
-                {t("settings.dshVersionLabel", { version: cli.localVersion })}
-                {cli.updateAvailable && cli.latestVersion ? (
-                  <span className="text-text-warning-primary">
-                    {" "}
-                    {t("settings.dshUpdateAvailable", { version: cli.latestVersion })}
-                  </span>
-                ) : (
-                  <span className="text-text-tertiary"> · {t("settings.dshVersionUpToDate")}</span>
-                )}
-              </p>
-            )}
-            {cliError && (
-              <p role="alert" className="text-body-2-regular text-text-error-primary">
-                {t("common.error")}: {cliError}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="flex w-full flex-col gap-3">
+      {/* Section header: label + version hint, docs/update/refresh right —
+          same row pattern as the 供应商渠道 header in CliConfigBody. */}
+      <div className="flex items-center justify-between gap-3">
+        <SettingsSectionLabel>
+          {t("settings.dshLocalHost")}
+          {cli?.installed && cli.localVersion && (
+            <span className="ml-2 text-body-2-regular font-normal text-text-tertiary">
+              {t("settings.dshVersionLabel", { version: cli.localVersion })}
+              {cli.updateAvailable && cli.latestVersion ? (
+                <span className="text-text-warning-primary">
+                  {" "}
+                  {t("settings.dshUpdateAvailable", { version: cli.latestVersion })}
+                </span>
+              ) : (
+                <span> · {t("settings.dshVersionUpToDate")}</span>
+              )}
+            </span>
+          )}
+        </SettingsSectionLabel>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button size="small" variant="ghost" onClick={() => openExternal(DSH_DOCS_URL)}>
+            {t("settings.dshDocs")}
+          </Button>
           <Button size="small" disabled={updating} onClick={() => void updateCli()}>
             {updating
               ? t("settings.dshUpdating")
@@ -284,6 +271,12 @@ export function DshHostSection() {
           />
         </div>
       </div>
+
+      {cliError && (
+        <p role="alert" className="text-body-regular text-text-error-primary">
+          {t("common.error")}: {cliError}
+        </p>
+      )}
 
       {/* Tip banner: providers/keys live in the DSH Web UI, not here. */}
       <div className="flex w-full items-start gap-2 rounded-2xl bg-background-secondary-default px-3 py-2.5">
@@ -306,7 +299,6 @@ export function DshHostSection() {
 
       {/* Status card */}
       <div className="flex w-full flex-col gap-2">
-        <SettingsSectionLabel>{t("settings.dsh")}</SettingsSectionLabel>
         <div
           aria-live="polite"
           className="flex w-full flex-col gap-3 rounded-2xl bg-background-secondary-default p-3"

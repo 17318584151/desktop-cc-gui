@@ -64,6 +64,8 @@ export function ComposerEditable({
   manualHeightPx: number | null;
 }) {
   const { t } = useTranslation();
+  // Send gesture labels name the real modifier: ⌘ on macOS, Ctrl elsewhere.
+  const isMac = navigator.platform.includes("Mac");
   return (
     <div
       ref={editableRef}
@@ -71,7 +73,9 @@ export function ComposerEditable({
       role="textbox"
       aria-multiline="true"
       aria-label={t("chat.send")}
-      data-placeholder={sendShortcut === "cmdEnter" ? t("chat.inputPlaceholderCmdEnter") : t("chat.inputPlaceholder")}
+      data-placeholder={sendShortcut === "cmdEnter"
+        ? t(isMac ? "chat.inputPlaceholderCmdEnter" : "chat.inputPlaceholderCmdEnterCtrl")
+        : t("chat.inputPlaceholder")}
       data-completion-suffix={mentionOpen ? undefined : completionSuffix || undefined}
       onInput={() => {
         emitChange();

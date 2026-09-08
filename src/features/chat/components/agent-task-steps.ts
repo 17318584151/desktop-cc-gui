@@ -22,24 +22,53 @@ export function isSubagentToolLabel(text: string): boolean {
   return false;
 }
 
+/** Edit-class tool labels (write/edit/patch families) — the file
+ * modification surface. Mirrors the edit branch of ProcessDisclosure's
+ * toolTypeKey. */
+export function isEditToolLabel(text: string): boolean {
+  const head = text.split("·")[0].trim().toLowerCase();
+  const first = head.split(/[\s/\\]+/)[0].replace(/-/g, "_");
+  return [
+    "write",
+    "edit",
+    "write_file",
+    "edit_file",
+    "apply_patch",
+    "patch",
+    "notebook_edit",
+    "multiedit",
+    "multi_edit",
+  ].includes(first);
+}
+
+/** Index just past the last user message — the start of the current turn. */
+function currentTurnStart(messages: Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") return i + 1;
+  }
+  return 0;
+}
+
 /**
  * Fold the current turn's subagent tool rows into panel steps.
  *
- * A spawn stays "active" until any later non-subagent row arrives (blocking
- * spawn returned) or the turn settles. Consecutive subagent rows with no
- * intervening row are parallel spawns and stay active together.
+ * Completion is deliberately conservative — the stream carries tool-call
+ * STARTS only (no outputs, no task notifications), so a spawn stays active
+ * until its result provably came back:
+ * - a later assistant/thinking row means the model received the result and
+ *   moved on (covers non-blocking spawn + hub-wait flows: the wait tool row
+ *   itself must NOT settle the spawn);
+ * - Claude's Task is blocking, so for claude ANY later row settles it;
+ * - the turn ending settles everything.
+ * Spawns never settle on unrelated tool rows — that was the flash bug.
  */
 export function deriveAgentTaskSteps(
   messages: Message[],
   streaming: boolean,
+  engine: string,
 ): AgentProgressStep[] {
-  let turnStart = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      turnStart = i + 1;
-      break;
-    }
-  }
+  const turnStart = currentTurnStart(messages);
+  const blockingSpawn = engine === "claude";
   const steps: AgentProgressStep[] = [];
   for (let i = turnStart; i < messages.length; i++) {
     const message = messages[i];
@@ -48,7 +77,11 @@ export function deriveAgentTaskSteps(
     if (!settled) {
       for (let j = i + 1; j < messages.length; j++) {
         const later = messages[j];
-        if (later.role !== "tool" || !isSubagentToolLabel(later.text)) {
+        if (later.role === "assistant" || later.role === "thinking") {
+          settled = true;
+          break;
+        }
+        if (blockingSpawn) {
           settled = true;
           break;
         }
@@ -61,4 +94,24 @@ export function deriveAgentTaskSteps(
     });
   }
   return steps;
+}
+
+/**
+ * Unique files touched by edit-class tools in the current turn, in
+ * first-edit order. Paths come from the tool start's path arg, so only
+ * edits with a real file target count.
+ */
+export function deriveEditedFiles(messages: Message[]): string[] {
+  const turnStart = currentTurnStart(messages);
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (let i = turnStart; i < messages.length; i++) {
+    const message = messages[i];
+    if (message.role !== "tool" || !message.path) continue;
+    if (!isEditToolLabel(message.text)) continue;
+    if (seen.has(message.path)) continue;
+    seen.add(message.path);
+    files.push(message.path);
+  }
+  return files;
 }

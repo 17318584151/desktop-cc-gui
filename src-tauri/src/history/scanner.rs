@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Bump when title derivation changes so unchanged files still re-title.
-const TITLE_VERSION: &str = "4";
+const TITLE_VERSION: &str = "6";
 
 /// Titles matching these prefixes were derived before envelope stripping
 /// existed; one migration pass re-derives them even when files are unchanged.
@@ -17,6 +17,9 @@ const NOISE_TITLE_WHERE: &str = "title LIKE '<file %' ESCAPE '\\'
      OR title LIKE '<environment\\_context%' ESCAPE '\\'
      OR title LIKE '<agents-instructions%'
      OR title LIKE '<skill>%'
+     OR title LIKE '<recommended\\_plugins%' ESCAPE '\'
+     OR title LIKE '<command-message%'
+     OR title LIKE '<command-name%'
      OR title LIKE '<INSTRUCTIONS>%'";
 
 /// Bounded head peek: parse up to `max_lines` JSON lines from the head of a

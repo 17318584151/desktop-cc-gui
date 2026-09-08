@@ -71,14 +71,15 @@ pub(crate) fn canonicalize_lenient(path: &Path) -> Result<PathBuf, String> {
     Ok(base.join(name))
 }
 
-/// Workspace roots + the pasted-images sandbox are the only trees the file
-/// commands may touch: `path` comes over IPC and would otherwise be an
-/// arbitrary-filesystem primitive.
+/// Workspace roots, user-granted directories and the pasted-images sandbox
+/// are the only trees the file commands may touch: `path` comes over IPC and
+/// would otherwise be an arbitrary-filesystem primitive.
 fn allowed_roots(db: &crate::db::Db) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = db
         .workspace_paths()
         .unwrap_or_default()
         .iter()
+        .chain(db.granted_roots().unwrap_or_default().iter())
         .filter_map(|w| canonicalize_lenient(Path::new(w)).ok())
         .collect();
     let pasted = crate::engine::images::pasted_images_dir();
@@ -102,6 +103,65 @@ pub(crate) fn ensure_allowed(path: &str, db: &crate::db::Db) -> Result<PathBuf, 
             "path is outside the registered workspaces: {trimmed}"
         ))
     }
+}
+
+/// Windows `canonicalize` returns verbatim paths (`\\?\C:\...`); strip the
+/// prefix so granted roots are stored and displayed in normal form.
+/// Comparisons re-canonicalize both sides, so stripping is lossless here.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path,
+    }
+}
+
+/// The directory a grant for `path` would cover: the path itself when it is
+/// a directory, otherwise its parent (granting a single file would not cover
+/// its siblings, which is never what the file-tree user wants).
+fn grant_dir_for(path: &str) -> Result<PathBuf, String> {
+    let resolved = canonicalize_lenient(Path::new(path.trim()))?;
+    let dir = if resolved.is_dir() {
+        resolved
+    } else {
+        resolved
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .ok_or_else(|| format!("cannot resolve {path}"))?
+            .to_path_buf()
+    };
+    Ok(strip_verbatim_prefix(dir))
+}
+
+/// Resolve the directory a `grant_root` call would cover — the confirm
+/// dialog shows this so the user sees the real scope before approving.
+/// Pure: no mutation.
+#[tauri::command]
+pub fn grant_scope(path: String) -> Result<String, String> {
+    Ok(grant_dir_for(&path)?.to_string_lossy().to_string())
+}
+
+/// Persist a user-approved directory as an allowed root for every file
+/// command. Desktop-only by design: the web-access bridge must not widen
+/// the filesystem boundary from a remote client, so web.rs has no route
+/// for this command.
+#[tauri::command]
+pub fn grant_root(db: tauri::State<'_, Arc<crate::db::Db>>, path: String) -> Result<(), String> {
+    let dir = grant_dir_for(&path)?;
+    db.add_granted_root(&dir.to_string_lossy())
+}
+
+#[tauri::command]
+pub fn list_granted_roots(db: tauri::State<'_, Arc<crate::db::Db>>) -> Result<Vec<String>, String> {
+    db.granted_roots()
+}
+
+#[tauri::command]
+pub fn revoke_granted_root(
+    db: tauri::State<'_, Arc<crate::db::Db>>,
+    path: String,
+) -> Result<(), String> {
+    db.remove_granted_root(path.trim())
 }
 
 #[tauri::command]
@@ -533,4 +593,60 @@ pub async fn list_file_index(
     tauri::async_runtime::spawn_blocking(move || list_file_index_blocking(&db, &path))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("ccgui-next-files-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn grant_root_widens_then_revoke_restores_confinement() {
+        let scratch = Scratch::new();
+        let db = crate::db::Db::open_at(&scratch.0.join("test.db")).unwrap();
+        let outside = Scratch::new();
+        let file = outside.0.join("routing.json");
+        std::fs::write(&file, b"{}").unwrap();
+        let file_str = file.to_string_lossy().to_string();
+
+        // Ungranted: the confinement error the frontend pattern-matches on.
+        let err = ensure_allowed(&file_str, &db).unwrap_err();
+        assert!(err.starts_with("path is outside the registered workspaces"));
+
+        // grant_scope on a file resolves its parent directory.
+        let dir = grant_dir_for(&file_str).unwrap();
+        let want = strip_verbatim_prefix(std::fs::canonicalize(&outside.0).unwrap());
+        assert_eq!(dir, want);
+
+        // Granted: the file is admitted.
+        db.add_granted_root(&dir.to_string_lossy()).unwrap();
+        assert!(ensure_allowed(&file_str, &db).is_ok());
+
+        // Revoked: rejection returns.
+        db.remove_granted_root(&dir.to_string_lossy()).unwrap();
+        let err = ensure_allowed(&file_str, &db).unwrap_err();
+        assert!(err.starts_with("path is outside the registered workspaces"));
+    }
+
+    #[test]
+    fn grant_scope_on_directory_grants_itself() {
+        let outside = Scratch::new();
+        let dir = grant_dir_for(&outside.0.to_string_lossy()).unwrap();
+        let want = strip_verbatim_prefix(std::fs::canonicalize(&outside.0).unwrap());
+        assert_eq!(dir, want);
+    }
 }

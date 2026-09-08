@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { cx } from "@/utils/cx";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
+import {
+  answerGrantRequest,
+  currentGrantRequest,
+  subscribeGrantDialog,
+} from "@/lib/grant";
 
 /**
  * Shared shell for the small imperative dialogs below. Built on react-aria's
@@ -139,5 +144,21 @@ export function ConfirmDialog({ message, danger = false, onConfirm, onCancel, ch
         </Button>
       </div>
     </ModalShell>
+  );
+}
+
+/** Renders the on-demand directory-grant prompt driven by lib/grant.ts.
+ *  Mounted once at the app root (App.tsx); hidden whenever no file command
+ *  is waiting on an outside-roots decision. */
+export function GrantAccessDialogHost() {
+  const { t } = useTranslation();
+  const request = useSyncExternalStore(subscribeGrantDialog, currentGrantRequest);
+  if (!request) return null;
+  return (
+    <ConfirmDialog
+      message={t("files.grantAccess", { dir: request.dir })}
+      onConfirm={() => answerGrantRequest(true)}
+      onCancel={() => answerGrantRequest(false)}
+    />
   );
 }

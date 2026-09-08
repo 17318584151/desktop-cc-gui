@@ -28,9 +28,11 @@ export function ChatSidebarFrame({
   onAddWorkspace,
   onRemoveWorkspace,
   onWorkspaceAlias,
+  onSetWorkspaceArchived,
   onNewSessionInWorkspace,
   onNewSession,
   onReorderWorkspaces,
+  archivedRepos,
 }: {
   active: ActiveSession | null;
   collapsed: boolean;
@@ -48,9 +50,12 @@ export function ChatSidebarFrame({
   onAddWorkspace: () => void;
   onRemoveWorkspace: (workspaceId: string) => void;
   onWorkspaceAlias: (workspaceId: string) => void;
+  onSetWorkspaceArchived: (workspaceId: string, archived: boolean) => void;
   onNewSessionInWorkspace: (workspaceId: string) => void;
   onNewSession: () => void;
   onReorderWorkspaces: (orderedIds: string[]) => void;
+  /** Archived workspaces for the sidebar's bottom 已归档 section. */
+  archivedRepos: AiChatRepo[];
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -76,6 +81,8 @@ export function ChatSidebarFrame({
         onAddWorkspace={onAddWorkspace}
         onRemoveWorkspace={onRemoveWorkspace}
         onWorkspaceAlias={onWorkspaceAlias}
+        onSetWorkspaceArchived={onSetWorkspaceArchived}
+        archivedRepos={archivedRepos}
         onNewSessionInWorkspace={onNewSessionInWorkspace}
         onNewSession={onNewSession}
         onReorderWorkspaces={onReorderWorkspaces}

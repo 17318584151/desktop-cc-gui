@@ -11,6 +11,7 @@ pub mod history;
 pub mod metrics;
 pub mod open_app;
 pub mod paths;
+pub mod proxy;
 pub mod provider_files;
 pub mod provider_models;
 pub mod settings;
@@ -42,6 +43,13 @@ pub fn run() {
     // homebrew/npm/nvm and every engine greys out. Adopt the login shell's
     // PATH before any detection/spawn runs.
     adopt_login_shell_path();
+    // Apply the persisted network proxy to this process's env before any
+    // engine/terminal spawn, so children inherit HTTP(S)_PROXY/ALL_PROXY.
+    if let Ok(settings) = settings::read_settings() {
+        if let Err(error) = proxy::apply_app_proxy_settings(&settings) {
+            eprintln!("[proxy] failed to apply persisted proxy settings: {error}");
+        }
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -185,6 +193,11 @@ pub fn run() {
             files::create_file,
             files::search_text,
             files::list_file_index,
+            // On-demand directory grants (desktop-only — see grant_root).
+            files::grant_scope,
+            files::grant_root,
+            files::list_granted_roots,
+            files::revoke_granted_root,
             // git
             git::git_status,
             git::git_diff,

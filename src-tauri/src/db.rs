@@ -51,6 +51,47 @@ impl Db {
         }
         Ok(out)
     }
+
+    /// Directories the user explicitly granted file access to on top of the
+    /// registered workspaces (the on-demand grant flow, files::grant_root).
+    pub fn granted_roots(&self) -> Result<Vec<String>, String> {
+        let conn = self.0.lock();
+        let mut stmt = conn
+            .prepare("SELECT path FROM granted_roots ORDER BY granted_at")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for row in rows {
+            match row {
+                Ok(path) => out.push(path),
+                Err(e) => eprintln!("[db] skipping undecodable granted_roots row: {e}"),
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn add_granted_root(&self, path: &str) -> Result<(), String> {
+        let conn = self.0.lock();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        conn.execute(
+            "INSERT OR IGNORE INTO granted_roots(path, granted_at) VALUES(?1, ?2)",
+            rusqlite::params![path, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn remove_granted_root(&self, path: &str) -> Result<(), String> {
+        let conn = self.0.lock();
+        conn.execute("DELETE FROM granted_roots WHERE path=?1", [path])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 /// One-time import of the legacy desktop-cc-gui workspace list
@@ -205,6 +246,10 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS meta(
             key TEXT PRIMARY KEY,
             value TEXT
+        );
+        CREATE TABLE IF NOT EXISTS granted_roots(
+            path TEXT PRIMARY KEY,
+            granted_at INTEGER NOT NULL
         );
         ",
     )?;

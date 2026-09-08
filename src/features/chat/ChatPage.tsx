@@ -82,11 +82,13 @@ export default function ChatPage() {
     startNewChat,
     repos,
     sections,
+    archivedRepos,
     handleAddWorkspace,
     handleThreadSelect,
     handleThreadAction,
     handleRemoveWorkspace,
     handleWorkspaceAlias,
+    handleSetWorkspaceArchived,
     handleNewSession,
     handleNewSessionInWorkspace,
     handleReorderWorkspaces,
@@ -161,6 +163,8 @@ export default function ChatPage() {
         onAddWorkspace={handleAddWorkspace}
         onRemoveWorkspace={handleRemoveWorkspace}
         onWorkspaceAlias={handleWorkspaceAlias}
+        onSetWorkspaceArchived={handleSetWorkspaceArchived}
+        archivedRepos={archivedRepos}
         onNewSessionInWorkspace={handleNewSessionInWorkspace}
         onNewSession={handleNewSession}
         onReorderWorkspaces={handleReorderWorkspaces}

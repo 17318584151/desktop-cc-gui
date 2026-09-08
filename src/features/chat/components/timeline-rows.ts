@@ -12,6 +12,16 @@ export type TimelineRow =
   | { kind: "msg"; message: Message; turnFinal: boolean }
   | { kind: "process"; items: ProcessItem[]; firstSeq: number };
 
+/** Letters, digits, or emoji make a segment real content. Harnesses emit
+ * bare placeholder segments ("·", ".") between tool batches; rendered as a
+ * bubble they read as an empty box with a lone dot, and each one splits what
+ * should be a single folded tool run into alternating chips. */
+const CONTENT_RE = /[\p{L}\p{N}\p{Extended_Pictographic}]/u;
+
+function isPlaceholderMessage(message: Message): boolean {
+  return message.role === "assistant" && !CONTENT_RE.test(message.text);
+}
+
 /** Row wrapper caches keyed by message reference. The store grows rows
  * immutably (spread-copy on change), so a message whose reference survived a
  * stream flush reuses its wrapper and memoized row views skip it entirely.
@@ -78,14 +88,20 @@ export function buildRows(messages: Message[]): TimelineRow[] {
   let i = 0;
   while (i < messages.length) {
     const message = messages[i];
+    if (isPlaceholderMessage(message)) {
+      i++;
+      continue;
+    }
     if (message.role === "tool" || message.role === "thinking") {
       const first = message;
       const items: ProcessItem[] = [];
-      while (
-        i < messages.length &&
-        (messages[i].role === "tool" || messages[i].role === "thinking")
-      ) {
-        items.push(getProcessItem(messages[i]));
+      while (i < messages.length) {
+        const step = messages[i];
+        if (step.role === "tool" || step.role === "thinking") {
+          items.push(getProcessItem(step));
+        } else if (!isPlaceholderMessage(step)) {
+          break;
+        }
         i++;
       }
       rows.push(getProcessRow(first, items));

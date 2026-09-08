@@ -105,8 +105,8 @@ export function PillTabList({ children, className, ref, ...props }: PillTabListP
     const mo = new MutationObserver(measure);
     mo.observe(el, {
       attributes: true,
-      // Reorderable children (SortableEngineTabs) re-flow the DOM as the
-      // drag preview changes the order; re-measure so the thumb follows.
+      // Reorderable children re-flow the DOM as the drag preview changes
+      // the order; re-measure so the thumb follows.
       childList: true,
       subtree: true,
       attributeFilter: ["data-pill-selected"],

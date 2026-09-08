@@ -11,8 +11,8 @@ import { ChannelRow } from "./CliChannelRow";
 import { CliEngineCard } from "./CliEngineCard";
 import { CliImportMenu } from "./CliImportMenu";
 import { CliSyncBanner } from "./CliSyncBanner";
+import { DshHostSection } from "./DshHostSection";
 import { PiFamilyAuthSection } from "./PiFamilyAuthSection";
-import { SortableEngineTabs } from "./SortableEngineTabs";
 import type { CliConfigState } from "./useCliConfig";
 
 /** Engines cc-switch manages — the import dropdown only shows on these tabs. */
@@ -20,9 +20,9 @@ const CCS_IMPORT_ENGINES: readonly EngineId[] = ["claude", "codex", "grok"];
 
 /**
  * The loaded CLI config UI:
- *   pill tabs (one per CLI, drag to reorder — SortableEngineTabs)
- *   → cc-switch sync banner (when the store changed)
+ *   cc-switch sync banner (when the store changed)
  *   → 引擎设置 card (enable switch + 官方配置 row)
+ *   → DSH local host section (dsh only)
  *   → 供应商渠道 card (avatar/switch/⋯-menu rows + drag sorting)
  *   → empty state.
  */
@@ -30,7 +30,6 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
   const {
     t,
     engine,
-    setEngine,
     ccStatus,
     busy,
     enabled,
@@ -49,8 +48,6 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
   } = cli;
   return (
     <>
-      <SortableEngineTabs engine={engine} onSelect={setEngine} />
-
       {ccStatus?.changed && (
         <CliSyncBanner
           providers={ccStatus.providers}
@@ -70,6 +67,7 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
       />
 
       {(engine === "pi" || engine === "omp") && <PiFamilyAuthSection engine={engine} />}
+      {engine === "dsh" && <DshHostSection />}
 
       <div className="flex w-full flex-col gap-2">
         <div className="flex items-center justify-between gap-3">

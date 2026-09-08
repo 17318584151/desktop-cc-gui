@@ -6,7 +6,8 @@
   "packageManager": "pnpm@10.29.3",
   "scripts": {
     "build": "tsc --noEmit && vite build",
-    "build:mac": "tauri build",
+    "build:mac": "./scripts/build-signed-macos.sh",
+    "build:mac:skip-notarize": "SKIP_NOTARIZE=1 ./scripts/build-signed-macos.sh",
     "preview": "vite preview",
     "dev": "tauri dev"
   },

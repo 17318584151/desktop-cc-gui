@@ -32,6 +32,10 @@ pub struct AppSettings {
     /// folder name; workspaces missing here display their directory name.
     #[serde(default)]
     pub workspace_aliases: HashMap<String, String>,
+    /// Ids of workspaces hidden from the sidebar into the collapsible
+    /// 已归档 section; the record and its sessions stay intact.
+    #[serde(default)]
+    pub archived_workspaces: Vec<String>,
     #[serde(default = "default_language")]
     pub language: String,
     #[serde(default)]
@@ -59,6 +63,13 @@ pub struct AppSettings {
     /// Auto-start the DSH host at app launch; None = on (`!= Some(false)`).
     #[serde(default)]
     pub dsh_auto_start: Option<bool>,
+    /// Global network proxy switch; applied to this process's env so spawned
+    /// children (engine CLIs, terminals, dsh host) inherit it.
+    #[serde(default)]
+    pub system_proxy_enabled: bool,
+    /// Proxy URL (http/https/socks5); None/empty = unset.
+    #[serde(default)]
+    pub system_proxy_url: Option<String>,
     /// Per-engine binary overrides. flatten keeps the legacy flat shape
     /// (`"claudeBin": …`) the frontend depends on; keys stay camelCase and
     /// unknown extra fields round-trip untouched.
@@ -87,6 +98,7 @@ impl Default for AppSettings {
             theme: default_theme(),
             workspace_groups: Vec::new(),
             workspace_aliases: HashMap::new(),
+            archived_workspaces: Vec::new(),
             language: default_language(),
             default_models: HashMap::new(),
             default_efforts: HashMap::new(),
@@ -96,6 +108,8 @@ impl Default for AppSettings {
             dsh_host: None,
             dsh_port: None,
             dsh_auto_start: None,
+            system_proxy_enabled: false,
+            system_proxy_url: None,
             bin_overrides: HashMap::new(),
         }
     }
@@ -388,7 +402,12 @@ pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
     }
     let path = crate::paths::settings_path();
     let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    // Reject before persisting: an invalid proxy URL must not be saved (the
+    // frontend rolls its drafts back on this error).
+    crate::proxy::validate_proxy_settings(&settings)?;
     atomic_write(&path, &content)?;
+    // Apply to this process's env so the next spawned child inherits it.
+    crate::proxy::apply_app_proxy_settings(&settings)?;
     if rejected.is_empty() {
         Ok(())
     } else {

@@ -1,10 +1,14 @@
 import { useTranslation } from "react-i18next";
+import { useEffect, useRef, useState } from "react";
 import FolderSymlink from "lucide-react/dist/esm/icons/folder-symlink";
 import GitBranch from "lucide-react/dist/esm/icons/git-branch";
+import Check from "lucide-react/dist/esm/icons/check";
 import PanelRightClose from "lucide-react/dist/esm/icons/panel-right-close";
 import PanelRightOpen from "lucide-react/dist/esm/icons/panel-right-open";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import { PillTab, PillTabList } from "@/components/base/tabs/pill-tab";
 import { HeaderOpenActions } from "@/features/open-app/HeaderOpenActions";
+import { useFilesStore } from "@/features/files/store";
 import { cx } from "@/utils/cx";
 import { PANEL_TOGGLE_CLASSES } from "./panel-toggle-classes";
 
@@ -30,6 +34,22 @@ export function ChatPanelHeader({
   dragging: "sidebar" | "panel" | null;
 }) {
   const { t } = useTranslation();
+  const treeRefreshing = useFilesStore((s) => s.refreshing);
+  // Success flash: when a refresh finishes, swap the icon to a green check
+  // for a beat (same pattern as the copy buttons' "copied" state).
+  const [refreshed, setRefreshed] = useState(false);
+  const wasRefreshing = useRef(false);
+  useEffect(() => {
+    if (treeRefreshing) {
+      wasRefreshing.current = true;
+      return;
+    }
+    if (!wasRefreshing.current) return;
+    wasRefreshing.current = false;
+    setRefreshed(true);
+    const timer = setTimeout(() => setRefreshed(false), 1000);
+    return () => clearTimeout(timer);
+  }, [treeRefreshing]);
   return (
     <div className="flex h-full items-center">
       <HeaderOpenActions workspacePath={workspacePath} />
@@ -70,6 +90,28 @@ export function ChatPanelHeader({
                   {t("git.changes")}
                 </PillTab>
               </PillTabList>
+              {panelTab === "files" && (
+                <button
+                  type="button"
+                  title={t("common.refresh")}
+                  aria-label={t("common.refresh")}
+                  disabled={treeRefreshing}
+                  onClick={() => void useFilesStore.getState().refreshTree()}
+                  className={cx(PANEL_TOGGLE_CLASSES, "disabled:opacity-50")}
+                >
+                  {refreshed ? (
+                    <Check
+                      className="size-4 text-notification-success-foreground"
+                      aria-hidden
+                    />
+                  ) : (
+                    <RefreshCw
+                      className={cx("size-4", treeRefreshing && "animate-spin")}
+                      aria-hidden
+                    />
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 title={t("openApp.collapsePanel")}

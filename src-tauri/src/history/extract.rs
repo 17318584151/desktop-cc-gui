@@ -627,6 +627,11 @@ fn extract_claude_line(value: &Value, images: ImageMode) -> LineRows {
     if line_type != "user" && line_type != "assistant" {
         return Vec::new();
     }
+    // Slash-command expansions and other CLI-internal turns are logged with
+    // `isMeta`; Claude Code itself never renders them in the transcript.
+    if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
+        return Vec::new();
+    }
     let Some(message) = value.get("message") else {
         return Vec::new();
     };
@@ -862,6 +867,19 @@ mod tests {
         assert_eq!(rows[0].text, "ponder");
         assert_eq!(rows[1].text, "reply");
         assert_eq!(rows[2].text, "Bash");
+    }
+    #[test]
+    fn claude_line_drops_is_meta_command_expansion() {
+        let expansion: Value = serde_json::json!({
+            "type": "user",
+            "isMeta": true,
+            "timestamp": "2026-09-08T10:00:00.000Z",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "# 代码审查\n对未提交更改进行全面的安全和质量审查"}]
+            }
+        });
+        assert!(extract_claude_line(&expansion, ImageMode::Collect).is_empty());
     }
 
     #[test]

@@ -5,6 +5,7 @@ import ChatPage from "@/features/chat/ChatPage";
 import { bindSystemThemeSync, bindThemeChangePersistence } from "@/features/settings/theme";
 import { UpdateToast } from "@/features/update/UpdateToast";
 import { useUpdateStore } from "@/features/update/store";
+import { GrantAccessDialogHost } from "@/components/dialogs";
 
 // Settings is a rare route; load it on demand so startup ships less JS.
 // Warm the chunk shortly after startup so the first click has no fetch gap.
@@ -51,6 +52,7 @@ export default function App() {
         </Routes>
       </HashRouter>
       <UpdateToast />
+      <GrantAccessDialogHost />
     </LazyMotion>
   );
 }

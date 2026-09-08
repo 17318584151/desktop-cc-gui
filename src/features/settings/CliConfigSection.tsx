@@ -6,25 +6,25 @@ import {
   claudeSettingsJson,
   codexAuthJson,
   codexConfigToml,
+  type EngineId,
 } from "./providers";
 import { CliConfigBody } from "./CliConfigBody";
 import { useCliConfig } from "./useCliConfig";
 
 /**
- * CLI 配置 page — the BoardUI ai-chat "Tools" template language:
- *   pill tabs (one per CLI, drag to reorder — SortableEngineTabs)
- *   → 引擎设置 card (enable switch + 官方配置 row)
+ * One CLI's page under the CLI 管理 nav group — the BoardUI ai-chat "Tools"
+ * template language:
+ *   引擎设置 card (enable switch + 官方配置 row)
  *   → 供应商渠道 card (avatar/switch/⋯-menu rows + drag sorting)
  *   → empty state.
  *
  * State and mutations live in useCliConfig; the loaded UI is CliConfigBody.
  */
-export function CliConfigSection() {
-  const cli = useCliConfig();
+export function CliConfigSection({ engine }: { engine: EngineId }) {
+  const cli = useCliConfig(engine);
   const {
     t,
     config,
-    engine,
     error,
     notice,
     dialog,

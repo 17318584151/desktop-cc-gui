@@ -85,6 +85,9 @@ export interface AiChatRepoSection {
 
 /** localStorage key for the collapsed workspace-group id set. */
 const COLLAPSED_GROUPS_KEY = "ccgui-next.sidebarCollapsedGroups:v1";
+/** Reserved id in the collapsed-group set for the 已归档 section (group ids
+ *  are generated, so a sentinel can't collide). */
+const ARCHIVED_SECTION_ID = "__archived__";
 
 function readCollapsedGroups(): Set<string> {
   try {
@@ -671,6 +674,75 @@ function GroupHeaderRow({
   );
 }
 
+/** A grayed, non-expandable archived workspace row: right-click is the only
+ *  interaction (unarchive / set alias via the shared workspace menu). */
+function ArchivedRepoRow({
+  repo,
+  onContextMenu,
+}: {
+  repo: AiChatRepo;
+  onContextMenu?: (event: ReactMouseEvent<HTMLElement>) => void;
+}) {
+  return (
+    <div
+      onContextMenu={onContextMenu}
+      className="flex w-full cursor-default items-center gap-2 rounded-2lg p-2 transition-colors duration-150 ease hover:bg-background-secondary-hover"
+    >
+      <span className="flex size-6 shrink-0 items-center justify-center" aria-hidden>
+        <FolderSymlink className="size-4 text-foreground-icon-tertiary" />
+      </span>
+      <span
+        title={repo.originalLabel}
+        className="min-w-0 flex-1 truncate text-body-2-medium whitespace-nowrap text-text-tertiary"
+      >
+        {repo.label}
+      </span>
+    </div>
+  );
+}
+
+/** 已归档 section at the bottom of the workspace tree: collapsible like a
+ *  group header (same persisted collapse set), rows are plain grayed labels. */
+function ArchivedSection({
+  repos,
+  searching,
+  collapsed,
+  onToggle,
+  onRepoContextMenu,
+}: {
+  repos: AiChatRepo[];
+  searching: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  onRepoContextMenu?: (event: ReactMouseEvent<HTMLElement>, workspaceId: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex w-full flex-col">
+      <GroupHeaderRow
+        name={t("chat.archivedWorkspaces", { count: repos.length })}
+        collapsed={!searching && collapsed}
+        onToggle={onToggle}
+      />
+      {(searching || !collapsed) && (
+        <div className="flex w-full flex-col gap-1">
+          {repos.map((repo) => (
+            <ArchivedRepoRow
+              key={repo.id ?? repo.label}
+              repo={repo}
+              onContextMenu={
+                onRepoContextMenu && repo.id
+                  ? (event) => onRepoContextMenu(event, repo.id!)
+                  : undefined
+              }
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Workspaces section: header with the add button + the sortable repo tree.
  *  With workspace groups configured, repos render under collapsible group
  *  headers (工作区二级分类); otherwise the flat list renders unchanged. */
@@ -792,6 +864,7 @@ function WorkspaceSection({
 export function AiChatSidebar({
   repos = [],
   sections,
+  archivedRepos = [],
   className,
   width = 260,
   rootRef,
@@ -804,6 +877,7 @@ export function AiChatSidebar({
   onAddWorkspace,
   onRemoveWorkspace,
   onWorkspaceAlias,
+  onSetWorkspaceArchived,
   onOpenSettings,
   onClose,
   flat = false,
@@ -811,6 +885,8 @@ export function AiChatSidebar({
   repos?: AiChatRepo[];
   /** Grouped repo tree (工作区二级分类); omitted = flat `repos` list. */
   sections?: AiChatRepoSection[];
+  /** Archived workspaces for the bottom 已归档 section (labels only). */
+  archivedRepos?: AiChatRepo[];
   className?: string;
   /** Sidebar width in px; the parent owns resizing. */
   width?: number;
@@ -823,6 +899,8 @@ export function AiChatSidebar({
   onRemoveWorkspace?: (id: string) => void;
   /** Workspace context-menu action: open the set-alias dialog for the row. */
   onWorkspaceAlias?: (id: string) => void;
+  /** Workspace context-menu action: move the row into / out of 已归档. */
+  onSetWorkspaceArchived?: (id: string, archived: boolean) => void;
   /** Per-row + button: start a new chat in that workspace. */
   onNewSessionInWorkspace?: (id: string) => void;
   /** Commit of a drag-handle reorder (ordered workspace ids). */
@@ -843,15 +921,21 @@ export function AiChatSidebar({
   const normalizedQuery = query.trim().toLocaleLowerCase();
   // Group collapse: persisted so the tree reopens the way it was left.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
-  // Workspace right-click menu (设置别名): pointer-anchored, one open at a time.
+  // Workspace right-click menu: pointer-anchored, one open at a time. The
+  // archived flag selects the 归档/取消归档 entry label.
   const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | null>(null);
   const openWorkspaceMenu = useCallback(
-    (event: ReactMouseEvent<HTMLElement>, workspaceId: string) => {
-      if (!onWorkspaceAlias) return;
+    (event: ReactMouseEvent<HTMLElement>, workspaceId: string, archived = false) => {
+      if (!onWorkspaceAlias && !onSetWorkspaceArchived) return;
       event.preventDefault();
-      setWorkspaceMenu({ x: event.clientX, y: event.clientY, workspaceId });
+      setWorkspaceMenu({ x: event.clientX, y: event.clientY, workspaceId, archived });
     },
-    [onWorkspaceAlias],
+    [onWorkspaceAlias, onSetWorkspaceArchived],
+  );
+  const openArchivedMenu = useCallback(
+    (event: ReactMouseEvent<HTMLElement>, workspaceId: string) =>
+      openWorkspaceMenu(event, workspaceId, true),
+    [openWorkspaceMenu],
   );
   const toggleGroup = useCallback((groupId: string) => {
     setCollapsedGroups((prev) => {
@@ -899,6 +983,17 @@ export function AiChatSidebar({
       }))
       .filter((section) => section.id === null || section.repos.length > 0);
   }, [sections, normalizedQuery]);
+
+  // Same query filter for the 已归档 section (label match only — archived
+  // rows carry no threads).
+  const filteredArchivedRepos = useMemo(
+    () =>
+      archivedRepos.filter(
+        (repo) =>
+          !normalizedQuery || repo.label.toLocaleLowerCase().includes(normalizedQuery),
+      ),
+    [archivedRepos, normalizedQuery],
+  );
 
   const deactivateSearch = useCallback(() => {
     setQuery("");
@@ -994,6 +1089,15 @@ export function AiChatSidebar({
             onToggleGroup={toggleGroup}
             onRepoContextMenu={openWorkspaceMenu}
           />
+          {filteredArchivedRepos.length > 0 && (
+            <ArchivedSection
+              repos={filteredArchivedRepos}
+              searching={Boolean(normalizedQuery)}
+              collapsed={collapsedGroups.has(ARCHIVED_SECTION_ID)}
+              onToggle={() => toggleGroup(ARCHIVED_SECTION_ID)}
+              onRepoContextMenu={openArchivedMenu}
+            />
+          )}
           {filteredRepos.length === 0 && (
             <p className="px-2 text-body-regular text-text-tertiary">{t("chat.noSessions")}</p>
           )}
@@ -1007,11 +1111,12 @@ export function AiChatSidebar({
         </nav>
       </div>
 
-      {workspaceMenu && onWorkspaceAlias && (
+      {workspaceMenu && (onWorkspaceAlias || onSetWorkspaceArchived) && (
         <WorkspaceContextMenu
           menu={workspaceMenu}
           onClose={() => setWorkspaceMenu(null)}
           onSetAlias={onWorkspaceAlias}
+          onSetArchived={onSetWorkspaceArchived}
         />
       )}
     </aside>

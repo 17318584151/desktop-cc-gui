@@ -74,7 +74,7 @@ export function ProjectFolderMenu({
             <span className="pl-2 text-body-medium text-text-secondary">
               {t("chat.workspaces")}
             </span>
-            <div className="flex w-full flex-col gap-1">
+            <div className="flex max-h-64 w-full flex-col gap-1 overflow-y-auto">
               {folders.map((folder) => (
                 <button
                   key={folder}

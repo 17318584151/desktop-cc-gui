@@ -9,6 +9,7 @@ import { MessageQueue } from "@/components/application/ai-chat/message-queue";
 import type { ContextSegment } from "@/components/application/agent-limits/agent-limits-card";
 import type { BranchInfo, Workspace } from "@/lib/ipc";
 import type { ActiveSession, QueuedMessage } from "../store";
+import { useChatStore } from "../store";
 import { ImageLightbox } from "./MessageImages";
 import { AgentTasksPanel } from "./AgentTasksPanel";
 import { sessionKey } from "../store";
@@ -107,13 +108,20 @@ export function ConversationFooter({
       })),
     [usage, t],
   );
-  const statusFolders = useMemo(() => workspaces.map((w) => baseName(w.path)), [workspaces]);
+  // The quick-switch folder chip mirrors the sidebar: archived workspaces
+  // stay hidden until unarchived.
+  const archivedWorkspaces = useChatStore((s) => s.archivedWorkspaces);
+  const visibleWorkspaces = useMemo(
+    () => workspaces.filter((w) => !archivedWorkspaces.includes(w.id)),
+    [workspaces, archivedWorkspaces],
+  );
+  const statusFolders = useMemo(() => visibleWorkspaces.map((w) => baseName(w.path)), [visibleWorkspaces]);
   const handleFolderSelect = useCallback(
     (name: string) => {
-      const target = workspaces.find((w) => baseName(w.path) === name);
+      const target = visibleWorkspaces.find((w) => baseName(w.path) === name);
       if (target) startNewChat(target.path);
     },
-    [workspaces, startNewChat],
+    [visibleWorkspaces, startNewChat],
   );
 
   return (
@@ -201,6 +209,7 @@ export function ConversationFooter({
         <div className="mx-auto w-full max-w-3xl">
           <AgentTasksPanel
             sessionKey={active ? sessionKey(active.engine, active.sessionId, active.workspacePath) : ""}
+            engine={active?.engine ?? ""}
           />
         </div>
         <Composer

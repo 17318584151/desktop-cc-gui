@@ -182,7 +182,13 @@ export function GeneralSection() {
                 triggerClassName={SELECT_TRIGGER}
               >
                 <SelectItem id="enter">{t("settings.sendShortcutEnter")}</SelectItem>
-                <SelectItem id="cmdEnter">{t("settings.sendShortcutCmdEnter")}</SelectItem>
+                {/* macOS sends with ⌘+Enter, other platforms Ctrl+Enter
+                    (composer-editable reads metaKey || ctrlKey). */}
+                <SelectItem id="cmdEnter">
+                  {t(navigator.platform.includes("Mac")
+                    ? "settings.sendShortcutCmdEnter"
+                    : "settings.sendShortcutCmdEnterCtrl")}
+                </SelectItem>
               </Select>
             </SettingsRow>
             <PromptHistoryToggleRow />

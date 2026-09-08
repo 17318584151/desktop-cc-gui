@@ -38,7 +38,6 @@ export interface CliConfigState {
   t: TFunction;
   config: CliConfig | null;
   engine: EngineId;
-  setEngine: Dispatch<SetStateAction<EngineId>>;
   error: string | null;
   notice: string | null;
   busy: boolean;
@@ -78,10 +77,9 @@ export interface CliConfigState {
  *   - 官方配置 is the built-in fallback (the CLI's own config file) and
  *     lives in the 引擎设置 card, next to the enable switch.
  */
-export function useCliConfig(): CliConfigState {
+export function useCliConfig(engine: EngineId): CliConfigState {
   const { t } = useTranslation();
   const [config, setConfig] = useState<CliConfig | null>(null);
-  const [engine, setEngine] = useState<EngineId>("claude");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -293,7 +291,6 @@ export function useCliConfig(): CliConfigState {
     t,
     config,
     engine,
-    setEngine,
     error,
     notice,
     busy,

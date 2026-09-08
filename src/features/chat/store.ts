@@ -110,6 +110,9 @@ export interface ChatStore {
   /** Workspace id -> sidebar display alias, persisted in app settings;
    *  workspaces missing here show their folder name. */
   workspaceAliases: Record<string, string>;
+  /** Ids of workspaces hidden into the sidebar's collapsible 已归档 section,
+   *  persisted in app settings; records and sessions stay intact. */
+  archivedWorkspaces: string[];
   /** Composer send gesture ("enter" | "cmdEnter"), persisted in app settings. */
   sendShortcut: string;
   bySession: Record<string, SessionState>;
@@ -166,6 +169,8 @@ export interface ChatStore {
   assignWorkspaceGroup: (workspaceId: string, groupId: string | null) => Promise<void>;
   /** Set (or clear, null/empty/name-equal) the sidebar alias of a workspace. */
   setWorkspaceAlias: (workspaceId: string, alias: string | null) => Promise<void>;
+  /** Move a workspace into / out of the sidebar's archived section. */
+  setWorkspaceArchived: (workspaceId: string, archived: boolean) => Promise<void>;
   setSendShortcut: (shortcut: string) => void;
   setDraft: (key: string, text: string) => void;
   /** Ask the active composer to insert an @path mention at the caret. */
@@ -409,6 +414,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     threadLimit: 10,
     workspaceGroups: [],
     workspaceAliases: {},
+    archivedWorkspaces: [],
     sendShortcut: "enter",
     bySession: {},
     streamingByKey: {},
@@ -475,6 +481,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
             threadLimit: settings.sidebarThreadLimit ?? 5,
             workspaceGroups: settings.workspaceGroups ?? [],
             workspaceAliases: settings.workspaceAliases ?? {},
+            archivedWorkspaces: settings.archivedWorkspaces ?? [],
             sendShortcut: settings.composerSendShortcut ?? "enter",
           }),
         )
@@ -803,6 +810,21 @@ export const useChatStore = create<ChatStore>((set, get) => {
         if (resolved) next[workspaceId] = resolved;
         else delete next[workspaceId];
         return { workspaceAliases: next };
+      });
+    },
+    setWorkspaceArchived: async (workspaceId, archived) => {
+      const current = get().archivedWorkspaces;
+      const archivedWorkspaces = archived
+        ? current.includes(workspaceId)
+          ? current
+          : [...current, workspaceId]
+        : current.filter((id) => id !== workspaceId);
+      if (archivedWorkspaces === current) return;
+      set({ archivedWorkspaces });
+      await persistSettings((settings) => {
+        const next = (settings.archivedWorkspaces ?? []).filter((id) => id !== workspaceId);
+        if (archived) next.push(workspaceId);
+        return { archivedWorkspaces: next };
       });
     },
     setSendShortcut: (shortcut) => {

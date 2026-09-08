@@ -111,11 +111,13 @@ export function ChangesPanelHeader({
                 className="ml-auto size-4 shrink-0 text-foreground-icon-tertiary"
               />
             </DropdownTrigger>
-            <DropdownPopover aria-label={t("git.branch")} placement="bottom start">
-              {/* Single scroller: the popover itself (react-aria clamps its
-                  max-height to the window). Search and the new-branch footer
+            <DropdownPopover aria-label={t("git.branch")} placement="bottom start" className="max-h-80!">
+              {/* Single scroller: the popover itself, capped at 320px
+                  (react-aria's inline viewport clamp would otherwise let it
+                  grow to nearly full-window height, so the cap needs the
+                  important modifier to win). Search and the new-branch footer
                   pin via sticky; the rows scroll between them. An inner
-                  max-h-64 scroll div nested badly here — in short windows the
+                  max-h scroll div nested badly here — in short windows the
                   clamped popover clipped the inner list and its scrollbar,
                   leaving the lower branches unreachable. */}
               <div className="sticky -top-2.5 z-10 -mx-2.5 -mt-2.5 bg-background-primary-default px-2.5 pt-2.5 pb-1">

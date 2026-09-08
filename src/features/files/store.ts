@@ -65,6 +65,10 @@ interface FilesStore {
   toggleDir: (path: string) => Promise<void>;
   /** Re-fetch a directory only if it has been loaded before. */
   invalidateDir: (path: string) => Promise<void>;
+  /** Re-fetch every loaded/expanded directory (titlebar refresh button). */
+  refreshTree: () => Promise<void>;
+  /** True while refreshTree is in flight. */
+  refreshing: boolean;
   selectPath: (path: string | null, isDir?: boolean) => void;
   /** Open a file as a center tab (or focus its existing tab). */
   openFile: (path: string) => Promise<void>;
@@ -98,6 +102,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   expanded: {},
   selectedPath: null,
   selectedIsDir: false,
+  refreshing: false,
   openFiles: [],
   fileStates: {},
   activeFilePath: null,
@@ -174,6 +179,28 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       set((s) => ({ children: { ...s.children, [path]: entries } }));
     } catch {
       // Keep stale listing on refresh failure; the user can retry by toggling.
+    }
+  },
+  refreshTree: async () => {
+    const s = get();
+    if (!s.root || s.refreshing) return;
+    set({ refreshing: true });
+    try {
+      // Loaded dirs re-fetch in place; expanded-but-never-loaded dirs (e.g.
+      // created externally) fetch for the first time.
+      const dirs = new Set([...Object.keys(s.children), ...Object.keys(s.expanded)]);
+      await Promise.all(
+        [...dirs].map((dir) =>
+          get().children[dir] ? get().invalidateDir(dir) : get().ensureDir(dir),
+        ),
+      );
+      // Local listDir is near-instant; hold the spinner long enough for the
+      // animation to read as feedback instead of an imperceptible flicker.
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setTimeout(resolve, 500);
+      await promise;
+    } finally {
+      set({ refreshing: false });
     }
   },
 

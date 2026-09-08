@@ -213,7 +213,7 @@ export const ChatConversation = memo(function ChatConversation({
       noEnabledEngines ? (
         <button
           type="button"
-          onClick={() => navigate("/settings?page=cliConfig")}
+          onClick={() => navigate("/settings?page=cli:claude")}
           className="flex cursor-pointer items-center rounded-md px-1.5 py-1 text-body-2-medium whitespace-nowrap text-text-tertiary transition-colors duration-150 ease hover:text-text-primary"
         >
           {t("chat.noEngineEnabled")}

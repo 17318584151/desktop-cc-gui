@@ -1,5 +1,6 @@
 // Transport picks Tauri IPC natively and the web-access WS bridge in browsers.
 import { invoke } from "./transport";
+import { withGrantRetry } from "./grant";
 
 // ==================== Shared types (mirror Rust serde camelCase) ====================
 
@@ -142,6 +143,8 @@ export interface AppSettings {
   workspaceGroups: WorkspaceGroup[];
   /** Workspace id -> sidebar display alias; absent = show the folder name. */
   workspaceAliases: Record<string, string>;
+  /** Ids of workspaces hidden into the sidebar's collapsible 已归档 section. */
+  archivedWorkspaces: string[];
   language: string;
   claudeBin: string | null;
   kimiBin: string | null;
@@ -165,6 +168,10 @@ export interface AppSettings {
 
   /** Auto-adopt-or-spawn the DSH host on app start (default true). */
   dshAutoStart?: boolean | null;
+  /** Global network proxy switch; spawned children inherit the proxy env. */
+  systemProxyEnabled: boolean;
+  /** Proxy URL (http/https/socks5); null = unset. */
+  systemProxyUrl: string | null;
 }
 
 export interface DirEntry {
@@ -413,24 +420,31 @@ export const ipc = {
     invoke<void>("terminal_resize", { id, cols, rows }),
   /** No-op when the session is already gone. */
   terminalClose: (id: string) => invoke<void>("terminal_close", { id }),
-  // files
-  listDir: (path: string) => invoke<DirEntry[]>("list_dir", { path }),
-  readFile: (path: string) => invoke<FileContent>("read_file", { path }),
+  // files — every command goes through withGrantRetry so an outside-roots
+  // rejection becomes a one-click grant prompt + retry (see lib/grant.ts).
+  listDir: (path: string) => withGrantRetry(() => invoke<DirEntry[]>("list_dir", { path })),
+  readFile: (path: string) => withGrantRetry(() => invoke<FileContent>("read_file", { path })),
   writeFile: (path: string, content: string) =>
-    invoke<void>("write_file", { path, content }),
-  createDir: (path: string) => invoke<void>("create_dir", { path }),
+    withGrantRetry(() => invoke<void>("write_file", { path, content })),
+  createDir: (path: string) => withGrantRetry(() => invoke<void>("create_dir", { path })),
   /** Fails when the file already exists (unlike write_file, which overwrites). */
-  createFile: (path: string) => invoke<void>("create_file", { path }),
-  renameItem: (from: string, to: string) => invoke<void>("rename_item", { from, to }),
-  trashItem: (path: string) => invoke<void>("trash_item", { path }),
-  duplicateItem: (path: string) => invoke<FileOpResult>("duplicate_item", { path }),
+  createFile: (path: string) => withGrantRetry(() => invoke<void>("create_file", { path })),
+  renameItem: (from: string, to: string) =>
+    withGrantRetry(() => invoke<void>("rename_item", { from, to })),
+  trashItem: (path: string) => withGrantRetry(() => invoke<void>("trash_item", { path })),
+  duplicateItem: (path: string) =>
+    withGrantRetry(() => invoke<FileOpResult>("duplicate_item", { path })),
   pasteItem: (source: string, targetDir: string) =>
-    invoke<FileOpResult>("paste_item", { source, targetDir }),
+    withGrantRetry(() => invoke<FileOpResult>("paste_item", { source, targetDir })),
   searchText: (path: string, query: string) =>
-    invoke<SearchHit[]>("search_text", { path, query }),
+    withGrantRetry(() => invoke<SearchHit[]>("search_text", { path, query })),
   /** Whole-tree file index for the composer @-mention picker (relative
    * paths; backend caps at 20k entries). */
-  listFileIndex: (path: string) => invoke<FileIndexEntry[]>("list_file_index", { path }),
+  listFileIndex: (path: string) =>
+    withGrantRetry(() => invoke<FileIndexEntry[]>("list_file_index", { path })),
+  // granted directories (desktop-only commands; the settings list hides on web)
+  listGrantedRoots: () => invoke<string[]>("list_granted_roots"),
+  revokeGrantedRoot: (path: string) => invoke<void>("revoke_granted_root", { path }),
   // git
   gitStatus: (path: string) => invoke<GitStatus>("git_status", { path }),
   gitDiff: (path: string, file: string, staged: boolean) =>
