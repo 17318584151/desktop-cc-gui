@@ -3,6 +3,8 @@ import { LazyMotion, domAnimation } from "motion/react";
 import { HashRouter, Route, Routes } from "react-router-dom";
 import ChatPage from "@/features/chat/ChatPage";
 import { bindSystemThemeSync, bindThemeChangePersistence } from "@/features/settings/theme";
+import { UpdateToast } from "@/features/update/UpdateToast";
+import { useUpdateStore } from "@/features/update/store";
 
 // Settings is a rare route; load it on demand so startup ships less JS.
 // Warm the chunk shortly after startup so the first click has no fetch gap.
@@ -20,6 +22,13 @@ export default function App() {
   // Prefetch the settings chunk once startup work has settled.
   useEffect(() => {
     const id = setTimeout(() => void loadSettingsPage(), 2000);
+    return () => clearTimeout(id);
+  }, []);
+  // Background update check after startup settles; dev builds skip it so
+  // `tauri dev` doesn't nag about the published release being newer.
+  useEffect(() => {
+    if (import.meta.env.DEV) return;
+    const id = setTimeout(() => void useUpdateStore.getState().checkForUpdates(), 3000);
     return () => clearTimeout(id);
   }, []);
 
@@ -41,6 +50,7 @@ export default function App() {
           />
         </Routes>
       </HashRouter>
+      <UpdateToast />
     </LazyMotion>
   );
 }

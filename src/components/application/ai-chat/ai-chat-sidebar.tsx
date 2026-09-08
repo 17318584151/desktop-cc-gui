@@ -930,7 +930,7 @@ export function AiChatSidebar({
         "flex h-full shrink-0 flex-col overflow-hidden select-none",
         flat
           ? "bg-background-full"
-          : "border-r border-separator-border bg-background-primary-default",
+          : "bg-background-secondary-default",
         className,
       )}
     >

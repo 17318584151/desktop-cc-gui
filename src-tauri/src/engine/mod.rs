@@ -300,7 +300,7 @@ impl Drop for ProcessRegistry {
 /// so pgid == pid). Grandchildren holding the stdout pipe die too, which is
 /// what lets the reader task observe EOF and drain the registry.
 #[cfg(unix)]
-fn kill_process_group(pid: u32) {
+pub(crate) fn kill_process_group(pid: u32) {
     // SAFETY: kill with a negated pgid signals the group; no memory touched.
     unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
 }
@@ -312,7 +312,7 @@ fn kill_process_group(pid: u32) {
 /// whole tree down. Fire-and-forget: the callers' start_kill still handles
 /// the direct child synchronously.
 #[cfg(not(unix))]
-fn kill_process_group(pid: u32) {
+pub(crate) fn kill_process_group(pid: u32) {
     let mut command = std::process::Command::new("taskkill");
     command
         .args(["/PID", &pid.to_string(), "/T", "/F"])
@@ -930,14 +930,31 @@ mod permission_tests {
     fn codex_maps_modes_to_sandbox_flags() {
         let e = codex::CodexEngine;
         let auto = argv(&e, &req(Some("auto")));
-        assert!(auto.contains(&"workspace-write".to_string()));
+        assert!(auto.contains(&"sandbox_mode=\"workspace-write\"".to_string()));
         assert!(!auto.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
 
         let manual = argv(&e, &req(Some("manual")));
-        assert!(manual.contains(&"read-only".to_string()));
+        assert!(manual.contains(&"sandbox_mode=\"read-only\"".to_string()));
 
         let bypass = argv(&e, &req(Some("bypass")));
         assert!(bypass.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+    }
+
+    #[test]
+    fn codex_resume_avoids_unsupported_sandbox_flag() {
+        // `codex exec resume` rejects --sandbox (clap exit 2); the sandbox must
+        // travel via -c sandbox_mode on both fresh and resumed sessions.
+        let e = codex::CodexEngine;
+        let mut resume = req(Some("manual"));
+        resume.session_id = Some("00000000-0000-0000-0000-000000000000".to_string());
+        let args = argv(&e, &resume);
+        assert!(args.contains(&"resume".to_string()));
+        assert!(!args.contains(&"--sandbox".to_string()));
+        assert!(args.contains(&"sandbox_mode=\"read-only\"".to_string()));
+
+        let fresh = argv(&e, &req(Some("auto")));
+        assert!(!fresh.contains(&"--sandbox".to_string()));
+        assert!(fresh.contains(&"sandbox_mode=\"workspace-write\"".to_string()));
     }
 
     #[test]

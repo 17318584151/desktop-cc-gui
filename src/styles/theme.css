@@ -12,14 +12,17 @@
 
 @theme {
   /* ----- Color primitives ----------------------------------------------------
-   * Almost the entire palette matches Tailwind v4's OKLCH defaults. The four
-   * overrides below are the only intentional deviations (see Figma → variables
+   * Almost the entire palette matches Tailwind v4's OKLCH defaults. The overrides below
+   * are the only intentional deviations (see Figma → variables
    * → color/...).
    * --------------------------------------------------------------------------*/
   --color-slate-200:   #ebeff5;
   --color-neutral-100: #f7f7f7;
   --color-neutral-200: #ebebeb;
-  --color-neutral-925: #121212;
+  --color-neutral-925: #0d0d0d;
+  /* Mid step between 925 and 850, added with the dark-canvas rework: the
+   * recessed (secondary) surface sits between app base and raised cards. */
+  --color-neutral-880: #111111;
   --color-neutral-850: #1c1c1c;
   --color-blue-400:    #3392ff;
 
@@ -341,6 +344,10 @@
 }
 
 .dark {
+  /* Dark philosophy: near-black graphite canvas + bright text ramp (aligned
+   * with the reference desktop app), NOT Claude's mid-gray + dim-text scheme.
+   * Surfaces run #0d0d0d → #262626; secondary/tertiary text stay ≥7:1. */
+
   /* Chat bubble + scrim dark variants (see :root for the contract). */
   --color-bubble-user:      var(--color-accent-600);
   --color-overlay-backdrop: rgb(0 0 0 / 0.6);
@@ -353,11 +360,11 @@
 
   /* Foreground */
   --color-foreground-full:            var(--color-neutral-700);
-  --color-foreground-icon-primary:    var(--color-neutral-50);
+  --color-foreground-icon-primary:    var(--color-neutral-200);
   --color-foreground-icon-hover:      var(--color-white);
   --color-foreground-icon-error:      var(--color-red-400);
-  --color-foreground-icon-secondary:   var(--color-neutral-400);
-  --color-foreground-icon-tertiary:   var(--color-neutral-500);
+  --color-foreground-icon-secondary:   var(--color-neutral-300);
+  --color-foreground-icon-tertiary:   var(--color-neutral-400);
   --color-foreground-icon-quaternary: var(--color-neutral-600);
   --color-foreground-icon-disabled:   var(--color-neutral-800);
   --color-foreground-disabled:        var(--color-neutral-700);
@@ -367,9 +374,12 @@
   --color-button-primary-disabled-foreground: var(--color-neutral-500);
 
   /* Text */
-  --color-text-primary:  var(--color-neutral-50);
-  --color-text-secondary: var(--color-neutral-400);
-  --color-text-tertiary: var(--color-neutral-500);
+  --color-text-primary:  var(--color-neutral-200);
+  --color-text-secondary: var(--color-neutral-300);
+  --color-text-tertiary: var(--color-neutral-400);
+  /* Light mode never overrides placeholder (neutral-400); dark keeps it one
+   * step below tertiary so transient hints stay dimmer than real content. */
+  --color-text-placeholder: var(--color-neutral-500);
   --color-text-disabled: var(--color-neutral-700);
   --color-text-error-primary: var(--color-red-300);
   --color-text-warning-primary: var(--color-orange-300);
@@ -377,15 +387,15 @@
 
   /* Background */
   --color-background-full:              var(--color-neutral-925);
-  --color-background-primary-default:   var(--color-neutral-800);
+  --color-background-primary-default:   var(--color-neutral-900);
   --color-background-inner-default:     color-mix(in srgb, var(--color-white) 6%, transparent);
   --color-background-primary-hover:     color-mix(in srgb, var(--color-white) 8%, transparent);
   --color-background-primary-active:    color-mix(in srgb, var(--color-white) 12%, transparent);
-  --color-background-primary-disabled:  var(--color-neutral-800);
+  --color-background-primary-disabled:  var(--color-neutral-900);
   --color-input-disabled-background:    color-mix(in srgb, var(--color-white) 4%, transparent);
-  --color-background-secondary-default: var(--color-neutral-850);
-  --color-background-secondary-hover:   var(--color-neutral-800);
-  --color-background-tertiary-default:  var(--color-neutral-800);
+  --color-background-secondary-default: var(--color-neutral-880);
+  --color-background-secondary-hover:   var(--color-neutral-850);
+  --color-background-tertiary-default:  var(--color-neutral-850);
   --color-background-tertiary-hover:    var(--color-neutral-700);
   --color-background-tertiary-error:    color-mix(in srgb, var(--color-red-950) 40%, transparent);
   --color-background-tertiary-warning:  color-mix(in srgb, var(--color-orange-950) 40%, transparent);
@@ -446,13 +456,13 @@
   --color-border-checkbox-default: var(--color-neutral-700);
   --color-border-checkbox-hover:   var(--color-neutral-500);
   --color-border-checkbox-active:  var(--color-neutral-500);
-  --color-border-component-detail-container: var(--color-neutral-700);
-  --color-border-ai-profile-card:             var(--color-neutral-700);
-  --color-border-table:            var(--color-neutral-700);
+  --color-border-component-detail-container: var(--color-neutral-800);
+  --color-border-ai-profile-card:             var(--color-neutral-800);
+  --color-border-table:            var(--color-neutral-800);
   --color-border-button-group:     color-mix(in srgb, var(--color-neutral-600) 60%, transparent);
   --color-border-sidebar-profile-hover: var(--color-neutral-600);
-  --color-separator-border:        var(--color-neutral-700);
-  --color-separator-border-strong: var(--color-neutral-600);
+  --color-separator-border:        var(--color-neutral-800);
+  --color-separator-border-strong: var(--color-neutral-700);
 
   /* Figma's dark table status pairs. */
   --color-status-lime-background:   color-mix(in srgb, var(--color-lime-950) 60%, transparent);

@@ -158,6 +158,13 @@ export interface AppSettings {
   composerSendShortcut: string;
   /** Terminal shell override; null/empty = auto-detect. */
   terminalShellPath: string | null;
+  /** DSH host address (default "127.0.0.1"). */
+  dshHost?: string | null;
+  /** DSH host port (default 3080). */
+  dshPort?: number | null;
+
+  /** Auto-adopt-or-spawn the DSH host on app start (default true). */
+  dshAutoStart?: boolean | null;
 }
 
 export interface DirEntry {
@@ -221,6 +228,39 @@ export interface WebAccessInfo {
   port: number;
   token: string;
   lanIp: string;
+}
+// ---- DeepSeek Harness local host ----
+
+/** Snapshot of the DSH local host + CLI probe (`dsh_host_status`,
+ *  `dsh_host_start`). Never spawns on its own; `dsh_host_start` does. */
+export interface DshHostStatus {
+  installed: boolean;
+  version: string | null;
+  host: string;
+  port: number;
+  origin: string;
+  autoStart: boolean;
+  running: boolean;
+  /** "spawned" = we launched it (and will kill it); "adopted" = pre-existing
+   *  listener we attached to and never kill implicitly. */
+  ownership: "spawned" | "adopted" | null;
+  /** Raw host.describe value (provider/model/attachedSessions/…). */
+  describe: {
+    provider?: string | null;
+    model?: string | null;
+    attachedSessions?: number | null;
+    version?: string | null;
+  } | null;
+  /** Probe error, set only when the host is down. */
+  error: string | null;
+}
+
+/** Local dsh CLI version + npm registry latest (`dsh_cli_version`). */
+export interface DshCliVersion {
+  installed: boolean;
+  localVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
 }
 
 // ==================== Typed invoke wrappers ====================
@@ -418,4 +458,10 @@ export const ipc = {
   webAccessStart: () => invoke<WebAccessInfo>("web_access_start"),
   webAccessStop: () => invoke<void>("web_access_stop"),
   webAccessStatus: () => invoke<WebAccessInfo | null>("web_access_status"),
+  // DeepSeek Harness local host (dsh web --host H --port P)
+  dshHostStatus: () => invoke<DshHostStatus>("dsh_host_status"),
+  dshHostStart: () => invoke<DshHostStatus>("dsh_host_start"),
+  dshHostStop: () => invoke<{ ok: boolean }>("dsh_host_stop"),
+  dshCliVersion: () => invoke<DshCliVersion>("dsh_cli_version"),
+  dshCliUpdate: () => invoke<{ ok: boolean; version: string | null }>("dsh_cli_update"),
 };

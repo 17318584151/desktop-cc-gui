@@ -38,17 +38,19 @@ impl Engine for CodexEngine {
         // exec auto-declines approval prompts, so "manual" is enforced by the
         // sandbox instead: read-only means nothing can change without the
         // user re-sending in a writable mode. codex exec has no plan mode.
+        // Sandbox goes through -c sandbox_mode (not --sandbox): `exec resume`
+        // dropped the --sandbox flag, while -c works on both subcommands.
         match self.resolve_permission(req.permission.as_deref()) {
             "bypass" => {
                 cmd.arg("--dangerously-bypass-approvals-and-sandbox");
             }
             "manual" => {
-                cmd.arg("--sandbox");
-                cmd.arg("read-only");
+                cmd.arg("-c");
+                cmd.arg("sandbox_mode=\"read-only\"");
             }
             _ => {
-                cmd.arg("--sandbox");
-                cmd.arg("workspace-write");
+                cmd.arg("-c");
+                cmd.arg("sandbox_mode=\"workspace-write\"");
             }
         }
         if let Some(model) = req.model.as_deref() {

@@ -10,6 +10,7 @@ import {
   SettingsSectionLabel,
 } from "@/components/application/settings/settings-rows";
 import { getAppVersion, openExternal } from "@/lib/platform";
+import { useUpdateStore } from "@/features/update/store";
 import { CHANGELOG_DATA } from "@/version/changelog";
 import { ChangelogDialog } from "./ChangelogDialog";
 import wxqImage from "@/assets/images/wxq.png";
@@ -113,6 +114,9 @@ export function AboutSection() {
   const { t } = useTranslation();
   const [version, setVersion] = useState<string | null>(null);
   const [showChangelog, setShowChangelog] = useState(false);
+  const updateStage = useUpdateStore((s) => s.stage);
+  const checkForUpdates = useUpdateStore((s) => s.checkForUpdates);
+  const updateError = useUpdateStore((s) => s.error);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +140,27 @@ export function AboutSection() {
             <span className="text-body-regular text-text-secondary">
               {version ? `v${version}` : "…"}
             </span>
+          </SettingsRow>
+          <SettingsRow
+            label={t("settings.checkUpdates")}
+            description={
+              updateStage === "checking"
+                ? t("settings.updateChecking")
+                : updateStage === "latest"
+                  ? t("settings.updateLatest")
+                  : updateStage === "error"
+                    ? t("settings.updateError", { message: updateError })
+                    : undefined
+            }
+          >
+            <Button
+              size="small"
+              variant="secondary"
+              disabled={updateStage === "checking"}
+              onClick={() => void checkForUpdates({ interactive: true })}
+            >
+              {t("settings.checkUpdates")}
+            </Button>
           </SettingsRow>
         </SettingsCard>
       </div>

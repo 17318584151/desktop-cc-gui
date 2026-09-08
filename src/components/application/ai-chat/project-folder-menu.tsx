@@ -47,14 +47,14 @@ export function ProjectFolderMenu({
         ref={triggerRef}
         className="flex cursor-pointer items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
       >
-        <FolderSymlink className="size-4 shrink-0 text-foreground-icon-secondary" aria-hidden />
+        <FolderSymlink className="size-3.5 shrink-0 text-foreground-icon-tertiary" aria-hidden />
         <span className="flex items-center">
-          <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
+          <span className="text-caption-1-regular whitespace-nowrap text-text-tertiary">
             {selectedName ?? t("chat.noProjectSelected")}
           </span>
           <ChevronDown
             className={cx(
-              "size-4 shrink-0 text-foreground-icon-secondary transition-transform duration-200 ease",
+              "size-3.5 shrink-0 text-foreground-icon-tertiary transition-transform duration-200 ease",
               isOpen && "rotate-180",
             )}
             aria-hidden

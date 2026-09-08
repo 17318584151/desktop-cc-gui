@@ -64,7 +64,6 @@ export function ChatSidebarFrame({
           // resizes mutate style.width imperatively per pointermove.
           !dragging &&
             "transition-[width] duration-200 ease-out motion-reduce:transition-none",
-          collapsed && "border-r-0",
           // On phones the sidebar floats over the chat as a drawer instead of
           // squishing the layout; the backdrop below dismisses it.
           "max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl",

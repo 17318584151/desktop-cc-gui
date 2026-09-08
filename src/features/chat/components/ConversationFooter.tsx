@@ -10,6 +10,8 @@ import type { ContextSegment } from "@/components/application/agent-limits/agent
 import type { BranchInfo, Workspace } from "@/lib/ipc";
 import type { ActiveSession, QueuedMessage } from "../store";
 import { ImageLightbox } from "./MessageImages";
+import { AgentTasksPanel } from "./AgentTasksPanel";
+import { sessionKey } from "../store";
 import { USAGE_PART_LABEL_KEYS, usageBreakdown } from "./usage-breakdown";
 
 /** Path → trailing name (folder or file) for status-bar and chip labels.
@@ -112,7 +114,9 @@ export function ConversationFooter({
 
   return (
     <>
-      <div className="flex w-full flex-col gap-2.5 bg-background-primary-default px-4 pt-2.5 pb-2">
+      <div
+        className="flex w-full flex-col gap-2.5 bg-background-primary-default px-4 pt-2.5 pb-2"
+      >
         <MessageQueue queue={queue} onRemove={onRemoveQueued} onClear={onClearQueued} className="mx-auto w-full max-w-3xl" />
         {imageError && (
           <div className="rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary">
@@ -168,6 +172,11 @@ export function ConversationFooter({
             </div>
           </div>
         )}
+        <div className="mx-auto w-full max-w-3xl">
+          <AgentTasksPanel
+            sessionKey={active ? sessionKey(active.engine, active.sessionId, active.workspacePath) : ""}
+          />
+        </div>
         <Composer
           className="mx-auto max-w-3xl"
           value={draft}

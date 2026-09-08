@@ -140,7 +140,7 @@ export default function ChatPage() {
   return (
     <div
       className={cx(
-        "relative flex h-dvh w-full overflow-hidden bg-background-full",
+        "relative flex h-dvh w-full overflow-hidden bg-background-secondary-default",
         NEEDS_TITLEBAR_HAIRLINE && "border-t border-separator-border",
         dragging && "cursor-col-resize select-none",
       )}
@@ -165,7 +165,7 @@ export default function ChatPage() {
         onNewSession={handleNewSession}
         onReorderWorkspaces={handleReorderWorkspaces}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background-primary-default md:rounded-l-[14px] md:border-l md:border-separator-border">
         <SessionTabStrip
           tabs={tabItems}
           activeKey={activeTabKey}

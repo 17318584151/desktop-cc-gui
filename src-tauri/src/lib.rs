@@ -2,6 +2,7 @@ pub mod baidu_tongji;
 pub mod cc_switch;
 pub mod config;
 pub mod db;
+pub mod dsh_host;
 pub mod engine;
 pub mod event_sink;
 pub mod files;
@@ -28,6 +29,7 @@ pub struct AppState {
     pub terminals: terminal::TerminalRegistry,
     pub processes: Arc<engine::ProcessRegistry>,
     pub web: web::WebAccessState,
+    pub dsh_host: dsh_host::DshHostState,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -44,6 +46,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let db = Arc::new(db::Db::open().expect("failed to open app db"));
             if let Err(error) = db::import_legacy_workspaces_once(&db) {
@@ -72,6 +76,7 @@ pub fn run() {
                 terminals: terminal::TerminalRegistry::default(),
                 processes: Arc::new(engine::ProcessRegistry::default()),
                 web: web::WebAccessState::default(),
+                dsh_host: dsh_host::DshHostState::default(),
             };
             // Clone what the initial scan needs before state moves into manage.
             let scan_db = Arc::clone(&state.db);
@@ -86,6 +91,21 @@ pub fn run() {
             app.manage(baidu_tongji::BaiduTongjiState::load());
             // Initial history scan, non-blocking.
             history::scanner::spawn_scan(scan_db, scan_sink);
+            // DSH host autostart: adopt-or-spawn in the background when
+            // enabled; failures are logged, never fatal to startup.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let settings = settings::read_settings().unwrap_or_default();
+                    if settings.dsh_auto_start == Some(false) {
+                        return;
+                    }
+                    let state = handle.state::<AppState>();
+                    if let Err(error) = dsh_host::ensure_host(&state.dsh_host, &settings).await {
+                        eprintln!("[dsh] autostart failed: {error}");
+                    }
+                });
+            }
             // Dev convenience: `CCGUI_WEB_AUTOSTART=1 pnpm dev` starts the LAN
             // bridge at launch and prints the URL, so the web build can be
             // exercised without clicking the settings toggle.
@@ -105,6 +125,7 @@ pub fn run() {
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(state) = window.try_state::<AppState>() {
                     state.processes.kill_all();
+                    state.dsh_host.kill_spawned();
                     tauri::async_runtime::block_on(terminal::kill_all(&state.terminals));
                 }
             }
@@ -189,6 +210,12 @@ pub fn run() {
             web::web_access_start,
             web::web_access_stop,
             web::web_access_status,
+            // dsh host
+            dsh_host::dsh_host_status,
+            dsh_host::dsh_host_start,
+            dsh_host::dsh_host_stop,
+            dsh_host::dsh_cli_version,
+            dsh_host::dsh_cli_update,
             // baidu tongji (Linux-native transport; rejected elsewhere)
             baidu_tongji::load_baidu_tongji_script,
             baidu_tongji::send_baidu_tongji_beacon,

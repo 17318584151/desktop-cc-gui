@@ -12,6 +12,14 @@ import { WorkspacesSection } from "./WorkspacesSection";
 import { CliConfigSection } from "./CliConfigSection";
 import { AboutSection } from "./AboutSection";
 import { WebAccessSection } from "./WebAccessSection";
+import { DshHostSection } from "./DshHostSection";
+import { EngineIcon } from "@/components/foundations/icons/engine-icon";
+
+/** Nav-rail brand mark: the rail passes size classes but the dsh mark is an
+ *  <img> with an intrinsic px size, so pin it at the rail's md size. */
+const DshNavIcon = ({ className }: { className?: string; "aria-hidden"?: boolean | "true" | "false" }) => (
+  <EngineIcon engine="dsh" size={20} className={className} />
+);
 
 /** Unknown page params fall back to General. */
 const renderPage = (key: string) => {
@@ -19,6 +27,7 @@ const renderPage = (key: string) => {
   if (key === "workspaces") return <WorkspacesSection />;
   if (key === "webAccess") return <WebAccessSection />;
   if (key === "cliConfig") return <CliConfigSection />;
+  if (key === "dsh") return <DshHostSection />;
   return <GeneralSection />;
 };
 
@@ -44,6 +53,7 @@ export default function SettingsPage() {
           { key: "general", label: t("settings.general"), icon: Settings },
           { key: "workspaces", label: t("settings.workspaces"), icon: FolderSymlink },
           { key: "cliConfig", label: t("settings.cliConfig"), icon: SquareTerminal },
+          { key: "dsh", label: t("settings.dsh"), icon: DshNavIcon },
           { key: "webAccess", label: t("settings.webAccess"), icon: Smartphone },
           { key: "about", label: t("settings.about"), icon: Info },
         ],
@@ -58,6 +68,7 @@ export default function SettingsPage() {
       workspaces: t("settings.workspaces"),
       webAccess: t("settings.webAccess"),
       cliConfig: t("settings.cliConfig"),
+      dsh: t("settings.dsh"),
       about: t("settings.about"),
     }),
     [t],

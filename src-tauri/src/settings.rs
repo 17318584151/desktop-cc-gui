@@ -50,6 +50,15 @@ pub struct AppSettings {
     /// Validated with the same spawn-target rules as bin overrides.
     #[serde(default)]
     pub terminal_shell_path: Option<String>,
+    /// DeepSeek Harness host address; None/empty = 127.0.0.1.
+    #[serde(default)]
+    pub dsh_host: Option<String>,
+    /// DeepSeek Harness host port; None/0 = 3080.
+    #[serde(default)]
+    pub dsh_port: Option<u16>,
+    /// Auto-start the DSH host at app launch; None = on (`!= Some(false)`).
+    #[serde(default)]
+    pub dsh_auto_start: Option<bool>,
     /// Per-engine binary overrides. flatten keeps the legacy flat shape
     /// (`"claudeBin": …`) the frontend depends on; keys stay camelCase and
     /// unknown extra fields round-trip untouched.
@@ -84,6 +93,9 @@ impl Default for AppSettings {
             sidebar_thread_limit: default_sidebar_thread_limit(),
             composer_send_shortcut: default_composer_send_shortcut(),
             terminal_shell_path: None,
+            dsh_host: None,
+            dsh_port: None,
+            dsh_auto_start: None,
             bin_overrides: HashMap::new(),
         }
     }

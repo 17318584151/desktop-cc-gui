@@ -426,10 +426,10 @@ export function StatusBar({
           ) : (
             <span className="flex items-center gap-1">
               <GitMerge
-                className="size-4 shrink-0 -scale-y-100 text-foreground-icon-secondary"
+                className="size-3.5 shrink-0 -scale-y-100 text-foreground-icon-tertiary"
                 aria-hidden
               />
-              <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
+              <span className="text-caption-1-regular whitespace-nowrap text-text-tertiary">
                 {branch}
               </span>
             </span>

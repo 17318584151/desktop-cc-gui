@@ -110,10 +110,100 @@ pub async fn list_engine_models(engine: String) -> Result<EngineCatalog, String>
         "grok" => Ok(grok_catalog()),
         "claude" => Ok(claude_catalog()),
         "pi" | "omp" => Ok(pi_family_catalog(&engine).await),
+        "dsh" => dsh_catalog().await,
         // Unknown engine: no CLI-sourced catalog — the frontend fills the
         // picker from the configured provider channels.
         _ => Ok(EngineCatalog::authoritative(Vec::new())),
     }
+}
+
+/// DSH has no CLI-side catalog: the model list lives on the running host
+/// (`llm.models` RPC), grouped by provider. Never spawns the host — a down
+/// host is an error so the frontend keeps whatever catalog it already has
+/// instead of blanking the picker.
+async fn dsh_catalog() -> Result<EngineCatalog, String> {
+    let settings = crate::settings::read_settings().unwrap_or_default();
+    let origin = crate::dsh_host::configured_origin(&settings);
+    let describe = crate::dsh_host::probe_describe(&origin)
+        .await
+        .map_err(|_| format!("DSH host 未运行（{origin}）。在设置 → DeepSeek Harness 里启动后再试。"))?;
+    let catalog = crate::dsh_host::host_call(&origin, "llm.models", serde_json::json!({})).await?;
+    Ok(EngineCatalog::authoritative(flatten_llm_models(
+        &catalog,
+        Some(&describe),
+    )))
+}
+
+/// `llm.models` `{groups: [{id, name, models: [{id, name, description,
+/// default}]}]}` → flat catalog entries with `provider/model` selector ids.
+/// The host's current model (describe) or the group-marked default leads.
+fn flatten_llm_models(catalog: &serde_json::Value, describe: Option<&serde_json::Value>) -> Vec<EngineModel> {
+    let current = describe.and_then(|value| {
+        let provider = value.get("provider")?.as_str()?.trim();
+        let model = value.get("model")?.as_str()?.trim();
+        if provider.is_empty() || model.is_empty() {
+            return None;
+        }
+        Some(format!("{provider}/{model}"))
+    });
+    let mut models = Vec::new();
+    let mut default_id = current;
+    for group in catalog
+        .get("groups")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let provider = group
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .trim();
+        for model in group
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let model_id = model
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if provider.is_empty() || model_id.is_empty() {
+                continue;
+            }
+            let id = format!("{provider}/{model_id}");
+            if default_id.is_none() && model.get("default").and_then(serde_json::Value::as_bool) == Some(true) {
+                default_id = Some(id.clone());
+            }
+            models.push(EngineModel {
+                id,
+                name: model
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty() && *name != model_id)
+                    .map(str::to_string),
+                description: model
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_string),
+                provider: provider.to_string(),
+                context_window: None,
+            });
+        }
+    }
+    // The frontend auto-selects the leading entry when nothing is pinned:
+    // make it the host's current (or the catalog's default) model.
+    if let Some(default_id) = default_id {
+        if let Some(index) = models.iter().position(|model| model.id == default_id) {
+            models.rotate_left(index);
+        }
+    }
+    models
 }
 
 async fn codex_catalog() -> EngineCatalog {
