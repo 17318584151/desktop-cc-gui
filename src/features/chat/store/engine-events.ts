@@ -1,4 +1,4 @@
-import { ipc, type SessionMeta } from "@/lib/ipc";
+import { ipc, type SessionMeta, type TodosPayload } from "@/lib/ipc";
 import type { EngineEventPayload } from "@/lib/events";
 import { dedupeTabs, persistTabs, sessionKey } from "./persistence";
 import {
@@ -94,7 +94,7 @@ function onThinking(event: EngineEventPayload, key: string, deps: EngineEventDep
 }
 
 function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  const data = event.data as { role: string; text: string; path?: string | null };
+  const data = event.data as { role: string; text: string; path?: string | null; todos?: TodosPayload };
   if (data.role === "tool") {
     appendToolMessage(
       deps.set,
@@ -102,6 +102,7 @@ function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps
       data.text,
       deps.get().models[event.engine] || null,
       data.path ?? null,
+      data.todos ?? null,
     );
     return;
   }

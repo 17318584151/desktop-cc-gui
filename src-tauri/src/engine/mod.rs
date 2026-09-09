@@ -68,6 +68,9 @@ pub enum EngineEvent {
         role: String,
         text: String,
         path: Option<String>,
+        /// Todo-list snapshot/patch from a todo tool call (claude TodoWrite,
+        /// omp todo op); feeds the run-status strip's task pill.
+        todos: Option<TodosPayload>,
     },
     /// Native session id became known.
     SessionId(String),
@@ -85,6 +88,21 @@ pub enum EngineEvent {
     },
 }
 
+/// One todo entry carried to the frontend.
+#[derive(Debug, Clone, Serialize)]
+pub struct TodoItem {
+    pub content: String,
+    pub status: String,
+}
+
+/// `replace: true` is a full snapshot of the todo list; `false` is a patch
+/// the frontend applies by matching on `content`.
+#[derive(Debug, Clone, Serialize)]
+pub struct TodosPayload {
+    pub items: Vec<TodoItem>,
+    pub replace: bool,
+}
+
 /// First path-like argument of a tool call (`read`/`edit`/`write` use
 /// `path`, claude's tools use `file_path`). Returns None for tools whose
 /// args carry no file target (e.g. bash `command`). Glob patterns are kept
@@ -96,6 +114,97 @@ pub(crate) fn tool_path_arg(args: &Value) -> Option<String> {
         .map(|s| s.trim())
         .find(|s| !s.is_empty())
         .map(|s| s.to_string())
+}
+
+/// Parse a tool call's args into a todo-list payload. Two shapes: claude's
+/// TodoWrite (`todos` array, a full snapshot) and the omp harness todo
+/// protocol (`op` + task/list, mostly patches). None when the args carry
+/// no todo data.
+pub(crate) fn parse_todo_args(args: &Value) -> Option<TodosPayload> {
+    let pending_item = |content: &str| TodoItem {
+        content: content.to_string(),
+        status: "pending".to_string(),
+    };
+    // `list` phases, each with an `items` string array, flattened.
+    let phase_items = |args: &Value| -> Vec<TodoItem> {
+        args.get("list")
+            .and_then(Value::as_array)
+            .map(|phases| {
+                phases
+                    .iter()
+                    .filter_map(|phase| phase.get("items").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(pending_item)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if let Some(todos) = args.get("todos").and_then(Value::as_array) {
+        let items = todos
+            .iter()
+            .filter_map(|entry| {
+                let content = ["content", "text", "title", "task"]
+                    .iter()
+                    .filter_map(|key| entry.get(key).and_then(Value::as_str))
+                    .map(|s| s.trim())
+                    .find(|s| !s.is_empty())?;
+                let status = match entry.get("status").and_then(Value::as_str).unwrap_or("") {
+                    "in_progress" | "running" | "active" => "active",
+                    "completed" | "complete" | "done" => "complete",
+                    "blocked" => "blocked",
+                    _ => "pending",
+                };
+                Some(TodoItem {
+                    content: content.to_string(),
+                    status: status.to_string(),
+                })
+            })
+            .collect();
+        return Some(TodosPayload {
+            items,
+            replace: true,
+        });
+    }
+    let op = args.get("op").and_then(Value::as_str)?;
+    match op {
+        "init" => Some(TodosPayload {
+            items: phase_items(args),
+            replace: true,
+        }),
+        "append" => {
+            let items = match args.get("items").and_then(Value::as_array) {
+                Some(items) => items.iter().filter_map(Value::as_str).map(pending_item).collect(),
+                None => phase_items(args),
+            };
+            Some(TodosPayload {
+                items,
+                replace: false,
+            })
+        }
+        "start" | "done" | "block" | "unblock" | "drop" => {
+            let task = args.get("task").and_then(Value::as_str)?;
+            let status = match op {
+                "start" => "active",
+                "done" => "complete",
+                "block" => "blocked",
+                "unblock" => "pending",
+                _ => "dropped",
+            };
+            Some(TodosPayload {
+                items: vec![TodoItem {
+                    content: task.to_string(),
+                    status: status.to_string(),
+                }],
+                replace: false,
+            })
+        }
+        "rm" | "clear" => Some(TodosPayload {
+            items: Vec::new(),
+            replace: true,
+        }),
+        _ => None,
+    }
 }
 
 pub trait Engine: Send + Sync {
@@ -613,10 +722,20 @@ impl RunContext {
                 "thinking",
                 Value::String(text),
             ),
-            EngineEvent::Message { role, text, path } => {
+            EngineEvent::Message {
+                role,
+                text,
+                path,
+                todos,
+            } => {
                 let mut payload = serde_json::json!({ "role": role, "text": text });
                 if let Some(path) = path {
                     payload["path"] = Value::String(path);
+                }
+                if let Some(todos) = todos {
+                    if let Ok(value) = serde_json::to_value(todos) {
+                        payload["todos"] = value;
+                    }
                 }
                 state.push(
                     &self.sink,

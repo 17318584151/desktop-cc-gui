@@ -20,12 +20,27 @@ export interface SessionMeta {
   customTitle: string | null;
 }
 
+export type TodoStatus = "pending" | "active" | "complete" | "blocked" | "dropped";
+
+export interface TodoItem {
+  content: string;
+  status: TodoStatus;
+}
+
+/** Todo-list payload on todo-class tool rows: replace = full snapshot,
+ * otherwise a patch matched by content (status "dropped" removes). */
+export interface TodosPayload {
+  items: TodoItem[];
+  replace: boolean;
+}
+
 export interface Message {
   seq: number;
   role: string; // "user" | "assistant" | "tool" | "thinking"
   text: string;
   /** Target file of a tool call (read/edit/write/...); renders as a file chip. */
   path?: string | null;
+  todos?: TodosPayload;
   ts: string | null;
   usage?: unknown;
   model?: string | null;

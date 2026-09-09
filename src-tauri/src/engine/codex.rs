@@ -101,6 +101,7 @@ impl Engine for CodexEngine {
                                     role: "assistant".to_string(),
                                     text: text.to_string(),
                                     path: None,
+                                    todos: None,
                                 });
                             }
                         }
@@ -123,6 +124,7 @@ impl Engine for CodexEngine {
                             role: "tool".to_string(),
                             text: name.chars().take(120).collect(),
                             path: None,
+                            todos: None,
                         });
                     }
                     _ => {}

@@ -1,5 +1,13 @@
-import type { Message } from "@/lib/ipc";
-import type { AgentProgressStep } from "@/components/application/agent-progress/agent-progress";
+import type { Message, TodoItem } from "@/lib/ipc";
+
+export type AgentTaskStepState = "active" | "complete";
+
+export interface AgentTaskStep {
+  /** Stable identity across renders (steps only append within a run). */
+  key: string;
+  label: string;
+  state: AgentTaskStepState;
+}
 
 /**
  * Live subagent/task detection from the message stream.
@@ -66,10 +74,10 @@ export function deriveAgentTaskSteps(
   messages: Message[],
   streaming: boolean,
   engine: string,
-): AgentProgressStep[] {
+): AgentTaskStep[] {
   const turnStart = currentTurnStart(messages);
   const blockingSpawn = engine === "claude";
-  const steps: AgentProgressStep[] = [];
+  const steps: AgentTaskStep[] = [];
   for (let i = turnStart; i < messages.length; i++) {
     const message = messages[i];
     if (message.role !== "tool" || !isSubagentToolLabel(message.text)) continue;
@@ -97,21 +105,54 @@ export function deriveAgentTaskSteps(
 }
 
 /**
- * Unique files touched by edit-class tools in the current turn, in
- * first-edit order. Paths come from the tool start's path arg, so only
- * edits with a real file target count.
+ * Unique files touched by edit-class tools across the whole loaded session,
+ * in first-edit order — the reference app's contract: the 已编辑 pill is
+ * session-scoped (survives turn boundaries and history reopen), not
+ * turn-scoped. Paths come from the tool start's path arg, so only edits
+ * with a real file target count.
  */
 export function deriveEditedFiles(messages: Message[]): string[] {
-  const turnStart = currentTurnStart(messages);
   const seen = new Set<string>();
   const files: string[] = [];
-  for (let i = turnStart; i < messages.length; i++) {
+  for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (message.role !== "tool" || !message.path) continue;
     if (!isEditToolLabel(message.text)) continue;
+    // Tool rows also record non-file targets (xd:// device endpoints, URLs)
+    // — real file paths never carry a URI scheme.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(message.path)) continue;
     if (seen.has(message.path)) continue;
     seen.add(message.path);
     files.push(message.path);
   }
   return files;
+}
+
+/**
+ * Fold todo tool payloads across the whole loaded session into the current
+ * list. Two wire semantics: `replace` snapshots swap the list outright
+ * (TodoWrite-style full rewrites, init/clear ops); otherwise the payload is
+ * a patch matched by content (start/done/block/unblock), and "dropped"
+ * removes the item. Session-scoped like the edited-files pill.
+ */
+export function deriveTodoList(messages: Message[]): TodoItem[] {
+  let items: TodoItem[] = [];
+  for (const message of messages) {
+    const payload = message.todos;
+    if (!payload) continue;
+    if (payload.replace) {
+      items = payload.items.filter((item) => item.status !== "dropped");
+      continue;
+    }
+    for (const patch of payload.items) {
+      const idx = items.findIndex((item) => item.content === patch.content);
+      if (patch.status === "dropped") {
+        if (idx >= 0) items = items.filter((_, j) => j !== idx);
+        continue;
+      }
+      if (idx >= 0) items[idx] = patch;
+      else items = [...items, patch];
+    }
+  }
+  return items;
 }

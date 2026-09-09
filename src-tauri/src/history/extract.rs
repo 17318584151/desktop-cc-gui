@@ -118,6 +118,7 @@ fn collect_session(reader: impl BufRead, extract: &LineExtractor<'_>) -> ParsedS
             text: row.text,
             ts: row.ts,
             path: row.path,
+            todos: row.todos,
             usage: row.usage,
             model: row.model,
             images: row.images,
@@ -320,6 +321,7 @@ struct LineRow {
     text: String,
     ts: Option<String>,
     path: Option<String>,
+    todos: Option<crate::engine::TodosPayload>,
     usage: Option<Value>,
     model: Option<String>,
     images: Vec<String>,
@@ -333,6 +335,7 @@ impl LineRow {
             text,
             ts,
             path: None,
+            todos: None,
             usage: None,
             model: None,
             images: Vec::new(),
@@ -467,6 +470,10 @@ fn pi_assistant_part(part: &Value, out: &mut LineRows, text: &mut String, ts: &O
             let intent = part.get("intent").and_then(Value::as_str);
             out.push(LineRow {
                 path: part.get("arguments").and_then(crate::engine::tool_path_arg),
+                // Session files store `arguments` as an already-parsed object.
+                todos: part
+                    .get("arguments")
+                    .and_then(crate::engine::parse_todo_args),
                 ..LineRow::new(
                     "tool",
                     crate::engine::pi_family::tool_label(name, intent),
@@ -604,6 +611,7 @@ fn claude_block_rows(
                 .to_string();
             out.push(LineRow {
                 path: block.get("input").and_then(crate::engine::tool_path_arg),
+                todos: block.get("input").and_then(crate::engine::parse_todo_args),
                 ..LineRow::new("tool", name, ts.clone())
             });
         }
@@ -868,6 +876,56 @@ mod tests {
         assert_eq!(rows[1].text, "reply");
         assert_eq!(rows[2].text, "Bash");
     }
+
+    #[test]
+    fn pi_toolcall_row_carries_todo_patch() {
+        let line: Value = serde_json::json!({
+            "type": "message",
+            "timestamp": "2026-09-05T11:12:16.469Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "toolCall", "name": "todo", "arguments": {"op": "done", "task": "scan files"}}
+                ]
+            }
+        });
+        let rows = extract_pi_family_line(&line, ImageMode::Collect);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].role, "tool");
+        let todos = rows[0].todos.as_ref().expect("todos payload");
+        assert!(!todos.replace);
+        assert_eq!(todos.items.len(), 1);
+        assert_eq!(todos.items[0].content, "scan files");
+        assert_eq!(todos.items[0].status, "complete");
+    }
+
+    #[test]
+    fn claude_tool_use_row_carries_todowrite_snapshot() {
+        let line: Value = serde_json::json!({
+            "type": "assistant",
+            "timestamp": "2026-09-05T11:12:16.469Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "TodoWrite", "input": {"todos": [
+                        {"content": "scan files", "status": "completed"},
+                        {"content": "write code", "status": "in_progress"},
+                        {"content": "run tests", "status": "pending"},
+                        {"content": "deploy", "status": "blocked"}
+                    ]}}
+                ]
+            }
+        });
+        let rows = extract_claude_line(&line, ImageMode::Collect);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].role, "tool");
+        let todos = rows[0].todos.as_ref().expect("todos payload");
+        assert!(todos.replace);
+        let statuses: Vec<&str> = todos.items.iter().map(|i| i.status.as_str()).collect();
+        assert_eq!(statuses, ["complete", "active", "pending", "blocked"]);
+        assert_eq!(todos.items[1].content, "write code");
+    }
+
     #[test]
     fn claude_line_drops_is_meta_command_expansion() {
         let expansion: Value = serde_json::json!({

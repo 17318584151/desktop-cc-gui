@@ -5,6 +5,7 @@ pub mod scanner;
 
 pub use extract::{parse_session_file, scan_summary_file, ParsedSession, ScanSummary};
 
+use crate::engine::TodosPayload;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,10 @@ pub struct Message {
     /// chip in the timeline. None for non-tool rows and path-less tools.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Todo-list snapshot/patch from a todo tool call (claude TodoWrite,
+    /// omp todo op); feeds the run-status strip's task pill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub todos: Option<TodosPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

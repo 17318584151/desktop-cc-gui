@@ -198,11 +198,13 @@ fn parse_content_block_start(event: &Value, out: &mut Vec<EngineEvent>) {
     }
     let name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
     // content_block_start carries `input: {}` — the real arguments stream in
-    // later as partial JSON deltas, so no path is available here.
+    // later as partial JSON deltas, so no path (and no TodoWrite todos) is
+    // available here; todos surface from the session history instead.
     out.push(EngineEvent::Message {
         role: "tool".to_string(),
         text: name.to_string(),
         path: None,
+        todos: None,
     });
 }
 

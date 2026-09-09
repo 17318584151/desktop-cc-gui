@@ -142,10 +142,12 @@ fn parse_pi_family_line(line: &str, out: &mut Vec<EngineEvent>) {
                 .unwrap_or("tool");
             let intent = value.get("intent").and_then(Value::as_str);
             let path = value.get("args").and_then(super::tool_path_arg);
+            let todos = value.get("args").and_then(super::parse_todo_args);
             out.push(EngineEvent::Message {
                 role: "tool".to_string(),
                 text: tool_label(name, intent),
                 path,
+                todos,
             });
         }
         "message_end" => {
@@ -272,7 +274,9 @@ mod tests {
         let mut out = Vec::new();
         parse_pi_family_line(&line, &mut out);
         match &out[0] {
-            EngineEvent::Message { role, text, path } => {
+            EngineEvent::Message {
+                role, text, path, ..
+            } => {
                 assert_eq!(role, "tool");
                 assert_eq!(text, "edit · Adding chrome token");
                 assert_eq!(path.as_deref(), Some("src/app.tsx"));
@@ -292,6 +296,52 @@ mod tests {
         parse_pi_family_line(&line, &mut out);
         match &out[0] {
             EngineEvent::Message { path, .. } => assert_eq!(*path, None),
+            _ => panic!("expected tool message"),
+        }
+    }
+
+    #[test]
+    fn tool_execution_start_carries_todo_payload() {
+        let line = serde_json::json!({
+            "type": "tool_execution_start",
+            "toolCallId": "tool_3",
+            "toolName": "todo",
+            "args": {
+                "op": "init",
+                "list": [
+                    {"phase": "scaffold", "items": ["scan files", "write code"]}
+                ]
+            }
+        })
+        .to_string();
+        let mut out = Vec::new();
+        parse_pi_family_line(&line, &mut out);
+        match &out[0] {
+            EngineEvent::Message {
+                todos: Some(todos), ..
+            } => {
+                assert!(todos.replace);
+                assert_eq!(todos.items.len(), 2);
+                assert_eq!(todos.items[0].content, "scan files");
+                assert_eq!(todos.items[0].status, "pending");
+                assert_eq!(todos.items[1].content, "write code");
+                assert_eq!(todos.items[1].status, "pending");
+            }
+            _ => panic!("expected tool message with todos"),
+        }
+
+        // Non-todo tool args carry no payload.
+        let line = serde_json::json!({
+            "type": "tool_execution_start",
+            "toolCallId": "tool_4",
+            "toolName": "bash",
+            "args": { "command": "ls" }
+        })
+        .to_string();
+        let mut out = Vec::new();
+        parse_pi_family_line(&line, &mut out);
+        match &out[0] {
+            EngineEvent::Message { todos, .. } => assert!(todos.is_none()),
             _ => panic!("expected tool message"),
         }
     }

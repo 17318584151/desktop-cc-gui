@@ -69,6 +69,7 @@ impl Engine for KimiEngine {
                             role: "assistant".to_string(),
                             text,
                             path: None,
+                            todos: None,
                         });
                     }
                 }
@@ -83,6 +84,7 @@ impl Engine for KimiEngine {
                             role: "tool".to_string(),
                             text: name.to_string(),
                             path: None,
+                            todos: None,
                         });
                     }
                 }
@@ -97,6 +99,7 @@ impl Engine for KimiEngine {
                             role: "tool".to_string(),
                             text: content.trim().chars().take(200).collect(),
                             path: None,
+                            todos: None,
                         });
                     }
                 }

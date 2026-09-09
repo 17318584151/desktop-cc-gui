@@ -11,7 +11,7 @@ import type { BranchInfo, Workspace } from "@/lib/ipc";
 import type { ActiveSession, QueuedMessage } from "../store";
 import { useChatStore } from "../store";
 import { ImageLightbox } from "./MessageImages";
-import { AgentTasksPanel } from "./AgentTasksPanel";
+import { RunStatusStrip } from "./RunStatusStrip";
 import { sessionKey } from "../store";
 import { ComposerSlotExtras } from "@/features/plugins/boundary/composer-slot-extras";
 import { COMPOSER_DRAFT_TOPIC, pluginBus } from "@/features/plugins/runtime/events";
@@ -219,9 +219,10 @@ export function ConversationFooter({
           </div>
         )}
         <div className="mx-auto w-full max-w-3xl">
-          <AgentTasksPanel
+          <RunStatusStrip
             sessionKey={active ? sessionKey(active.engine, active.sessionId, active.workspacePath) : ""}
             engine={active?.engine ?? ""}
+            workspacePath={active?.workspacePath ?? ""}
           />
         </div>
         <Composer
