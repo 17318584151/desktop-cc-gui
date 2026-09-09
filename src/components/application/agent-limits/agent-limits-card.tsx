@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
-import { AnimatePresence, m } from "motion/react";
+import { Collapsible } from "@/components/application/collapsible/collapsible";
 import { cx } from "@/utils/cx";
 import { formatTokens } from "./format-tokens";
 
@@ -95,8 +95,6 @@ export interface AgentLimitsCardProps {
   className?: string;
 }
 
-const EASE = [0.22, 1, 0.36, 1] as const;
-
 /** Thin rounded track + fill, the same bar the earnings/steps cards use. */
 function Bar({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
@@ -185,19 +183,14 @@ export function AgentLimitsCard({
         )}
       </Bar>
 
-      <AnimatePresence initial={false}>
-        {expanded && (
-          <m.div
-            key="breakdown"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.32, ease: EASE }}
-            // The panel clips for the height animation, so it bleeds 8px past
-            // the content and pads back in - the hover pills on the rows below
-            // extend into that gutter and keep their rounded corners.
-            className="-mx-2 overflow-hidden px-2"
-          >
+      <Collapsible
+        open={expanded}
+        seconds={0.32}
+        // The panel clips while collapsing, so it bleeds 8px past the content
+        // and pads back in - the hover pills on the rows below extend into
+        // that gutter and keep their rounded corners.
+        innerClassName="-mx-2 px-2"
+      >
             <div className="flex flex-col pt-3">
               {context.segments.map((s, i) => (
                 <div key={s.label} className="flex items-center gap-2 py-[5px]">
@@ -246,16 +239,7 @@ export function AgentLimitsCard({
                             {g.items.length}
                           </span>
                         </button>
-                        <AnimatePresence initial={false}>
-                          {open && (
-                            <m.div
-                              key="items"
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: "auto", opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.26, ease: EASE }}
-                              className="overflow-hidden"
-                            >
+                        <Collapsible open={open} seconds={0.26}>
                               <div className="flex flex-col pb-1 pl-[22px]">
                                 {g.items.map((item) => (
                                   <div key={item.label} className="flex items-center gap-2 py-1">
@@ -269,18 +253,14 @@ export function AgentLimitsCard({
                                   </div>
                                 ))}
                               </div>
-                            </m.div>
-                          )}
-                        </AnimatePresence>
+                        </Collapsible>
                       </div>
                     );
                   })}
                 </div>
               )}
             </div>
-          </m.div>
-        )}
-      </AnimatePresence>
+      </Collapsible>
 
       {/* ------------------------------------------------- plan limits */}
       {limits.length > 0 && (

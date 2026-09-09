@@ -235,13 +235,11 @@ function StepRow({
       }}
       className="h-8 w-full"
     >
-      <motion.div
-        animate={{
-          paddingLeft: active ? 9 : 4,
-          paddingRight: active ? 13 : 4,
-        }}
-        transition={{ duration: 0.36, ease: EASE }}
-        className="relative flex h-full w-full items-center gap-2 rounded-full"
+      <div
+        className={cx(
+          "relative flex h-full w-full items-center gap-2 rounded-full transition-[padding] duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+          active ? "pr-[13px] pl-[9px]" : "px-1",
+        )}
       >
         {/* No shared layoutId here: real subagents run in parallel, so more
             than one row can be active at once. */}
@@ -298,7 +296,7 @@ function StepRow({
         <span className="relative z-10 flex min-w-0 flex-1 items-center truncate leading-5">
           <AnimatedStepLabel label={label} complete={complete} active={active} />
         </span>
-      </motion.div>
+      </div>
     </motion.div>
   );
 }
@@ -328,25 +326,28 @@ export function AgentProgress({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: -12, height: 0, filter: "blur(8px)" }}
+      initial={{ opacity: 0, y: -12, filter: "blur(8px)" }}
       animate={{
         opacity: 1,
         y: 0,
-        height: minimized ? 44 : expandedHeight,
         filter: "blur(0px)",
       }}
-      exit={{ opacity: 0, y: -8, height: 0, filter: "blur(6px)" }}
+      exit={{ opacity: 0, y: -8, filter: "blur(6px)" }}
       transition={{
         opacity: { duration: 0.35, ease: EASE },
         y: { duration: 0.5, ease: EASE },
         filter: { duration: 0.4, ease: EASE },
-        height: {
-          duration: minimized ? 0.42 : fastReopen ? MODULE_REOPEN_SECONDS : MODULE_EXPAND_SECONDS,
-          ease: EASE,
-        },
       }}
-      onAnimationComplete={() => {
-        if (!minimized) setFastReopen(false);
+      // Height rides a CSS transition (browser-interpolated, no per-frame JS);
+      // the box resizes for real, so chat below is still pushed smoothly.
+      style={{
+        height: minimized ? 44 : expandedHeight,
+        transition: `height ${minimized ? 0.42 : fastReopen ? MODULE_REOPEN_SECONDS : MODULE_EXPAND_SECONDS}s cubic-bezier(0.22, 1, 0.36, 1)`,
+      }}
+      onTransitionEnd={(e) => {
+        if (e.propertyName === "height" && e.target === e.currentTarget && !minimized) {
+          setFastReopen(false);
+        }
       }}
       className={cx(
         "relative w-full max-w-full overflow-hidden rounded-2xl border border-border-button-default bg-background-primary-default shadow-xs",
@@ -392,10 +393,10 @@ export function AgentProgress({
                 {!complete && (
                   <motion.span
                     key="progress-ring"
-                    className="flex h-4 w-6 shrink-0 items-center overflow-hidden"
-                    initial={{ width: 24, opacity: 1 }}
-                    animate={{ width: 24, opacity: 1 }}
-                    exit={{ width: 0, opacity: 0 }}
+                    className="flex h-4 w-6 shrink-0 origin-left items-center overflow-hidden"
+                    initial={{ opacity: 1 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0, scaleX: 0 }}
                     transition={{ duration: 0.4, ease: EASE }}
                   />
                 )}
@@ -441,10 +442,10 @@ export function AgentProgress({
                   {!complete && (
                     <motion.span
                       key="progress-ring"
-                      className="flex h-4 w-6 shrink-0 items-center overflow-hidden"
-                      initial={{ width: 24, opacity: 1 }}
-                      animate={{ width: 24, opacity: 1 }}
-                      exit={{ width: 0, opacity: 0 }}
+                      className="flex h-4 w-6 shrink-0 origin-left items-center overflow-hidden"
+                      initial={{ opacity: 1 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0, scaleX: 0 }}
                       transition={{ duration: 0.4, ease: EASE }}
                     />
                   )}

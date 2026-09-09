@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { AgentProgress } from "@/components/application/agent-progress/agent-progress";
+import { Collapsible } from "@/components/application/collapsible/collapsible";
 import { useChatStore } from "../store";
 import { deriveAgentTaskSteps, deriveEditedFiles } from "./agent-task-steps";
 import type { Message } from "@/lib/ipc";
@@ -24,9 +25,9 @@ function EditedFilesCard({ files, live }: { files: string[]; live: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <motion.div
-      initial={{ opacity: 0, y: -8, height: 0, filter: "blur(6px)" }}
-      animate={{ opacity: 1, y: 0, height: "auto", filter: "blur(0px)" }}
-      exit={{ opacity: 0, y: -8, height: 0, filter: "blur(6px)" }}
+      initial={{ opacity: 0, y: -8, filter: "blur(6px)" }}
+      animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+      exit={{ opacity: 0, y: -8, filter: "blur(6px)" }}
       transition={{ duration: 0.4, ease: EASE }}
       className="overflow-hidden rounded-2xl border border-border-button-default bg-background-primary-default shadow-xs"
       data-testid="edited-files-card"
@@ -61,16 +62,9 @@ function EditedFilesCard({ files, live }: { files: string[]; live: boolean }) {
           <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
-      <AnimatePresence initial={false}>
+      <Collapsible open={open} seconds={0.28}>
         {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.28, ease: EASE }}
-            className="overflow-hidden"
-          >
-            <div className="flex flex-col gap-0.5 px-3.5 pt-0 pb-2.5">
+          <div className="flex flex-col gap-0.5 px-3.5 pt-0 pb-2.5">
               {files.map((file, index) => (
                 <motion.div
                   key={file}
@@ -88,10 +82,9 @@ function EditedFilesCard({ files, live }: { files: string[]; live: boolean }) {
                   </span>
                 </motion.div>
               ))}
-            </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </Collapsible>
     </motion.div>
   );
 }
