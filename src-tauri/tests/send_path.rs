@@ -311,3 +311,78 @@ fn ipc_send_message_accepts_camel_case_args() {
     let run_id = value.get("runId").and_then(Value::as_str).unwrap_or("");
     assert!(!run_id.is_empty(), "expected runId in response: {value}");
 }
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn omp_send_uses_persisted_tier_and_model_without_touching_cli_config() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let home = temp_home("omp-tier");
+    std::fs::create_dir_all(home.join(".ccgui-next")).unwrap();
+    let bin_dir = home.join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let script = bin_dir.join("omp");
+    std::fs::write(
+        &script,
+        r#"#!/bin/sh
+printf '%s\n' "$@" > omp-args.txt
+echo '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"ok"}}'
+echo '{"type":"agent_end"}'
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::env::set_var("PATH", format!("{}:/usr/bin:/bin", bin_dir.display()));
+    let workspace = home.join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let (app, events) = build_app(&home);
+    let mut settings = ccgui_next_lib::settings::AppSettings::default();
+    settings
+        .default_models
+        .insert("omp".into(), "openai-codex/gpt-5.4".into());
+    for tier in [Some("priority"), Some("default"), None] {
+        settings.omp_openai_service_tier = tier.map(str::to_string);
+        ccgui_next_lib::settings::update_app_settings(settings.clone()).unwrap();
+        events.lock().unwrap().clear();
+        engine::send_message(
+            app.state(),
+            "omp".into(),
+            workspace.to_string_lossy().into(),
+            None,
+            "hi".into(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if events.lock().unwrap().iter().any(|e| e["kind"] == "done") {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "OMP did not complete");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let text = std::fs::read_to_string(workspace.join("omp-args.txt")).unwrap();
+        let args: Vec<_> = text.lines().collect();
+        assert!(args
+            .windows(2)
+            .any(|a| a == ["--model", "openai-codex/gpt-5.4"]));
+        let actual = args
+            .iter()
+            .position(|a| *a == "--service-tier")
+            .map(|i| args[i + 1]);
+        assert_eq!(actual, tier);
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "delta" && e["data"] == "ok"));
+    }
+    assert!(!home.join(".omp/agent/config.yml").exists());
+}

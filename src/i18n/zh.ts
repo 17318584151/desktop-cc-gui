@@ -13,6 +13,13 @@ export const zh = {
     copied: "已复制",
   },
   chat: {
+    ompSpeed: "生成速度",
+    ompSpeedInherit: "跟随 OMP 设置",
+    ompSpeedStandard: "标准",
+    ompSpeedHint: "从下一条消息生效，适用于 OMP 的 OpenAI/Codex 模型。Fast 会消耗更多额度，实际可用性取决于模型和账户。",
+    ompSpeedUnsupported: "选择 OpenAI/Codex 模型后可设置 Fast。",
+    ompSpeedSaveError: "保存失败，速度设置未更改，请重试。",
+
     newChat: "新对话",
     newSession: "新建会话",
     collapseSidebar: "收起侧边栏",

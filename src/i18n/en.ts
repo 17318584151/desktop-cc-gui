@@ -15,6 +15,13 @@ export const en: Messages = {
     copied: "Copied",
   },
   chat: {
+    ompSpeed: "Generation speed",
+    ompSpeedInherit: "Use OMP setting",
+    ompSpeedStandard: "Standard",
+    ompSpeedHint: "Applies to the next message for OMP OpenAI/Codex models. Fast uses more credits; availability depends on the model and account.",
+    ompSpeedUnsupported: "Select an OpenAI/Codex model to configure Fast.",
+    ompSpeedSaveError: "Could not save. Speed setting is unchanged; please retry.",
+
     newChat: "New chat",
     newSession: "New session",
     collapseSidebar: "Collapse sidebar",

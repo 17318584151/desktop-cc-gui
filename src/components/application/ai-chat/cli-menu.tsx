@@ -1,3 +1,5 @@
+import { OmpSpeedSection } from "./omp-speed-section";
+import { supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -394,6 +396,8 @@ function EngineModelPanel({
   effort,
   onPickModel,
   onEffortChange,
+  ompServiceTier,
+  onOmpServiceTierChange,
   onRefresh,
   onClose,
 }: {
@@ -405,6 +409,8 @@ function EngineModelPanel({
   effort: EffortLevel;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  ompServiceTier: OmpServiceTier;
+  onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs without an app restart. */
   onRefresh?: () => void | Promise<void>;
   onClose?: () => void;
@@ -530,6 +536,7 @@ function EngineModelPanel({
 
       {/* Full-bleed divider, like the reference submenu. */}
       <div aria-hidden className="-mx-1 mt-[7px] mb-3 h-px bg-border-button-default" />
+      {option.id === "omp" && <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange} />}
       <FlyoutEffortSection
         effort={effort}
         onChange={(level) => onEffortChange(option.id, level)}
@@ -566,6 +573,8 @@ export function CliMenu({
   onModelChange,
   efforts,
   onEffortChange,
+  ompServiceTier,
+  onOmpServiceTierChange,
   onRefreshModels,
 }: {
   options: MenuOption[];
@@ -579,6 +588,8 @@ export function CliMenu({
   /** Per-engine reasoning effort, rendered under each flyout's model list. */
   efforts: Record<string, EffortLevel>;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  ompServiceTier: OmpServiceTier;
+  onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs (flyout refresh button). */
   onRefreshModels?: () => void | Promise<void>;
 }) {
@@ -666,6 +677,7 @@ export function CliMenu({
             ·
           </span>
           <span className="shrink-0 max-md:hidden">{t(EFFORT_LABEL_KEYS[triggerEffort])}</span>
+          {value === "omp" && ompServiceTier === "priority" && supportsOmpFastMode(models[value] ?? "") && <span className="shrink-0 text-text-primary">Fast</span>}
         </span>
       </AriaButton>
 
@@ -731,6 +743,8 @@ export function CliMenu({
                   effort={efforts[flyoutOption.id] ?? "medium"}
                   onPickModel={pickModel}
                   onEffortChange={onEffortChange}
+                  ompServiceTier={ompServiceTier}
+                  onOmpServiceTierChange={onOmpServiceTierChange}
                   onRefresh={onRefreshModels}
                 />
               )}
@@ -754,6 +768,8 @@ export function CliMenu({
           effort={efforts[dialogOption.id] ?? "medium"}
           onPickModel={pickModel}
           onEffortChange={onEffortChange}
+          ompServiceTier={ompServiceTier}
+          onOmpServiceTierChange={onOmpServiceTierChange}
           onRefresh={onRefreshModels}
           onClose={() => setDialogEngine(null)}
         />
