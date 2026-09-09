@@ -1,5 +1,5 @@
 use super::{
-    command_for_binary, images, push_session_id, safe_prompt_arg, BuiltCommand, Engine,
+    command_for_binary, images, push_session_id, BuiltCommand, Engine,
     EngineEvent, SendRequest,
 };
 use serde_json::Value;
@@ -70,11 +70,15 @@ impl Engine for CodexEngine {
                 cmd.arg(path);
             }
         }
-        // Prompt as positional arg.
-        cmd.arg(safe_prompt_arg(&req.prompt));
+        // Prompt travels through stdin (`-`), never argv: on Windows the codex
+        // shim is a `.cmd` batch file and cmd.exe cuts a multiline argument at
+        // the first newline — every line after the first was dropped (or worse,
+        // executed as a command). stdin also dodges cmd's `%VAR%` expansion of
+        // quoted args. `codex exec [resume] -` reads the prompt from stdin.
+        cmd.arg("-");
         Ok(BuiltCommand {
             command: cmd,
-            stdin_payload: None,
+            stdin_payload: Some(req.prompt.clone()),
             cleanup_files: Vec::new(),
             preassigned_session_id: preassigned,
         })

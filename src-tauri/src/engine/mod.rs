@@ -1144,6 +1144,38 @@ mod permission_tests {
     }
 
     #[test]
+    fn codex_prompt_goes_through_stdin_not_argv() {
+        // Windows resolves npm codex to a `.cmd` shim spawned via `cmd /c`;
+        // cmd.exe cuts a multiline argument at the first newline, so only line
+        // 1 ever reached the model. The prompt must ride stdin (`-`) verbatim.
+        let e = codex::CodexEngine;
+        let mut request = req(Some("auto"));
+        request.prompt = "first line\nmodel = \"gpt-5\"\n%PATH%".to_string();
+        let built = e.build_command(&request, "fake-bin").unwrap();
+        let args: Vec<String> = built
+            .command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.contains(&"-".to_string()));
+        assert!(!args.iter().any(|a| a.contains("first line")));
+        assert_eq!(built.stdin_payload.as_deref(), Some(request.prompt.as_str()));
+
+        let mut resume = req(Some("auto"));
+        resume.session_id = Some("00000000-0000-0000-0000-000000000000".to_string());
+        let built = e.build_command(&resume, "fake-bin").unwrap();
+        let args: Vec<String> = built
+            .command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.contains(&"-".to_string()));
+        assert_eq!(built.stdin_payload.as_deref(), Some("hi"));
+    }
+
+    #[test]
     fn kimi_maps_plan_and_bypass() {
         let e = kimi::KimiEngine;
         let auto = argv(&e, &req(Some("auto")));
