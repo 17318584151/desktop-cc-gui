@@ -70,7 +70,10 @@ pub enum EngineEvent {
     Thinking(String),
     /// A completed message block (role, text). `path` carries the target
     /// file of a tool call (read/edit/write/...) so the UI can render a
-    /// file chip; None for everything else.
+    /// file chip; None for everything else. `args` is the tool-call payload
+    /// (pretty-printed in the timeline). `patch` updates the oldest
+    /// still-incomplete tool row of the same name (claude streams args
+    /// after the name-only start).
     Message {
         role: String,
         text: String,
@@ -78,6 +81,9 @@ pub enum EngineEvent {
         /// Todo-list snapshot/patch from a todo tool call (claude TodoWrite,
         /// omp todo op); feeds the run-status strip's task pill.
         todos: Option<TodosPayload>,
+        args: Option<Value>,
+        result: Option<Value>,
+        patch: bool,
     },
     /// Native session id became known.
     SessionId(String),
@@ -117,6 +123,90 @@ pub struct TodoItem {
 pub struct TodosPayload {
     pub items: Vec<TodoItem>,
     pub replace: bool,
+}
+
+/// Drop empty / null payloads so the UI does not render a blank args panel.
+/// JSON-encoded strings (OpenAI-style `function.arguments`) are parsed first.
+pub(crate) fn parse_tool_args_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::Null => None,
+        Value::Object(map) if map.is_empty() => None,
+        Value::Array(items) if items.is_empty() => None,
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            match serde_json::from_str::<Value>(trimmed) {
+                Ok(parsed) => parse_tool_args_value(&parsed).or_else(|| Some(Value::String(trimmed.to_string()))),
+                Err(_) => Some(Value::String(trimmed.to_string())),
+            }
+        }
+        other => Some(other.clone()),
+    }
+}
+
+/// Tool-call start: name plus parsed args (path / todos derived from args).
+pub(crate) fn tool_call_message(name: impl Into<String>, args: Option<&Value>) -> EngineEvent {
+    let args = args.and_then(parse_tool_args_value);
+    EngineEvent::Message {
+        role: "tool".to_string(),
+        text: name.into(),
+        path: args.as_ref().and_then(tool_path_arg),
+        todos: args.as_ref().and_then(parse_todo_args),
+        args,
+        result: None,
+        patch: false,
+    }
+}
+
+/// Same as [`tool_call_message`] but patches the matching in-flight tool row.
+pub(crate) fn tool_call_patch(name: impl Into<String>, args: Option<&Value>) -> EngineEvent {
+    match tool_call_message(name, args) {
+        EngineEvent::Message {
+            role,
+            text,
+            path,
+            todos,
+            args,
+            ..
+        } => EngineEvent::Message {
+            role,
+            text,
+            path,
+            todos,
+            args,
+            result: None,
+            patch: true,
+        },
+        other => other,
+    }
+}
+
+/// Patches execution result onto the matching in-flight tool row.
+pub(crate) fn tool_result_patch(name: impl Into<String>, result: Option<&Value>) -> EngineEvent {
+    EngineEvent::Message {
+        role: "tool".to_string(),
+        text: name.into(),
+        path: None,
+        todos: None,
+        args: None,
+        result: result.cloned(),
+        patch: true,
+    }
+}
+
+/// Assistant snapshot with no tool metadata.
+pub(crate) fn assistant_message(text: String) -> EngineEvent {
+    EngineEvent::Message {
+        role: "assistant".to_string(),
+        text,
+        path: None,
+        todos: None,
+        args: None,
+        result: None,
+        patch: false,
+    }
 }
 
 /// First path-like argument of a tool call (`read`/`edit`/`write` use
@@ -249,7 +339,7 @@ pub trait Engine: Send + Sync {
 
 pub fn engine_by_id(id: &str) -> Option<Box<dyn Engine>> {
     match id {
-        "claude" => Some(Box::new(claude::ClaudeEngine)),
+        "claude" => Some(Box::new(claude::ClaudeEngine::new())),
         "kimi" => Some(Box::new(kimi::KimiEngine)),
         "grok" => Some(Box::new(grok::GrokEngine)),
         "codex" => Some(Box::new(codex::CodexEngine)),
@@ -755,6 +845,9 @@ impl RunContext {
                 text,
                 path,
                 todos,
+                args,
+                result,
+                patch,
             } => {
                 let mut payload = serde_json::json!({ "role": role, "text": text });
                 if let Some(path) = path {
@@ -764,6 +857,15 @@ impl RunContext {
                     if let Ok(value) = serde_json::to_value(todos) {
                         payload["todos"] = value;
                     }
+                }
+                if let Some(args) = args {
+                    payload["args"] = args;
+                }
+                if let Some(result) = result {
+                    payload["result"] = result;
+                }
+                if patch {
+                    payload["patch"] = Value::Bool(true);
                 }
                 state.push(
                     &self.sink,
@@ -1138,7 +1240,7 @@ mod permission_tests {
 
     #[test]
     fn claude_maps_modes_to_permission_flags() {
-        let e = claude::ClaudeEngine;
+        let e = claude::ClaudeEngine::new();
         let auto = argv(&e, &req(Some("auto")));
         assert!(auto.contains(&"--permission-mode".to_string()));
         assert!(auto.contains(&"acceptEdits".to_string()));
@@ -1239,7 +1341,7 @@ mod permission_tests {
 
     #[test]
     fn claude_passes_granted_dirs_as_add_dir() {
-        let e = claude::ClaudeEngine;
+        let e = claude::ClaudeEngine::new();
         let mut r = req(Some("auto"));
         // Workspace itself, blanks and duplicates must not reach argv.
         r.additional_dirs = vec![
@@ -1272,6 +1374,49 @@ mod permission_tests {
             None,
         ] {
             assert!(argv(&e, &req(mode)).contains(&"--always-approve".to_string()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_args_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_tool_args_value_drops_empty_and_parses_strings() {
+        assert_eq!(parse_tool_args_value(&Value::Null), None);
+        assert_eq!(parse_tool_args_value(&json!({})), None);
+        assert_eq!(parse_tool_args_value(&json!([])), None);
+        assert_eq!(
+            parse_tool_args_value(&json!("{\"path\":\"a.ts\"}")),
+            Some(json!({"path": "a.ts"}))
+        );
+        assert_eq!(
+            parse_tool_args_value(&json!({"file_path": "a.ts"})),
+            Some(json!({"file_path": "a.ts"}))
+        );
+        assert_eq!(
+            parse_tool_args_value(&json!("plain command")),
+            Some(json!("plain command"))
+        );
+    }
+
+    #[test]
+    fn tool_call_message_extracts_path_and_marks_patch() {
+        match tool_call_message("Read", Some(&json!({"file_path": "src/a.ts"}))) {
+            EngineEvent::Message {
+                path, args, patch, ..
+            } => {
+                assert_eq!(path.as_deref(), Some("src/a.ts"));
+                assert_eq!(args, Some(json!({"file_path": "src/a.ts"})));
+                assert!(!patch);
+            }
+            _ => panic!("expected tool message"),
+        }
+        match tool_call_patch("Read", Some(&json!({"file_path": "src/a.ts"}))) {
+            EngineEvent::Message { patch, .. } => assert!(patch),
+            _ => panic!("expected patch"),
         }
     }
 }

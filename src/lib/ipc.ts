@@ -40,10 +40,18 @@ export interface Message {
   text: string;
   /** Target file of a tool call (read/edit/write/...); renders as a file chip. */
   path?: string | null;
+  /** Full tool-call arguments; shown in the expandable tool-call panel. */
+  args?: unknown;
+  /** Tool execution result/output; shown in the tool panel. */
+  result?: unknown;
   todos?: TodosPayload;
   ts: string | null;
   usage?: unknown;
   model?: string | null;
+  /** Reasoning effort level ("low" | "medium" | "high" | "xhigh" | "max") */
+  effort?: string | null;
+  /** Turn duration in milliseconds (measured from prompt send to turn completion) */
+  durationMs?: number | null;
   /** True while the row belongs to the in-flight stream and may still grow. */
   live?: boolean;
   /** Permission-denial card state (role "grant"): the CLI denied a tool call

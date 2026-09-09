@@ -21,6 +21,13 @@ pub struct Message {
     /// chip in the timeline. None for non-tool rows and path-less tools.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Full tool-call arguments (object / array / string). Rendered in the
+    /// expandable tool-call panel. None when the engine only recorded a name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<Value>,
+    /// Tool execution result/output (string / object / array).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
     /// Todo-list snapshot/patch from a todo tool call (claude TodoWrite,
     /// omp todo op); feeds the run-status strip's task pill.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -29,6 +36,10 @@ pub struct Message {
     pub usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
     /// Image attachments on user messages: data URLs (claude/pi/omp) or
     /// absolute paths (kimi/codex). Empty for every other row.
     #[serde(skip_serializing_if = "Vec::is_empty")]

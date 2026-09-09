@@ -6,6 +6,10 @@ export type ProcessItem = {
   live?: boolean;
   /** Target file of the tool call; renders as a file-type chip. */
   path?: string | null;
+  /** Tool-call arguments (object / array / string); expandable in the timeline. */
+  args?: unknown;
+  /** Tool-call execution result/output. */
+  result?: unknown;
 };
 
 export type TimelineRow =
@@ -56,6 +60,8 @@ function getProcessItem(message: Message): ProcessItem {
       text: message.text,
       live: message.live,
       path: message.path,
+      args: message.args,
+      result: message.result,
     };
     processItemCache.set(message, item);
   }

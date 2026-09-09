@@ -124,12 +124,45 @@ function formatUsage(usage: unknown): string | null {
   return parts.join(" ");
 }
 
-/** Passive per-message facts, revealed on message hover: time · token usage · model. */
+/** Format turn duration: "12.3s", "2m12s", "1h23m". */
+export function formatDuration(ms: number | null | undefined): string | null {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return null;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const remSec = Math.floor(s % 60);
+  if (m < 60) return `${m}m${remSec ? `${remSec}s` : ""}`;
+  const h = Math.floor(m / 60);
+  const remMin = Math.floor(m % 60);
+  return `${h}h${remMin ? `${remMin}m` : ""}`;
+}
+
+/** Passive per-message facts, revealed on message hover: time · duration · token usage · model · effort. */
 function MessageMeta({ message }: { message: Message }) {
+  const { t } = useTranslation();
+  const effortText = useMemo(() => {
+    if (!message.effort) return null;
+    const key = `chat.effort${message.effort.charAt(0).toUpperCase() + message.effort.slice(1).toLowerCase()}`;
+    const translated = t(key);
+    const effortVal = translated && translated !== key ? translated : message.effort;
+    return t("chat.metaEffort", { effort: effortVal });
+  }, [message.effort, t]);
+
+  const durationFormatted = useMemo(() => {
+    const d = formatDuration(message.durationMs);
+    return d ? t("chat.metaDuration", { duration: d }) : null;
+  }, [message.durationMs, t]);
+
+  const modelFormatted = useMemo(() => {
+    return message.model ? t("chat.metaModel", { model: message.model }) : null;
+  }, [message.model, t]);
+
   const parts = [
     formatMessageTime(message.ts),
+    durationFormatted,
     formatUsage(message.usage),
-    message.model || null,
+    modelFormatted,
+    effortText,
   ].filter((p): p is string => Boolean(p));
   if (parts.length === 0) return null;
   return (
