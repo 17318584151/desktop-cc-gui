@@ -36,7 +36,9 @@ async fn run_one(engine_id: &str, workspace: &PathBuf) -> Result<(), String> {
         images: Vec::new(),
         model: None,
         effort: None,
+        service_tier: None,
         permission: None,
+        additional_dirs: Vec::new(),
     };
     let bin = which::which(engine_id)
         .map(|p| p.to_string_lossy().to_string())
@@ -115,6 +117,9 @@ async fn run_one(engine_id: &str, workspace: &PathBuf) -> Result<(), String> {
                 EngineEvent::Usage(u) => println!("  usage: {u}"),
                 EngineEvent::Error(e) => println!("  ERROR: {e}"),
                 EngineEvent::Warn(e) => println!("  warn: {e}"),
+                EngineEvent::PermissionDenied { tool, path, .. } => {
+                    println!("  permission denied: tool={tool:?} path={path:?}")
+                }
                 EngineEvent::Done { usage, .. } => {
                     println!("  done (usage: {})", usage.is_some());
                     done = true;

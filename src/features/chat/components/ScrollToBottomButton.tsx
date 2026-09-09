@@ -52,7 +52,7 @@ export function ScrollToBottomButton({
       window.removeEventListener("resize", onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [check]);
+  }, [check, scrollRef]);
 
   // Appends and late row re-measurements grow scrollHeight silently.
   useEffect(() => {

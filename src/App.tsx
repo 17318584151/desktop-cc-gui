@@ -2,10 +2,13 @@ import { lazy, Suspense, useEffect } from "react";
 import { LazyMotion, domAnimation } from "motion/react";
 import { HashRouter, Route, Routes } from "react-router-dom";
 import ChatPage from "@/features/chat/ChatPage";
+import { CommandPalette } from "@/features/commands/CommandPalette";
+import PluginPageHost from "@/features/plugins/manager/PluginPageHost";
 import { bindSystemThemeSync, bindThemeChangePersistence } from "@/features/settings/theme";
 import { UpdateToast } from "@/features/update/UpdateToast";
 import { useUpdateStore } from "@/features/update/store";
 import { GrantAccessDialogHost } from "@/components/dialogs";
+import { startPluginSystem } from "@/features/plugins";
 
 // Settings is a rare route; load it on demand so startup ships less JS.
 // Warm the chunk shortly after startup so the first click has no fetch gap.
@@ -25,6 +28,9 @@ export default function App() {
     const id = setTimeout(() => void loadSettingsPage(), 2000);
     return () => clearTimeout(id);
   }, []);
+  // Plugin system bootstrap: hardening + event bridge + builtin/installed
+  // plugin activation. Failures are logged, never fatal to the host UI.
+  useEffect(() => startPluginSystem(), []);
   // Background update check after startup settles; dev builds skip it so
   // `tauri dev` doesn't nag about the published release being newer.
   useEffect(() => {
@@ -40,6 +46,9 @@ export default function App() {
             modal overlay on top, so opening/closing settings never rebuilds
             the chat tree. */}
         <ChatPage />
+        {/* ⌘K command palette (plan §4.2 #9); a pure projection of
+            commandRegistry, mounted once for the whole app. */}
+        <CommandPalette />
         <Routes>
           <Route
             path="/settings"
@@ -49,6 +58,9 @@ export default function App() {
               </Suspense>
             }
           />
+          {/* Plugin overlay pages (plan §4.2 #10); ChatPage stays mounted
+              underneath, same as the /settings overlay. */}
+          <Route path="/p/:pageId" element={<PluginPageHost />} />
         </Routes>
       </HashRouter>
       <UpdateToast />

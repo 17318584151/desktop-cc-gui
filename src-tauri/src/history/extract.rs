@@ -99,6 +99,7 @@ fn walk_lines(reader: impl BufRead, extract: &LineExtractor<'_>, mut consume: im
 fn collect_session(reader: impl BufRead, extract: &LineExtractor<'_>) -> ParsedSession {
     let mut messages = Vec::<Message>::new();
     let mut seq = 0i64;
+    let mut last_user_ts: Option<i64> = None;
     walk_lines(reader, extract, |row| {
         // Usage-only marker (codex token_count): fold onto the last
         // assistant message instead of creating an empty row.
@@ -108,9 +109,35 @@ fn collect_session(reader: impl BufRead, extract: &LineExtractor<'_>) -> ParsedS
             }
             return;
         }
+        // Tool result marker: fold onto the matching or latest tool message.
+        if row.role == "__tool_result__" {
+            if let Some(res) = row.result {
+                for m in messages.iter_mut().rev() {
+                    if m.role == "tool" && m.result.is_none() {
+                        m.result = Some(res);
+                        break;
+                    }
+                }
+            }
+            return;
+        }
         if row.text.trim().is_empty() && row.images.is_empty() {
             return;
         }
+        let parsed_ts = row.ts.as_deref().and_then(super::parse_ts_ms_str);
+        if row.role == "user" {
+            last_user_ts = parsed_ts;
+        }
+        let duration_ms = row.duration_ms.or_else(|| {
+            if row.role == "assistant" {
+                if let (Some(u_ts), Some(a_ts)) = (last_user_ts, parsed_ts) {
+                    if a_ts >= u_ts && a_ts - u_ts < 24 * 3600 * 1000 {
+                        return Some(a_ts - u_ts);
+                    }
+                }
+            }
+            None
+        });
         seq += 1;
         messages.push(Message {
             seq,
@@ -118,8 +145,13 @@ fn collect_session(reader: impl BufRead, extract: &LineExtractor<'_>) -> ParsedS
             text: row.text,
             ts: row.ts,
             path: row.path,
+            args: row.args,
+            result: row.result,
+            todos: row.todos,
             usage: row.usage,
             model: row.model,
+            effort: row.effort,
+            duration_ms,
             images: row.images,
         });
     });
@@ -320,8 +352,13 @@ struct LineRow {
     text: String,
     ts: Option<String>,
     path: Option<String>,
+    args: Option<Value>,
+    result: Option<Value>,
+    todos: Option<crate::engine::TodosPayload>,
     usage: Option<Value>,
     model: Option<String>,
+    effort: Option<String>,
+    duration_ms: Option<i64>,
     images: Vec<String>,
 }
 
@@ -333,8 +370,13 @@ impl LineRow {
             text,
             ts,
             path: None,
+            args: None,
+            result: None,
+            todos: None,
             usage: None,
             model: None,
+            effort: None,
+            duration_ms: None,
             images: Vec::new(),
         }
     }
@@ -465,8 +507,12 @@ fn pi_assistant_part(part: &Value, out: &mut LineRows, text: &mut String, ts: &O
             pi_flush_text(out, text, ts);
             let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
             let intent = part.get("intent").and_then(Value::as_str);
+            let arguments = part.get("arguments");
             out.push(LineRow {
-                path: part.get("arguments").and_then(crate::engine::tool_path_arg),
+                path: arguments.and_then(crate::engine::tool_path_arg),
+                args: arguments.and_then(crate::engine::parse_tool_args_value),
+                // Session files store `arguments` as an already-parsed object.
+                todos: arguments.and_then(crate::engine::parse_todo_args),
                 ..LineRow::new(
                     "tool",
                     crate::engine::pi_family::tool_label(name, intent),
@@ -497,6 +543,12 @@ fn extract_pi_family_line(value: &Value, images: ImageMode) -> LineRows {
     let usage = message.get("usage").cloned();
     let model = message
         .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let effort = value
+        .get("effort")
+        .or_else(|| message.get("effort"))
+        .or_else(|| message.get("thinking_effort"))
         .and_then(Value::as_str)
         .map(str::to_string);
     match role {
@@ -535,6 +587,7 @@ fn extract_pi_family_line(value: &Value, images: ImageMode) -> LineRows {
                     out.push(LineRow {
                         usage,
                         model,
+                        effort,
                         ..LineRow::new("assistant", text, ts)
                     });
                 }
@@ -548,6 +601,7 @@ fn extract_pi_family_line(value: &Value, images: ImageMode) -> LineRows {
                     vec![LineRow {
                         usage,
                         model,
+                        effort,
                         ..LineRow::new("assistant", text, ts)
                     }]
                 }
@@ -558,7 +612,7 @@ fn extract_pi_family_line(value: &Value, images: ImageMode) -> LineRows {
     }
 }
 
-/// Flush buffered claude text as a row carrying the line's usage/model.
+/// Flush buffered claude text as a row carrying the line's usage/model/effort.
 fn claude_flush_text(
     out: &mut LineRows,
     text: &mut String,
@@ -566,11 +620,13 @@ fn claude_flush_text(
     ts: &Option<String>,
     usage: &Option<Value>,
     model: &Option<String>,
+    effort: &Option<String>,
 ) {
     if !text.trim().is_empty() {
         out.push(LineRow {
             usage: usage.clone(),
             model: model.clone(),
+            effort: effort.clone(),
             ..LineRow::new(role, std::mem::take(text), ts.clone())
         });
     }
@@ -587,24 +643,35 @@ fn claude_block_rows(
     ts: &Option<String>,
     usage: &Option<Value>,
     model: &Option<String>,
+    effort: &Option<String>,
 ) {
     match block.get("type").and_then(Value::as_str) {
         Some("thinking") => {
-            claude_flush_text(out, text, role, ts, usage, model);
+            claude_flush_text(out, text, role, ts, usage, model, effort);
             if let Some(t) = block.get("thinking").and_then(Value::as_str) {
                 out.push(LineRow::new("thinking", t.to_string(), ts.clone()));
             }
         }
         Some("tool_use") => {
-            claude_flush_text(out, text, role, ts, usage, model);
+            claude_flush_text(out, text, role, ts, usage, model, effort);
             let name = block
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or("tool")
                 .to_string();
+            let input = block.get("input");
             out.push(LineRow {
-                path: block.get("input").and_then(crate::engine::tool_path_arg),
+                path: input.and_then(crate::engine::tool_path_arg),
+                args: input.and_then(crate::engine::parse_tool_args_value),
+                todos: input.and_then(crate::engine::parse_todo_args),
                 ..LineRow::new("tool", name, ts.clone())
+            });
+        }
+        Some("tool_result") => {
+            let res = block.get("content").cloned();
+            out.push(LineRow {
+                result: res,
+                ..LineRow::new("__tool_result__", String::new(), ts.clone())
             });
         }
         Some("image") => {
@@ -646,6 +713,11 @@ fn extract_claude_line(value: &Value, images: ImageMode) -> LineRows {
         .get("model")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let effort = value
+        .get("effort")
+        .or_else(|| message.get("effort"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let content = message.get("content");
     let mut out = Vec::new();
     match content {
@@ -665,12 +737,14 @@ fn extract_claude_line(value: &Value, images: ImageMode) -> LineRows {
                     &ts,
                     &usage,
                     &model,
+                    &effort,
                 );
             }
             if !text.trim().is_empty() {
                 out.push(LineRow {
                     usage,
                     model,
+                    effort,
                     images: collected,
                     ..LineRow::new(&role, text, ts)
                 });
@@ -687,6 +761,7 @@ fn extract_claude_line(value: &Value, images: ImageMode) -> LineRows {
                 out.push(LineRow {
                     usage,
                     model,
+                    effort,
                     ..LineRow::new(&role, text, ts)
                 });
             }
@@ -751,7 +826,16 @@ fn extract_kimi_line(value: &Value) -> LineRows {
                         .and_then(Value::as_str)
                         .unwrap_or("tool")
                         .to_string();
-                    vec![LineRow::new("tool", name, ts)]
+                    let args = part
+                        .get("arguments")
+                        .or_else(|| part.get("input"))
+                        .or_else(|| part.get("args"));
+                    vec![LineRow {
+                        path: args.and_then(crate::engine::tool_path_arg),
+                        args: args.and_then(crate::engine::parse_tool_args_value),
+                        todos: args.and_then(crate::engine::parse_todo_args),
+                        ..LineRow::new("tool", name, ts)
+                    }]
                 }
                 _ => Vec::new(),
             }
@@ -801,14 +885,23 @@ fn extract_grok_line(value: &Value) -> LineRows {
             }
             if let Some(calls) = value.get("tool_calls").and_then(Value::as_array) {
                 for call in calls {
-                    let name = call
-                        .get("function")
+                    let function = call.get("function");
+                    let name = function
                         .and_then(|f| f.get("name"))
                         .or_else(|| call.get("name"))
                         .and_then(Value::as_str)
                         .unwrap_or("tool")
                         .to_string();
-                    out.push(LineRow::new("tool", name, ts.clone()));
+                    let args = function
+                        .and_then(|f| f.get("arguments"))
+                        .or_else(|| call.get("arguments"))
+                        .or_else(|| call.get("input"));
+                    out.push(LineRow {
+                        path: args.and_then(crate::engine::tool_path_arg),
+                        args: args.and_then(crate::engine::parse_tool_args_value),
+                        todos: args.and_then(crate::engine::parse_todo_args),
+                        ..LineRow::new("tool", name, ts.clone())
+                    });
                 }
             }
             out
@@ -843,6 +936,10 @@ mod tests {
         assert_eq!(rows[1].text, "answer one");
         assert_eq!(rows[2].text, "read · Listing root");
         assert_eq!(rows[2].path.as_deref(), Some("src/main.rs"));
+        assert_eq!(
+            rows[2].args,
+            Some(serde_json::json!({"path": "src/main.rs"}))
+        );
         assert_eq!(rows[3].text, "answer two");
         assert_eq!(rows[3].path, None);
     }
@@ -857,7 +954,7 @@ mod tests {
                 "content": [
                     {"type": "thinking", "thinking": "ponder", "signature": "sig"},
                     {"type": "text", "text": "reply"},
-                    {"type": "tool_use", "name": "Bash"}
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}
                 ]
             }
         });
@@ -867,7 +964,58 @@ mod tests {
         assert_eq!(rows[0].text, "ponder");
         assert_eq!(rows[1].text, "reply");
         assert_eq!(rows[2].text, "Bash");
+        assert_eq!(rows[2].args, Some(serde_json::json!({"command": "ls"})));
     }
+
+    #[test]
+    fn pi_toolcall_row_carries_todo_patch() {
+        let line: Value = serde_json::json!({
+            "type": "message",
+            "timestamp": "2026-09-05T11:12:16.469Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "toolCall", "name": "todo", "arguments": {"op": "done", "task": "scan files"}}
+                ]
+            }
+        });
+        let rows = extract_pi_family_line(&line, ImageMode::Collect);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].role, "tool");
+        let todos = rows[0].todos.as_ref().expect("todos payload");
+        assert!(!todos.replace);
+        assert_eq!(todos.items.len(), 1);
+        assert_eq!(todos.items[0].content, "scan files");
+        assert_eq!(todos.items[0].status, "complete");
+    }
+
+    #[test]
+    fn claude_tool_use_row_carries_todowrite_snapshot() {
+        let line: Value = serde_json::json!({
+            "type": "assistant",
+            "timestamp": "2026-09-05T11:12:16.469Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "name": "TodoWrite", "input": {"todos": [
+                        {"content": "scan files", "status": "completed"},
+                        {"content": "write code", "status": "in_progress"},
+                        {"content": "run tests", "status": "pending"},
+                        {"content": "deploy", "status": "blocked"}
+                    ]}}
+                ]
+            }
+        });
+        let rows = extract_claude_line(&line, ImageMode::Collect);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].role, "tool");
+        let todos = rows[0].todos.as_ref().expect("todos payload");
+        assert!(todos.replace);
+        let statuses: Vec<&str> = todos.items.iter().map(|i| i.status.as_str()).collect();
+        assert_eq!(statuses, ["complete", "active", "pending", "blocked"]);
+        assert_eq!(todos.items[1].content, "write code");
+    }
+
     #[test]
     fn claude_line_drops_is_meta_command_expansion() {
         let expansion: Value = serde_json::json!({

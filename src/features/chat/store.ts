@@ -1,5 +1,17 @@
+import {
+  normalizeOmpServiceTier,
+  type OmpServiceTier,
+} from "@/lib/omp-service-tier";
 import { create } from "zustand";
-import { ipc, type AppSettings, type Message, type SessionMeta, type Workspace, type WorkspaceGroup, type EngineInfo } from "@/lib/ipc";
+import {
+  ipc,
+  type AppSettings,
+  type Message,
+  type SessionMeta,
+  type Workspace,
+  type WorkspaceGroup,
+  type EngineInfo,
+} from "@/lib/ipc";
 import type { EffortLevel } from "@/components/application/ai-chat/cli-menu";
 import type { ComposerPermission } from "@/components/application/ai-chat/permission-menu";
 import { listenEngineEvents, listenSessionsChanged } from "@/lib/events";
@@ -34,6 +46,7 @@ import {
   firstLineTitle,
   handleEngineEvents,
   optimisticMeta,
+  patchGrantBySeq,
   upsertSessionMetaInto,
 } from "./store/engine-events";
 
@@ -43,9 +56,13 @@ export type { ActiveSession } from "./store/persistence";
 export type { QueuedMessage, SessionState } from "./store/stream";
 
 /** Sidebar workspace groups (工作区二级分类), ordered by sortOrder then name. */
-export function sortedWorkspaceGroups(groups: WorkspaceGroup[]): WorkspaceGroup[] {
+export function sortedWorkspaceGroups(
+  groups: WorkspaceGroup[],
+): WorkspaceGroup[] {
   return groups.slice().sort((a, b) => {
-    const diff = (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER);
+    const diff =
+      (a.sortOrder ?? Number.MAX_SAFE_INTEGER) -
+      (b.sortOrder ?? Number.MAX_SAFE_INTEGER);
     return diff !== 0 ? diff : a.name.localeCompare(b.name);
   });
 }
@@ -55,7 +72,10 @@ const eventTeardowns: Array<() => void> = [];
 /** History lists hide sessions of CLIs the user disabled in settings. An
  * empty engines list means listEngines failed — keep sessions rather than
  * blanking the sidebar. */
-function visibleSessions(sessions: SessionMeta[], engines: EngineInfo[]): SessionMeta[] {
+function visibleSessions(
+  sessions: SessionMeta[],
+  engines: EngineInfo[],
+): SessionMeta[] {
   if (engines.length === 0) return sessions;
   const enabled = new Set<string>();
   for (const e of engines) {
@@ -63,7 +83,12 @@ function visibleSessions(sessions: SessionMeta[], engines: EngineInfo[]): Sessio
   }
   return sessions.filter((s) => enabled.has(s.engine));
 }
-const PERMISSION_MODES: readonly ComposerPermission[] = ["auto", "manual", "plan", "bypass"];
+const PERMISSION_MODES: readonly ComposerPermission[] = [
+  "auto",
+  "manual",
+  "plan",
+  "bypass",
+];
 
 /** Persisted composer permission, validated against the known modes. */
 function readPermissionPref(): ComposerPermission {
@@ -83,7 +108,9 @@ export function effectivePermission(
 ): ComposerPermission {
   const supported = engines.find((e) => e.id === engine)?.permissions;
   if (!supported || supported.length === 0) return selected;
-  return supported.includes(selected) ? selected : (supported[0] as ComposerPermission);
+  return supported.includes(selected)
+    ? selected
+    : (supported[0] as ComposerPermission);
 }
 
 export interface ChatStore {
@@ -100,6 +127,7 @@ export interface ChatStore {
   permission: ComposerPermission;
   /** Per-engine reasoning effort ("low" | … | "max"), persisted in app settings. */
   efforts: Record<string, EffortLevel>;
+  ompServiceTier: OmpServiceTier;
   /** Per-engine model override ("" = CLI/provider default), persisted in app settings. */
   models: Record<string, string>;
   /** Max sessions listed per workspace in the sidebar, persisted in app settings. */
@@ -142,16 +170,34 @@ export interface ChatStore {
   addWorkspace: (path: string) => Promise<void>;
   reorderWorkspaces: (ids: string[]) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
-  selectSession: (engine: string, sessionId: string, workspacePath: string) => Promise<void>;
-  closeTab: (engine: string, sessionId: string | null, workspacePath: string) => void;
+  selectSession: (
+    engine: string,
+    sessionId: string,
+    workspacePath: string,
+  ) => Promise<void>;
+  closeTab: (
+    engine: string,
+    sessionId: string | null,
+    workspacePath: string,
+  ) => void;
   /** Activate an already-open tab without changing the tab list. */
-  focusTab: (engine: string, sessionId: string | null, workspacePath: string) => void;
+  focusTab: (
+    engine: string,
+    sessionId: string | null,
+    workspacePath: string,
+  ) => void;
   /** Move an open tab to a new position (drag-reorder in the tab strip). */
-  moveTab: (engine: string, sessionId: string | null, workspacePath: string, toIndex: number) => void;
+  moveTab: (
+    engine: string,
+    sessionId: string | null,
+    workspacePath: string,
+    toIndex: number,
+  ) => void;
   startNewChat: (workspacePath: string) => void;
   setActiveEngine: (engine: string) => void;
   setPermission: (permission: ComposerPermission) => void;
   setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
+  setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
   setModel: (engine: string, model: string) => Promise<void>;
   /** Pin several engines' models at once (startup defaulting); one settings
    * write instead of one per engine. */
@@ -166,11 +212,20 @@ export interface ChatStore {
   /** Delete a group; its workspaces fall back to ungrouped. */
   deleteWorkspaceGroup: (id: string) => Promise<void>;
   /** Put a workspace into a group (null = ungrouped). */
-  assignWorkspaceGroup: (workspaceId: string, groupId: string | null) => Promise<void>;
+  assignWorkspaceGroup: (
+    workspaceId: string,
+    groupId: string | null,
+  ) => Promise<void>;
   /** Set (or clear, null/empty/name-equal) the sidebar alias of a workspace. */
-  setWorkspaceAlias: (workspaceId: string, alias: string | null) => Promise<void>;
+  setWorkspaceAlias: (
+    workspaceId: string,
+    alias: string | null,
+  ) => Promise<void>;
   /** Move a workspace into / out of the sidebar's archived section. */
-  setWorkspaceArchived: (workspaceId: string, archived: boolean) => Promise<void>;
+  setWorkspaceArchived: (
+    workspaceId: string,
+    archived: boolean,
+  ) => Promise<void>;
   setSendShortcut: (shortcut: string) => void;
   setDraft: (key: string, text: string) => void;
   /** Ask the active composer to insert an @path mention at the caret. */
@@ -181,6 +236,12 @@ export interface ChatStore {
   dismissSessionError: (key: string) => void;
   loadEarlier: () => Promise<void>;
   send: (prompt: string, images: string[]) => Promise<void>;
+  /** Answer a permission-denial grant card: persist the directory grant
+   * (accept) or mark the card declined. */
+  respondToGrant: (key: string, seq: number, accept: boolean) => Promise<void>;
+  /** Re-send the session's last user message (grant card's one-click retry
+   * after a directory grant takes effect on the next launch). */
+  resendLastUser: (key: string) => Promise<void>;
   /** Enqueue a message on the active session while a turn streams. */
   queueMessage: (text: string, images: string[]) => void;
   /** Drop a queued message from the active session. */
@@ -189,13 +250,23 @@ export interface ChatStore {
   clearQueue: () => void;
   interrupt: () => Promise<void>;
   deleteSession: (engine: string, sessionId: string) => Promise<void>;
-  pinSession: (engine: string, sessionId: string, pinned: boolean) => Promise<void>;
-  renameSession: (engine: string, sessionId: string, title: string) => Promise<void>;
+  pinSession: (
+    engine: string,
+    sessionId: string,
+    pinned: boolean,
+  ) => Promise<void>;
+  renameSession: (
+    engine: string,
+    sessionId: string,
+    title: string,
+  ) => Promise<void>;
 }
 
 /** Persist one app-settings patch; callers have already applied the in-memory
  * value, so a persist failure is non-fatal. */
-async function persistSettings(patch: (settings: AppSettings) => Partial<AppSettings>) {
+async function persistSettings(
+  patch: (settings: AppSettings) => Partial<AppSettings>,
+) {
   try {
     const settings = await ipc.getAppSettings();
     await ipc.updateAppSettings({ ...settings, ...patch(settings) });
@@ -220,14 +291,19 @@ function appendCommittedRows(
 ) {
   set((s) => {
     const prev = s.bySession[key] ?? EMPTY_SESSION;
-    const lastSeq = prev.messages.length ? prev.messages[prev.messages.length - 1].seq : 0;
+    const lastSeq = prev.messages.length
+      ? prev.messages[prev.messages.length - 1].seq
+      : 0;
     return {
       bySession: {
         ...s.bySession,
         [key]: {
           ...prev,
           ...patch,
-          messages: [...prev.messages, ...rows.map((row, i) => ({ ...row, seq: lastSeq + 1 + i }))],
+          messages: [
+            ...prev.messages,
+            ...rows.map((row, i) => ({ ...row, seq: lastSeq + 1 + i })),
+          ],
         },
       },
     };
@@ -242,21 +318,50 @@ export const useChatStore = create<ChatStore>((set, get) => {
       persistTabs(get().openTabs, null);
       return;
     }
-    if (tab.sessionId) void get().selectSession(tab.engine, tab.sessionId, tab.workspacePath);
+    if (tab.sessionId)
+      void get().selectSession(tab.engine, tab.sessionId, tab.workspacePath);
     else {
       // A pending tab sends with its own engine, so the picker must follow it
       // — otherwise the chip shows one CLI while sends go to another.
       const syncEngine = tab.engine !== get().activeEngine;
       if (syncEngine) writeStored(ENGINE_PREF_KEY, tab.engine);
-      set(syncEngine ? { active: tab, activeEngine: tab.engine } : { active: tab });
+      set(
+        syncEngine
+          ? { active: tab, activeEngine: tab.engine }
+          : { active: tab },
+      );
       persistTabs(get().openTabs, tab);
     }
   }
 
+  /** Stamp a per-tab composer override (model/effort) onto the active tab, so
+   * the picker follows each session across tab switches. Persists with the
+   * tab list; no-op without an active tab. */
+  function stampActiveTab(patch: Partial<ActiveSession>) {
+    set((s) => {
+      const current = s.active;
+      if (!current) return {};
+      const active: ActiveSession = { ...current, ...patch };
+      const openTabs = s.openTabs.map((t) =>
+        sameTab(t, current.engine, current.sessionId, current.workspacePath)
+          ? active
+          : t,
+      );
+      persistTabs(openTabs, active);
+      return { openTabs, active };
+    });
+  }
+
   /** Remove a tab; when it was active, fall back to its nearest neighbor. */
-  function removeTab(engine: string, sessionId: string | null, workspacePath: string) {
+  function removeTab(
+    engine: string,
+    sessionId: string | null,
+    workspacePath: string,
+  ) {
     const s = get();
-    const idx = s.openTabs.findIndex((t) => sameTab(t, engine, sessionId, workspacePath));
+    const idx = s.openTabs.findIndex((t) =>
+      sameTab(t, engine, sessionId, workspacePath),
+    );
     if (idx < 0) return;
     const openTabs = s.openTabs.filter((_, i) => i !== idx);
     set({ openTabs });
@@ -267,18 +372,23 @@ export const useChatStore = create<ChatStore>((set, get) => {
     }
   }
 
-
   /**
    * Send a prompt to a specific tab. Unlike the public `send` action this is
    * not bound to the active session, so the queue can drain on a background
    * tab after its turn finishes there.
    */
-  async function sendPrompt(tab: ActiveSession, prompt: string, images: string[]) {
+  async function sendPrompt(
+    tab: ActiveSession,
+    prompt: string,
+    images: string[],
+  ) {
     if (!prompt.trim() && images.length === 0) return;
     const engine = tab.engine;
     const key = sessionKey(engine, tab.sessionId, tab.workspacePath);
     // Optimistic user message.
-    set((s) => ({ streamingByKey: setStreamingFlag(s.streamingByKey, key, true) }));
+    set((s) => ({
+      streamingByKey: setStreamingFlag(s.streamingByKey, key, true),
+    }));
     appendCommittedRows(
       set,
       key,
@@ -290,7 +400,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
           images: images.length ? [...images] : undefined,
         },
       ],
-      { streaming: true, error: null, interrupted: false, turnStartedAt: Date.now() },
+      {
+        streaming: true,
+        error: null,
+        interrupted: false,
+        turnStartedAt: Date.now(),
+      },
     );
     try {
       const result = await ipc.sendMessage({
@@ -299,14 +414,22 @@ export const useChatStore = create<ChatStore>((set, get) => {
         sessionId: tab.sessionId,
         prompt,
         imagePaths: images.length ? images : null,
-        model: get().models[engine] || null,
-        effort: get().efforts[engine] ?? null,
-        permission: effectivePermission(get().engines, engine, get().permission),
+        model: (tab.model ?? get().models[engine]) || null,
+        effort: tab.effort ?? get().efforts[engine] ?? null,
+        permission: effectivePermission(
+          get().engines,
+          engine,
+          get().permission,
+        ),
       });
       if (result.sessionId && !tab.sessionId) {
         // Preassigned native id (grok): adopt immediately.
         set((s) => {
-          const newKey = sessionKey(engine, result.sessionId, tab.workspacePath);
+          const newKey = sessionKey(
+            engine,
+            result.sessionId,
+            tab.workspacePath,
+          );
           const bySession = { ...s.bySession };
           if (bySession[key]) {
             bySession[newKey] = bySession[key];
@@ -351,14 +474,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
         // instead of waiting for the post-turn rescan.
         upsertSessionMetaInto(
           set,
-          optimisticMeta(engine, result.sessionId, tab.workspacePath, firstLineTitle(prompt)),
+          optimisticMeta(
+            engine,
+            result.sessionId,
+            tab.workspacePath,
+            firstLineTitle(prompt),
+          ),
         );
       } else {
         runRouting.set(result.runId, key);
       }
     } catch (error) {
-      set((s) => ({ streamingByKey: setStreamingFlag(s.streamingByKey, key, false) }));
-      patchSession(set, key, { error: String(error), streaming: false, turnStartedAt: null });
+      set((s) => ({
+        streamingByKey: setStreamingFlag(s.streamingByKey, key, false),
+      }));
+      patchSession(set, key, {
+        error: String(error),
+        streaming: false,
+        turnStartedAt: null,
+      });
     }
   }
 
@@ -397,7 +531,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
    * the "no CLI enabled" placeholder instead of a misleading fallback. */
   function ensureUsableEngine(engines: EngineInfo[]) {
     const usable = engines.filter((e) => e.enabled);
-    if (usable.length === 0 || usable.some((e) => e.id === get().activeEngine)) return;
+    if (usable.length === 0 || usable.some((e) => e.id === get().activeEngine))
+      return;
     get().setActiveEngine(usable.find((e) => e.available)?.id ?? usable[0].id);
   }
 
@@ -410,6 +545,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     activeEngine: localStorage.getItem(ENGINE_PREF_KEY) ?? "claude",
     permission: readPermissionPref(),
     efforts: {},
+    ompServiceTier: null,
     models: {},
     threadLimit: 10,
     workspaceGroups: [],
@@ -439,35 +575,51 @@ export const useChatStore = create<ChatStore>((set, get) => {
             }),
           ),
         ),
-        subscribeTauriEvent(() => listenSessionsChanged(() => void get().refreshSessions())),
+        subscribeTauriEvent(() =>
+          listenSessionsChanged(() => void get().refreshSessions()),
+        ),
       );
       // Settings' CLI enable switch / channel edits: re-filter history and
       // picker options without a restart.
       const onCliConfigChanged = () => void get().refreshEngines();
       window.addEventListener(CLI_CONFIG_CHANGED_EVENT, onCliConfigChanged);
       eventTeardowns.push(() =>
-        window.removeEventListener(CLI_CONFIG_CHANGED_EVENT, onCliConfigChanged),
+        window.removeEventListener(
+          CLI_CONFIG_CHANGED_EVENT,
+          onCliConfigChanged,
+        ),
       );
       const [workspaces, sessions, engines] = await Promise.all([
         ipc.listWorkspaces().catch(() => [] as Workspace[]),
         ipc.listSessions().catch(() => [] as SessionMeta[]),
         ipc.listEngines().catch(() => [] as EngineInfo[]),
       ]);
-      set({ workspaces, sessions: visibleSessions(sessions, engines), engines });
+      set({
+        workspaces,
+        sessions: visibleSessions(sessions, engines),
+        engines,
+      });
       ensureUsableEngine(engines);
       // Restore persisted tabs; drop ones whose workspace/session is gone.
       const restoredTabs = readPersistedTabs().filter(
         (t) =>
           workspaces.some((w) => w.path === t.workspacePath) &&
           (t.sessionId === null ||
-            sessions.some((s) => s.engine === t.engine && s.sessionId === t.sessionId)),
+            sessions.some(
+              (s) => s.engine === t.engine && s.sessionId === t.sessionId,
+            )),
       );
       set({ openTabs: restoredTabs });
       const persistedActive = readPersistedActive();
       const activeTab =
         persistedActive &&
         restoredTabs.some((t) =>
-          sameTab(t, persistedActive.engine, persistedActive.sessionId, persistedActive.workspacePath),
+          sameTab(
+            t,
+            persistedActive.engine,
+            persistedActive.sessionId,
+            persistedActive.workspacePath,
+          ),
         )
           ? persistedActive
           : (restoredTabs[0] ?? null);
@@ -476,7 +628,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
         .getAppSettings()
         .then((settings) =>
           set({
-            efforts: (settings.defaultEfforts ?? {}) as Record<string, EffortLevel>,
+            efforts: (settings.defaultEfforts ?? {}) as Record<
+              string,
+              EffortLevel
+            >,
+            ompServiceTier: normalizeOmpServiceTier(
+              settings.ompOpenaiServiceTier,
+            ),
             models: settings.defaultModels ?? {},
             threadLimit: settings.sidebarThreadLimit ?? 5,
             workspaceGroups: settings.workspaceGroups ?? [],
@@ -546,7 +704,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
         await get().refreshWorkspaces();
         set({ actionError: null });
         if (!removedPath) return;
-        const openTabs = get().openTabs.filter((t) => t.workspacePath !== removedPath);
+        const openTabs = get().openTabs.filter(
+          (t) => t.workspacePath !== removedPath,
+        );
         set({ openTabs });
         const active = get().active;
         if (active && active.workspacePath === removedPath) {
@@ -561,14 +721,26 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
     selectSession: async (engine, sessionId, workspacePath) => {
       const key = sessionKey(engine, sessionId, workspacePath);
+      const syncEngine = engine !== get().activeEngine;
+      if (syncEngine) writeStored(ENGINE_PREF_KEY, engine);
       set((s) => {
-        const openTabs = s.openTabs.some((t) => sameTab(t, engine, sessionId, workspacePath))
-          ? s.openTabs
-          : [...s.openTabs, { engine, sessionId, workspacePath }];
-        persistTabs(openTabs, { engine, sessionId, workspacePath });
+        // Reuse the stored tab so its per-tab model/effort overrides survive;
+        // a fresh object would drop them on every session switch.
+        const stored = s.openTabs.find((t) =>
+          sameTab(t, engine, sessionId, workspacePath),
+        );
+        const tab: ActiveSession = stored ?? {
+          engine,
+          sessionId,
+          workspacePath,
+        };
+        const openTabs = stored ? s.openTabs : [...s.openTabs, tab];
+        persistTabs(openTabs, tab);
         // Opening a session clears its unseen flag.
         const unseen = key in s.unseen ? omitKey(s.unseen, key) : s.unseen;
-        return { openTabs, active: { engine, sessionId, workspacePath }, unseen };
+        // The picker must follow the session's engine — otherwise the chip
+        // shows one CLI while sends go to another (same rule as pending tabs).
+        return { openTabs, active: tab, unseen, activeEngine: engine };
       });
       const existing = get().bySession[key];
       if (existing && existing.messages.length > 0) return;
@@ -581,7 +753,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
           loading: false,
           // Live "usage" events only cover fresh turns; a resumed session
           // adopts the newest usage snapshot carried by its history.
-          usage: [...page.messages].reverse().find((m) => m.usage)?.usage ?? null,
+          usage:
+            [...page.messages].reverse().find((m) => m.usage)?.usage ?? null,
         });
       } catch (error) {
         patchSession(set, key, { loading: false, error: String(error) });
@@ -593,9 +766,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
       // piling up empty "new" tabs.
       set((s) => {
         const existing = s.openTabs.find(
-          (t) => t.sessionId === null && t.engine === s.activeEngine && t.workspacePath === workspacePath,
+          (t) =>
+            t.sessionId === null &&
+            t.engine === s.activeEngine &&
+            t.workspacePath === workspacePath,
         );
-        const tab: ActiveSession = existing ?? { engine: s.activeEngine, sessionId: null, workspacePath };
+        const tab: ActiveSession = existing ?? {
+          engine: s.activeEngine,
+          sessionId: null,
+          workspacePath,
+        };
         const openTabs = existing ? s.openTabs : [...s.openTabs, tab];
         persistTabs(openTabs, tab);
         return { openTabs, active: tab };
@@ -606,11 +786,17 @@ export const useChatStore = create<ChatStore>((set, get) => {
       removeTab(engine, sessionId, workspacePath);
     },
     focusTab: (engine, sessionId, workspacePath) => {
-      activateTab({ engine, sessionId, workspacePath });
+      // Reuse the stored tab so its per-tab model/effort overrides apply.
+      const stored = get().openTabs.find((t) =>
+        sameTab(t, engine, sessionId, workspacePath),
+      );
+      activateTab(stored ?? { engine, sessionId, workspacePath });
     },
     moveTab: (engine, sessionId, workspacePath, toIndex) => {
       const s = get();
-      const from = s.openTabs.findIndex((t) => sameTab(t, engine, sessionId, workspacePath));
+      const from = s.openTabs.findIndex((t) =>
+        sameTab(t, engine, sessionId, workspacePath),
+      );
       if (from < 0) return;
       const openTabs = [...s.openTabs];
       const [tab] = openTabs.splice(from, 1);
@@ -637,7 +823,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
         const newKey = sessionKey(engine, null, active.workspacePath);
         const existing = s.openTabs.find(
           (t) =>
-            !sameTab(t, active.engine, active.sessionId, active.workspacePath) &&
+            !sameTab(
+              t,
+              active.engine,
+              active.sessionId,
+              active.workspacePath,
+            ) &&
             t.sessionId === null &&
             t.engine === engine &&
             t.workspacePath === active.workspacePath,
@@ -645,7 +836,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         // Carry unsent drafts / session state over to the new key.
         const bySession = { ...s.bySession };
         const drafts = { ...s.drafts };
-        if (bySession[oldKey] && !bySession[newKey]) bySession[newKey] = bySession[oldKey];
+        if (bySession[oldKey] && !bySession[newKey])
+          bySession[newKey] = bySession[oldKey];
         delete bySession[oldKey];
         if (drafts[oldKey] !== undefined && drafts[newKey] === undefined) {
           drafts[newKey] = drafts[oldKey];
@@ -657,13 +849,28 @@ export const useChatStore = create<ChatStore>((set, get) => {
           // A pending tab for this engine+workspace already exists: fold
           // into it instead of stacking a duplicate.
           openTabs = s.openTabs.filter(
-            (t) => !sameTab(t, active.engine, active.sessionId, active.workspacePath),
+            (t) =>
+              !sameTab(
+                t,
+                active.engine,
+                active.sessionId,
+                active.workspacePath,
+              ),
           );
           nextActive = existing;
         } else {
-          nextActive = { ...active, engine };
+          // Engine retarget: the old engine's model/effort overrides don't
+          // apply to the new one — drop them so defaults resolve fresh.
+          nextActive = {
+            ...active,
+            engine,
+            model: undefined,
+            effort: undefined,
+          };
           openTabs = s.openTabs.map((t) =>
-            sameTab(t, active.engine, active.sessionId, active.workspacePath) ? nextActive : t,
+            sameTab(t, active.engine, active.sessionId, active.workspacePath)
+              ? nextActive
+              : t,
           );
         }
         persistTabs(openTabs, nextActive);
@@ -682,8 +889,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
       writeStored(PERMISSION_PREF_KEY, permission);
       set({ permission });
     },
+    setOmpServiceTier: async (tier) => {
+      const settings = await ipc.getAppSettings();
+      await ipc.updateAppSettings({ ...settings, ompOpenaiServiceTier: tier });
+      set({ ompServiceTier: tier });
+    },
     setEffort: async (engine, effort) => {
       set({ efforts: { ...get().efforts, [engine]: effort } });
+      if (get().active?.engine === engine) stampActiveTab({ effort });
       await persistSettings((settings) => ({
         defaultEfforts: { ...settings.defaultEfforts, [engine]: effort },
       }));
@@ -693,6 +906,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (model) models[engine] = model;
       else delete models[engine];
       set({ models });
+      if (get().active?.engine === engine) {
+        // Empty = "CLI default": clear the tab override too, so the tab
+        // follows the (also cleared) global default again.
+        stampActiveTab({ model: model || undefined });
+      }
       await persistSettings((settings) => {
         const defaultModels = { ...settings.defaultModels };
         if (model) defaultModels[engine] = model;
@@ -701,13 +919,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
     },
     pinModels: async (updates) => {
-      const entries = Object.entries(updates).filter(([, model]) => model.trim());
+      const entries = Object.entries(updates).filter(([, model]) =>
+        model.trim(),
+      );
       if (entries.length === 0) return;
       const models = { ...get().models };
       for (const [engine, model] of entries) models[engine] = model;
       set({ models });
       await persistSettings((settings) => ({
-        defaultModels: { ...settings.defaultModels, ...Object.fromEntries(entries) },
+        defaultModels: {
+          ...settings.defaultModels,
+          ...Object.fromEntries(entries),
+        },
       }));
     },
 
@@ -724,7 +947,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const group: WorkspaceGroup = {
         id: newId(),
         name: trimmed,
-        sortOrder: current.reduce((max, g) => Math.max(max, g.sortOrder ?? -1), -1) + 1,
+        sortOrder:
+          current.reduce((max, g) => Math.max(max, g.sortOrder ?? -1), -1) + 1,
       };
       const workspaceGroups = [...current, group];
       set({ workspaceGroups });
@@ -741,7 +965,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
         throw new Error("Group name already exists.");
       }
       set({
-        workspaceGroups: current.map((g) => (g.id === id ? { ...g, name: trimmed } : g)),
+        workspaceGroups: current.map((g) =>
+          g.id === id ? { ...g, name: trimmed } : g,
+        ),
       });
       await persistSettings((settings) => ({
         workspaceGroups: (settings.workspaceGroups ?? []).map((g) =>
@@ -757,8 +983,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
         .map((id) => byId.get(id))
         .filter((g): g is WorkspaceGroup => Boolean(g));
       // Groups missing from the submitted order keep trailing positions.
-      const rest = current.filter((g) => !orderedIds.includes(g.id));
-      const workspaceGroups = [...ordered, ...rest].map((g, i) => ({ ...g, sortOrder: i }));
+      const orderedIdSet = new Set(orderedIds);
+      const rest = current.filter((g) => !orderedIdSet.has(g.id));
+      const workspaceGroups = [...ordered, ...rest].map((g, i) => ({
+        ...g,
+        sortOrder: i,
+      }));
       set({ workspaceGroups });
       await persistSettings(() => ({ workspaceGroups }));
     },
@@ -772,7 +1002,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
         ),
       });
       await persistSettings((settings) => ({
-        workspaceGroups: (settings.workspaceGroups ?? []).filter((g) => g.id !== id),
+        workspaceGroups: (settings.workspaceGroups ?? []).filter(
+          (g) => g.id !== id,
+        ),
       }));
       // Members of the deleted group fall back to ungrouped.
       await Promise.all(
@@ -780,7 +1012,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       );
     },
     assignWorkspaceGroup: async (workspaceId, groupId) => {
-      const valid = groupId && get().workspaceGroups.some((g) => g.id === groupId);
+      const valid =
+        groupId && get().workspaceGroups.some((g) => g.id === groupId);
       const resolved = valid ? groupId : null;
       set({
         workspaces: get().workspaces.map((w) =>
@@ -822,7 +1055,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (archivedWorkspaces === current) return;
       set({ archivedWorkspaces });
       await persistSettings((settings) => {
-        const next = (settings.archivedWorkspaces ?? []).filter((id) => id !== workspaceId);
+        const next = (settings.archivedWorkspaces ?? []).filter(
+          (id) => id !== workspaceId,
+        );
         if (archived) next.push(workspaceId);
         return { archivedWorkspaces: next };
       });
@@ -835,7 +1070,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       set((s) => ({ drafts: { ...s.drafts, [key]: text } }));
     },
     requestMention: (path) => {
-      set((s) => ({ pendingMention: { path, nonce: (s.pendingMention?.nonce ?? 0) + 1 } }));
+      set((s) => ({
+        pendingMention: { path, nonce: (s.pendingMention?.nonce ?? 0) + 1 },
+      }));
     },
 
     clearPendingMention: () => {
@@ -852,7 +1089,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
     loadEarlier: async () => {
       const { active, bySession } = get();
       if (!active?.sessionId) return;
-      const key = sessionKey(active.engine, active.sessionId, active.workspacePath);
+      const key = sessionKey(
+        active.engine,
+        active.sessionId,
+        active.workspacePath,
+      );
       const state = bySession[key];
       if (!state?.nextBefore || state.loading) return;
       patchSession(set, key, { loading: true });
@@ -864,7 +1105,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
           state.nextBefore,
         );
         patchSession(set, key, {
-          messages: [...page.messages, ...(get().bySession[key] ?? EMPTY_SESSION).messages],
+          messages: [
+            ...page.messages,
+            ...(get().bySession[key] ?? EMPTY_SESSION).messages,
+          ],
           nextBefore: page.nextBefore,
           loading: false,
         });
@@ -878,10 +1122,49 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (active) await sendPrompt(active, prompt, images);
     },
 
+    respondToGrant: async (key, seq, accept) => {
+      const message = get().bySession[key]?.messages.find((m) => m.seq === seq);
+      if (!message || message.role !== "grant" || message.grant?.status !== "pending") {
+        return;
+      }
+      if (!accept) {
+        patchGrantBySeq(set, key, seq, () => ({ status: "declined" }));
+        return;
+      }
+      const path = message.path;
+      if (!path) return;
+      try {
+        await ipc.grantRoot(path);
+        patchGrantBySeq(set, key, seq, (grant) => ({
+          ...grant,
+          status: "granted",
+        }));
+      } catch (error) {
+        patchSession(set, key, { error: errorText(error) });
+      }
+    },
+
+    resendLastUser: async (key) => {
+      const s = get();
+      if (s.streamingByKey[key]) return; // a turn is already running
+      const messages = s.bySession[key]?.messages ?? [];
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      if (!lastUser) return;
+      const tab =
+        s.openTabs.find(
+          (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+        ) ?? s.active;
+      if (tab) await sendPrompt(tab, lastUser.text, lastUser.images ?? []);
+    },
+
     queueMessage: (text, images) => {
       const { active } = get();
       if (!active || (!text.trim() && images.length === 0)) return;
-      const key = sessionKey(active.engine, active.sessionId, active.workspacePath);
+      const key = sessionKey(
+        active.engine,
+        active.sessionId,
+        active.workspacePath,
+      );
       set((s) => {
         const prev = s.bySession[key] ?? EMPTY_SESSION;
         return {
@@ -902,14 +1185,21 @@ export const useChatStore = create<ChatStore>((set, get) => {
     removeQueued: (id) => {
       const { active } = get();
       if (!active) return;
-      const key = sessionKey(active.engine, active.sessionId, active.workspacePath);
+      const key = sessionKey(
+        active.engine,
+        active.sessionId,
+        active.workspacePath,
+      );
       set((s) => {
         const prev = s.bySession[key];
         if (!prev) return {};
         return {
           bySession: {
             ...s.bySession,
-            [key]: { ...prev, queue: prev.queue.filter((item) => item.id !== id) },
+            [key]: {
+              ...prev,
+              queue: prev.queue.filter((item) => item.id !== id),
+            },
           },
         };
       });
@@ -917,7 +1207,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
     clearQueue: () => {
       const { active } = get();
       if (!active) return;
-      const key = sessionKey(active.engine, active.sessionId, active.workspacePath);
+      const key = sessionKey(
+        active.engine,
+        active.sessionId,
+        active.workspacePath,
+      );
       set((s) => {
         const prev = s.bySession[key];
         if (!prev || prev.queue.length === 0) return {};
@@ -933,7 +1227,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
     interrupt: async () => {
       const { active } = get();
       if (!active) return;
-      const key = sessionKey(active.engine, active.sessionId, active.workspacePath);
+      const key = sessionKey(
+        active.engine,
+        active.sessionId,
+        active.workspacePath,
+      );
       // Settle locally FIRST: the killed run's done event can arrive while
       // the kill IPCs below are still in flight, and onDone drains the queue
       // whenever interrupted is still false — that would fire the next
@@ -949,20 +1247,31 @@ export const useChatStore = create<ChatStore>((set, get) => {
         return {
           bySession: {
             ...s.bySession,
-            [key]: { ...cur, messages, streaming: false, interrupted: true, turnStartedAt: null },
+            [key]: {
+              ...cur,
+              messages,
+              streaming: false,
+              interrupted: true,
+              turnStartedAt: null,
+            },
           },
           streamingByKey: setStreamingFlag(s.streamingByKey, key, false),
         };
       });
       // Registry is keyed by native session id once known; before that the
       // run id routes. Try both.
-      if (active.sessionId) await ipc.interruptSession(active.sessionId).catch(() => false);
+      if (active.sessionId)
+        await ipc.interruptSession(active.sessionId).catch(() => false);
       const deadRunIds: string[] = [];
       for (const [runId, routed] of runRouting) {
         if (routed === key) deadRunIds.push(runId);
       }
       // Independent kills, one IPC call per routed run — fired together.
-      await Promise.all(deadRunIds.map((runId) => ipc.interruptSession(runId).catch(() => false)));
+      await Promise.all(
+        deadRunIds.map((runId) =>
+          ipc.interruptSession(runId).catch(() => false),
+        ),
+      );
       // The runs are dead: drop their routing entries so the map cannot grow
       // forever. (A late done event would also remove them.)
       for (const runId of deadRunIds) runRouting.delete(runId);
@@ -976,7 +1285,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
         return;
       }
       set({ actionError: null });
-      const tab = get().openTabs.find((t) => t.engine === engine && t.sessionId === sessionId);
+      const tab = get().openTabs.find(
+        (t) => t.engine === engine && t.sessionId === sessionId,
+      );
       set((s) => ({
         sessions: s.sessions.filter(
           (x) => !(x.engine === engine && x.sessionId === sessionId),
@@ -988,7 +1299,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
       } else {
         set((s) => ({
           active:
-            s.active?.sessionId === sessionId && s.active.engine === engine ? null : s.active,
+            s.active?.sessionId === sessionId && s.active.engine === engine
+              ? null
+              : s.active,
         }));
       }
     },
@@ -1018,7 +1331,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
 // Dev-only handle for poking the store from the webview console; stripped
 // from production builds by the env guard.
 if (import.meta.env.DEV) {
-  (window as unknown as { __chatStore: typeof useChatStore }).__chatStore = useChatStore;
+  (window as unknown as { __chatStore: typeof useChatStore }).__chatStore =
+    useChatStore;
 }
 
 // HMR swaps this module for a fresh store; without dispose the old module's

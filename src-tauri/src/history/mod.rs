@@ -1,9 +1,11 @@
+mod codex_titles;
 mod extract;
 pub mod reader;
 pub mod scanner;
 
 pub use extract::{parse_session_file, scan_summary_file, ParsedSession, ScanSummary};
 
+use crate::engine::TodosPayload;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -19,10 +21,25 @@ pub struct Message {
     /// chip in the timeline. None for non-tool rows and path-less tools.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Full tool-call arguments (object / array / string). Rendered in the
+    /// expandable tool-call panel. None when the engine only recorded a name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<Value>,
+    /// Tool execution result/output (string / object / array).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    /// Todo-list snapshot/patch from a todo tool call (claude TodoWrite,
+    /// omp todo op); feeds the run-status strip's task pill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub todos: Option<TodosPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
     /// Image attachments on user messages: data URLs (claude/pi/omp) or
     /// absolute paths (kimi/codex). Empty for every other row.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -285,25 +302,25 @@ pub(crate) fn clean_user_turn(text: &str) -> String {
     if let Some(display) = slash_command_display(rest) {
         return display;
     }
-    // The `# AGENTS.md instructions` heading precedes the `<INSTRUCTIONS>`
-    // block; drop it only when that block actually follows.
-    if let Some(after) = rest.strip_prefix("# AGENTS.md instructions") {
-        let after = after.trim_start();
-        // Codex appends the workspace path: `# AGENTS.md instructions for
-        // <path>\n\n<INSTRUCTIONS>` — skip the heading line first.
-        let after = match after.strip_prefix("for ") {
-            Some(tail) => match tail.find('\n') {
-                Some(nl) => tail[nl + 1..].trim_start(),
-                None => after,
-            },
-            None => after,
-        };
-        if after.starts_with("<INSTRUCTIONS>") {
-            rest = after;
-        }
-    }
     loop {
         let prev_len = rest.len();
+        // The `# AGENTS.md instructions` heading precedes the `<INSTRUCTIONS>`
+        // block; drop it only when that block actually follows.
+        if let Some(after) = rest.strip_prefix("# AGENTS.md instructions") {
+            let after = after.trim_start();
+            // Codex appends the workspace path: `# AGENTS.md instructions for
+            // <path>\n\n<INSTRUCTIONS>` — skip the heading line first.
+            let after = match after.strip_prefix("for ") {
+                Some(tail) => match tail.find('\n') {
+                    Some(nl) => tail[nl + 1..].trim_start(),
+                    None => after,
+                },
+                None => after,
+            };
+            if after.starts_with("<INSTRUCTIONS>") {
+                rest = after;
+            }
+        }
         for tag in INJECTED_LEADING_TAGS {
             let open = format!("<{tag}>");
             if rest.starts_with(&open) {
@@ -485,6 +502,18 @@ mod tests {
         assert_eq!(clean_user_turn(text), "");
     }
     #[test]
+    fn clean_repeated_context_blocks_before_typed_body() {
+        let context = "<recommended_plugins>plugins</recommended_plugins># AGENTS.md instructions for /tmp/ws\n\n<INSTRUCTIONS>rules</INSTRUCTIONS><environment_context>env</environment_context>";
+        assert_eq!(clean_user_turn(context), "");
+        assert_eq!(
+            clean_user_turn(&format!("{context}{context}\n修复标题")),
+            "修复标题"
+        );
+        let typed = "# AGENTS.md instructions 是什么意思？";
+        assert_eq!(clean_user_turn(&format!("{context}{typed}")), typed);
+    }
+
+    #[test]
     fn clean_drops_recommended_plugins_envelope() {
         let text = "<recommended_plugins>Here is a list of plugins that are available but not installed. …</recommended_plugins>";
         assert_eq!(clean_user_turn(text), "");
@@ -509,7 +538,8 @@ mod tests {
 
     #[test]
     fn clean_keeps_typed_tail_after_recommended_plugins() {
-        let text = "<recommended_plugins>Here is a list of plugins…</recommended_plugins>\n继续定位一下";
+        let text =
+            "<recommended_plugins>Here is a list of plugins…</recommended_plugins>\n继续定位一下";
         assert_eq!(clean_user_turn(text), "继续定位一下");
     }
 

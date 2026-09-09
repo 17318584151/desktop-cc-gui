@@ -36,6 +36,12 @@ export function ContextMenu({
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
+  // Latest-handler ref so the global dismissal listeners below subscribe
+  // once yet always invoke the current onClose.
+  const onCloseRef = useRef(onClose);
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   // Clamp into the viewport once the menu's real size is known.
   useLayoutEffect(() => {
@@ -50,26 +56,27 @@ export function ContextMenu({
   // Global dismissal: Escape, outside press, blur/resize. Capture phase so
   // the same right-click that opened the menu can't instantly close it.
   useLayoutEffect(() => {
+    const close = () => onCloseRef.current();
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
-        onClose();
+        close();
       }
     };
     const onPointerDown = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) onClose();
+      if (!menuRef.current?.contains(e.target as Node)) close();
     };
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("blur", onClose);
-    window.addEventListener("resize", onClose);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("blur", onClose);
-      window.removeEventListener("resize", onClose);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
     };
-  }, [onClose]);
+  }, []);
 
   return createPortal(
     <div
@@ -82,7 +89,7 @@ export function ContextMenu({
     >
       {entries.map((entry, i) =>
         entry === "separator" ? (
-          <div key={`sep-${i}`} className="mx-1 my-1 h-px bg-separator-border" role="separator" />
+          <hr key={`sep-${i}`} className="mx-1 my-1 h-px border-0 bg-separator-border" />
         ) : (
           <button
             key={entry.id}

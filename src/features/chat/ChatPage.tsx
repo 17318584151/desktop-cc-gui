@@ -12,6 +12,8 @@ import { useGitStore } from "@/features/git/store";
 import { ipc } from "@/lib/ipc";
 import { cx } from "@/utils/cx";
 import { useLayoutPanels } from "./use-layout-panels";
+import { commandRegistry } from "@ccgui/plugin-sdk";
+import { keywords } from "@/features/commands/builtins";
 import { useChatTabs } from "./use-chat-tabs";
 import { useChatSidebar } from "./use-chat-sidebar";
 import { ChatPageDialogs, type ChatPageDialog } from "./ChatPageDialogs";
@@ -20,6 +22,9 @@ import { PANEL_TOGGLE_CLASSES } from "./panel-toggle-classes";
 import { ChatSidebarFrame } from "./ChatSidebarFrame";
 import { ChatSidePanel } from "./ChatSidePanel";
 import { ChatCenterPane } from "./ChatCenterPane";
+// Side-effect import: registers the builtin files/changes tabs into
+// panelTabRegistry (plan §4.2 #4).
+import "./panel-tabs";
 
 // Windows keeps its native titlebar (titleBarStyle Overlay is macOS-only), so
 // the caption row sits directly on the app background with no visual break —
@@ -60,6 +65,28 @@ export default function ChatPage() {
     sidebarRef,
     sidebarResizerRef,
   } = useLayoutPanels();
+
+  // Layout toggles registered as palette commands (plan §4.2 #9): the toggles
+  // live in this hook instance, so registration happens here where they're in
+  // scope. ChatPage stays mounted for the app's lifetime; the cleanup keeps
+  // the registry honest under HMR.
+  useEffect(() => {
+    const disposers = [
+      commandRegistry.register({
+        id: "builtin:toggleSidePanel",
+        title: () => t("commands.toggleSidePanel"),
+        keywords: keywords("commands.toggleSidePanelKeywords"),
+        run: togglePanelCollapsed,
+      }),
+      commandRegistry.register({
+        id: "builtin:toggleSidebar",
+        title: () => t("commands.toggleSidebar"),
+        keywords: keywords("commands.toggleSidebarKeywords"),
+        run: toggleSidebarCollapsed,
+      }),
+    ];
+    return () => disposers.forEach((d) => d());
+  }, [t, togglePanelCollapsed, toggleSidebarCollapsed]);
   const {
     tabItems,
     activeTabKey,

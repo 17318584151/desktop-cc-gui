@@ -65,25 +65,22 @@ impl Engine for KimiEngine {
                 if let Some(content) = value.get("content") {
                     let text = crate::history::content_text(Some(content));
                     if !text.is_empty() {
-                        out.push(EngineEvent::Message {
-                            role: "assistant".to_string(),
-                            text,
-                            path: None,
-                        });
+                        out.push(super::assistant_message(text));
                     }
                 }
                 if let Some(tool_calls) = value.get("tool_calls").and_then(Value::as_array) {
                     for call in tool_calls {
-                        let name = call
-                            .get("function")
+                        let function = call.get("function");
+                        let name = function
                             .and_then(|f| f.get("name"))
+                            .or_else(|| call.get("name"))
                             .and_then(Value::as_str)
                             .unwrap_or("tool");
-                        out.push(EngineEvent::Message {
-                            role: "tool".to_string(),
-                            text: name.to_string(),
-                            path: None,
-                        });
+                        let args = function
+                            .and_then(|f| f.get("arguments"))
+                            .or_else(|| call.get("arguments"))
+                            .or_else(|| call.get("input"));
+                        out.push(super::tool_call_message(name, args));
                     }
                 }
                 if let Some(usage) = value.get("usage") {
@@ -93,11 +90,10 @@ impl Engine for KimiEngine {
             "tool" => {
                 if let Some(content) = value.get("content").and_then(Value::as_str) {
                     if !content.trim().is_empty() {
-                        out.push(EngineEvent::Message {
-                            role: "tool".to_string(),
-                            text: content.trim().chars().take(200).collect(),
-                            path: None,
-                        });
+                        out.push(super::tool_call_message(
+                            content.trim().chars().take(200).collect::<String>(),
+                            None,
+                        ));
                     }
                 }
             }

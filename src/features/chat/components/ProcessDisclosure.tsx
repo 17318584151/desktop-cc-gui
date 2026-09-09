@@ -6,9 +6,10 @@ import Brain from "lucide-react/dist/esm/icons/brain";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
 import { cx } from "@/utils/cx";
 import { SOFT_EASE } from "@/components/application/agent-log/agent-log-motion";
-import { StepRow, type TaskListChip, type TaskListStep } from "@/components/application/task-list/task-list";
+import { StepRow, type TaskListChip } from "@/components/application/task-list/task-list";
 import { getFileTreeIconSvg } from "@/features/files/fileIcons";
 import { markToolKeys, toolEntranceKey, type ProcessItem } from "./timeline-rows";
+import { ToolPayloadViewer } from "./ToolPayloadViewer";
 
 /** Classify a tool-call label (tool name or shell command) into a type chip. */
 function toolTypeKey(text: string): string {
@@ -61,7 +62,17 @@ function fileChipFor(path: string | null | undefined): TaskListChip | null {
 
 type ProcessSection =
   | { type: "thinking"; text: string; live?: boolean; firstIndex: number }
-  | { type: "tools"; calls: { text: string; path: string | null; index: number }[]; firstIndex: number };
+  | {
+      type: "tools";
+      calls: {
+        text: string;
+        path: string | null;
+        args?: unknown;
+        result?: unknown;
+        index: number;
+      }[];
+      firstIndex: number;
+    };
 
 function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
   const sections: ProcessSection[] = [];
@@ -70,7 +81,13 @@ function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
       sections.push({ type: "thinking", text: item.text, live: item.live, firstIndex: index });
     } else {
       const last = sections[sections.length - 1];
-      const call = { text: item.text, path: item.path ?? null, index };
+      const call = {
+        text: item.text,
+        path: item.path ?? null,
+        args: item.args,
+        result: item.result,
+        index,
+      };
       if (last?.type === "tools") last.calls.push(call);
       else sections.push({ type: "tools", calls: [call], firstIndex: index });
     }
@@ -80,18 +97,35 @@ function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
 
 /** Freeze LogRow's `reduce` on first paint so a later parent render cannot
  * flip it mid-entrance (initial only runs on mount). */
-function FrozenStepRow({
+const FrozenStepRow = memo(function FrozenStepRow({
   play,
-  step,
+  text,
+  path,
+  args,
+  result,
   first,
   last,
 }: {
   play: boolean;
-  step: TaskListStep;
+  text: string;
+  path: string | null;
+  args?: unknown;
+  result?: unknown;
   first: boolean;
   last: boolean;
 }) {
   const reduceRef = useRef(!play);
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const hasPayload = args != null || result != null;
+  const fileChip = fileChipFor(path);
+  const step = {
+    label: text,
+    chips: [
+      ...(fileChip ? [fileChip] : []),
+      { label: t(`chat.${toolTypeKey(text)}`) },
+    ],
+  };
   return (
     <StepRow
       step={step}
@@ -99,9 +133,38 @@ function FrozenStepRow({
       first={first}
       last={last}
       reduce={reduceRef.current}
-    />
+    >
+      {hasPayload ? (
+        <div className="-mt-0.5 mb-1">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={open ? t("chat.toolCallCollapse") : t("chat.toolCallExpand")}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((v) => !v);
+            }}
+            className="flex cursor-pointer items-center gap-0.5 text-caption-1-regular text-text-tertiary transition-colors hover:text-text-secondary"
+          >
+            <ChevronRight
+              className={cx("size-3 transition-transform duration-150", open && "rotate-90")}
+              aria-hidden
+            />
+            <span>{t("chat.toolCallArgs")}</span>
+          </button>
+          {open ? (
+            <ToolPayloadViewer
+              toolName={text}
+              path={path}
+              args={args}
+              result={result}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </StepRow>
   );
-}
+});
 
 /** Live thinking window: the last ~2000 chars, cut at a LINE boundary so a
  *  row slides out as a whole instead of dissolving character by character.
@@ -177,11 +240,10 @@ function useProcessExpansion(autoExpand: boolean, turnLive: boolean, hasLiveThin
       // Thinking resumed inside this row (extended thinking between tool
       // calls): show it again unless the user folded the row on purpose.
       setExpanded(true);
-    } else if (!hasLiveThinking && prev.thinking) {
+    } else if (!hasLiveThinking && prev.thinking && !overridden) {
       // The thinking settled: fold immediately — expanded-on-demand shows
-      // the full text afterwards. Control returns to automation so a later
-      // "became latest" can reopen.
-      setOverridden(false);
+      // the full text afterwards. A deliberate user click wins: it keeps
+      // its chosen state and stays sticky across thinking resume cycles.
       setExpanded(false);
     } else if (!autoExpand && !turnLive) {
       const superseded = prev.auto;
@@ -249,13 +311,10 @@ function ProcessDisclosureBody({
                 <FrozenStepRow
                   key={call.index}
                   play={play}
-                  step={{
-                    label: call.text,
-                    chips: [
-                      ...[fileChipFor(call.path)].filter((c): c is TaskListChip => c !== null),
-                      { label: t(`chat.${toolTypeKey(call.text)}`) },
-                    ],
-                  }}
+                  text={call.text}
+                  path={call.path}
+                  args={call.args}
+                  result={call.result}
                   first={j === 0}
                   last={j === section.calls.length - 1}
                 />

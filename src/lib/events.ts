@@ -6,7 +6,16 @@ export interface EngineEventPayload {
   sessionId: string | null;
   engine: string;
   seq: number;
-  kind: "delta" | "thinking" | "message" | "session" | "usage" | "error" | "warn" | "done";
+  kind:
+    | "delta"
+    | "thinking"
+    | "message"
+    | "session"
+    | "usage"
+    | "error"
+    | "warn"
+    | "permission_denied"
+    | "done";
   data: unknown;
 }
 
@@ -30,6 +39,19 @@ export interface ScanProgress {
 /** History-scan progress, throttled by the scanner (~50 updates per run). */
 export function listenScanProgress(cb: (p: ScanProgress) => void): Promise<UnlistenFn> {
   return listen<ScanProgress>("scan://progress", (e) => cb(e.payload));
+}
+export interface PluginInstallProgress {
+  done: number;
+  total: number;
+  /** True on the last event of an install run. */
+  finished: boolean;
+}
+
+/** Plugin-install copy progress, throttled by the backend (~50 updates per run). */
+export function listenPluginInstallProgress(
+  cb: (p: PluginInstallProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<PluginInstallProgress>("plugin://install-progress", (e) => cb(e.payload));
 }
 export interface TerminalOutputPayload {
   id: string;

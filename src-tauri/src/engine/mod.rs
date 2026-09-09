@@ -15,7 +15,7 @@ use crate::event_sink;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
@@ -40,10 +40,17 @@ pub struct SendRequest {
     /// Reasoning effort ("low" | "medium" | "high" | "xhigh" | "max"); engines without an
     /// effort knob ignore it, engines with a narrower knob clamp.
     pub effort: Option<String>,
+    /// OMP OpenAI service tier override, independent of reasoning effort.
+    pub service_tier: Option<String>,
     /// Permission mode ("auto" | "manual" | "plan" | "bypass"); each engine
     /// resolves it against the modes it can actually honor at spawn (see
     /// `Engine::resolve_permission`).
     pub permission: Option<String>,
+    /// User-granted extra directories (db `granted_roots`); claude launches
+    /// pass them as `--add-dir` so reads outside the workspace stop hitting
+    /// headless permission denials. Engines without an equivalent flag
+    /// ignore them.
+    pub additional_dirs: Vec<String>,
 }
 
 pub struct BuiltCommand {
@@ -58,16 +65,26 @@ pub struct BuiltCommand {
 
 #[derive(Debug)]
 pub enum EngineEvent {
+    /// Streaming text delta (append).
     Delta(String),
     /// Reasoning/thinking delta (append).
     Thinking(String),
     /// A completed message block (role, text). `path` carries the target
     /// file of a tool call (read/edit/write/...) so the UI can render a
-    /// file chip; None for everything else.
+    /// file chip; None for everything else. `args` is the tool-call payload
+    /// (pretty-printed in the timeline). `patch` updates the oldest
+    /// still-incomplete tool row of the same name (claude streams args
+    /// after the name-only start).
     Message {
         role: String,
         text: String,
         path: Option<String>,
+        /// Todo-list snapshot/patch from a todo tool call (claude TodoWrite,
+        /// omp todo op); feeds the run-status strip's task pill.
+        todos: Option<TodosPayload>,
+        args: Option<Value>,
+        result: Option<Value>,
+        patch: bool,
     },
     /// Native session id became known.
     SessionId(String),
@@ -78,11 +95,119 @@ pub enum EngineEvent {
     /// Non-terminal engine notice (e.g. an upstream 429 the CLI is
     /// retrying): surfaced to the UI, but the turn is still running.
     Warn(String),
+    /// A tool call was denied by the CLI's permission system (headless mode
+    /// cannot prompt). `path` is the denied absolute path when the denial
+    /// text or tool input carries one — the UI offers a directory grant for
+    /// it; `tool` is the denied tool name when known.
+    PermissionDenied {
+        tool: Option<String>,
+        path: Option<String>,
+        message: String,
+    },
     /// Turn finished successfully.
     Done {
         session_id: Option<String>,
         usage: Option<Value>,
     },
+}
+
+/// One todo entry carried to the frontend.
+#[derive(Debug, Clone, Serialize)]
+pub struct TodoItem {
+    pub content: String,
+    pub status: String,
+}
+
+/// `replace: true` is a full snapshot of the todo list; `false` is a patch
+/// the frontend applies by matching on `content`.
+#[derive(Debug, Clone, Serialize)]
+pub struct TodosPayload {
+    pub items: Vec<TodoItem>,
+    pub replace: bool,
+}
+
+/// Drop empty / null payloads so the UI does not render a blank args panel.
+/// JSON-encoded strings (OpenAI-style `function.arguments`) are parsed first.
+pub(crate) fn parse_tool_args_value(value: &Value) -> Option<Value> {
+    match value {
+        Value::Null => None,
+        Value::Object(map) if map.is_empty() => None,
+        Value::Array(items) if items.is_empty() => None,
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            match serde_json::from_str::<Value>(trimmed) {
+                Ok(parsed) => parse_tool_args_value(&parsed).or_else(|| Some(Value::String(trimmed.to_string()))),
+                Err(_) => Some(Value::String(trimmed.to_string())),
+            }
+        }
+        other => Some(other.clone()),
+    }
+}
+
+/// Tool-call start: name plus parsed args (path / todos derived from args).
+pub(crate) fn tool_call_message(name: impl Into<String>, args: Option<&Value>) -> EngineEvent {
+    let args = args.and_then(parse_tool_args_value);
+    EngineEvent::Message {
+        role: "tool".to_string(),
+        text: name.into(),
+        path: args.as_ref().and_then(tool_path_arg),
+        todos: args.as_ref().and_then(parse_todo_args),
+        args,
+        result: None,
+        patch: false,
+    }
+}
+
+/// Same as [`tool_call_message`] but patches the matching in-flight tool row.
+pub(crate) fn tool_call_patch(name: impl Into<String>, args: Option<&Value>) -> EngineEvent {
+    match tool_call_message(name, args) {
+        EngineEvent::Message {
+            role,
+            text,
+            path,
+            todos,
+            args,
+            ..
+        } => EngineEvent::Message {
+            role,
+            text,
+            path,
+            todos,
+            args,
+            result: None,
+            patch: true,
+        },
+        other => other,
+    }
+}
+
+/// Patches execution result onto the matching in-flight tool row.
+pub(crate) fn tool_result_patch(name: impl Into<String>, result: Option<&Value>) -> EngineEvent {
+    EngineEvent::Message {
+        role: "tool".to_string(),
+        text: name.into(),
+        path: None,
+        todos: None,
+        args: None,
+        result: result.cloned(),
+        patch: true,
+    }
+}
+
+/// Assistant snapshot with no tool metadata.
+pub(crate) fn assistant_message(text: String) -> EngineEvent {
+    EngineEvent::Message {
+        role: "assistant".to_string(),
+        text,
+        path: None,
+        todos: None,
+        args: None,
+        result: None,
+        patch: false,
+    }
 }
 
 /// First path-like argument of a tool call (`read`/`edit`/`write` use
@@ -96,6 +221,97 @@ pub(crate) fn tool_path_arg(args: &Value) -> Option<String> {
         .map(|s| s.trim())
         .find(|s| !s.is_empty())
         .map(|s| s.to_string())
+}
+
+/// Parse a tool call's args into a todo-list payload. Two shapes: claude's
+/// TodoWrite (`todos` array, a full snapshot) and the omp harness todo
+/// protocol (`op` + task/list, mostly patches). None when the args carry
+/// no todo data.
+pub(crate) fn parse_todo_args(args: &Value) -> Option<TodosPayload> {
+    let pending_item = |content: &str| TodoItem {
+        content: content.to_string(),
+        status: "pending".to_string(),
+    };
+    // `list` phases, each with an `items` string array, flattened.
+    let phase_items = |args: &Value| -> Vec<TodoItem> {
+        args.get("list")
+            .and_then(Value::as_array)
+            .map(|phases| {
+                phases
+                    .iter()
+                    .filter_map(|phase| phase.get("items").and_then(Value::as_array))
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(pending_item)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if let Some(todos) = args.get("todos").and_then(Value::as_array) {
+        let items = todos
+            .iter()
+            .filter_map(|entry| {
+                let content = ["content", "text", "title", "task"]
+                    .iter()
+                    .filter_map(|key| entry.get(key).and_then(Value::as_str))
+                    .map(|s| s.trim())
+                    .find(|s| !s.is_empty())?;
+                let status = match entry.get("status").and_then(Value::as_str).unwrap_or("") {
+                    "in_progress" | "running" | "active" => "active",
+                    "completed" | "complete" | "done" => "complete",
+                    "blocked" => "blocked",
+                    _ => "pending",
+                };
+                Some(TodoItem {
+                    content: content.to_string(),
+                    status: status.to_string(),
+                })
+            })
+            .collect();
+        return Some(TodosPayload {
+            items,
+            replace: true,
+        });
+    }
+    let op = args.get("op").and_then(Value::as_str)?;
+    match op {
+        "init" => Some(TodosPayload {
+            items: phase_items(args),
+            replace: true,
+        }),
+        "append" => {
+            let items = match args.get("items").and_then(Value::as_array) {
+                Some(items) => items.iter().filter_map(Value::as_str).map(pending_item).collect(),
+                None => phase_items(args),
+            };
+            Some(TodosPayload {
+                items,
+                replace: false,
+            })
+        }
+        "start" | "done" | "block" | "unblock" | "drop" => {
+            let task = args.get("task").and_then(Value::as_str)?;
+            let status = match op {
+                "start" => "active",
+                "done" => "complete",
+                "block" => "blocked",
+                "unblock" => "pending",
+                _ => "dropped",
+            };
+            Some(TodosPayload {
+                items: vec![TodoItem {
+                    content: task.to_string(),
+                    status: status.to_string(),
+                }],
+                replace: false,
+            })
+        }
+        "rm" | "clear" => Some(TodosPayload {
+            items: Vec::new(),
+            replace: true,
+        }),
+        _ => None,
+    }
 }
 
 pub trait Engine: Send + Sync {
@@ -124,7 +340,7 @@ pub trait Engine: Send + Sync {
 
 pub fn engine_by_id(id: &str) -> Option<Box<dyn Engine>> {
     match id {
-        "claude" => Some(Box::new(claude::ClaudeEngine)),
+        "claude" => Some(Box::new(claude::ClaudeEngine::new())),
         "kimi" => Some(Box::new(kimi::KimiEngine)),
         "grok" => Some(Box::new(grok::GrokEngine)),
         "codex" => Some(Box::new(codex::CodexEngine)),
@@ -147,9 +363,25 @@ pub(crate) fn engine_home(env_key: Option<&str>, default_dir: &str) -> PathBuf {
             return PathBuf::from(value);
         }
     }
-    std::env::home_dir()
-        .unwrap_or_default()
-        .join(default_dir)
+    fallback_home().join(default_dir)
+}
+
+/// Home dir for the default engine path. Production uses `dirs` (Known
+/// Folder API on Windows); tests steer the fallback through HOME /
+/// USERPROFILE env instead, because `dirs` ignores env on Windows and would
+/// scan the real profile.
+fn fallback_home() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+            return PathBuf::from(home);
+        }
+        #[cfg(windows)]
+        if let Some(profile) = std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()) {
+            return PathBuf::from(profile);
+        }
+    }
+    dirs::home_dir().unwrap_or_default()
 }
 
 /// A leading '-' would parse as a flag (pi also treats '@' as a file
@@ -268,12 +500,14 @@ impl ProcessRegistry {
                     .collect(),
                 Err(_) => Vec::new(),
             };
-        if entries.is_empty() {
-            return false;
+        // No Iterator::any here: it short-circuits on the first true, which
+        // would leave every later parallel run alive — the exact bug this
+        // aggregate kill exists to fix.
+        let mut killed_any = false;
+        for (pid, child, killed) in &entries {
+            killed_any |= Self::kill_entry(*pid, child, killed);
         }
-        entries
-            .iter()
-            .any(|(pid, child, killed)| Self::kill_entry(*pid, child, killed))
+        killed_any
     }
 
     pub fn kill_all(&self) {
@@ -391,9 +625,7 @@ fn engine_bin(settings: &crate::settings::AppSettings, engine_id: &str) -> Strin
             // Defense in depth: settings write validates too, but the file
             // may have been hand-edited since.
             match crate::settings::validate_bin_override(trimmed) {
-                Ok(path) => {
-                    return resolve::resolve_launchable_cli_binary(&path.to_string_lossy())
-                }
+                Ok(path) => return resolve::resolve_launchable_cli_binary(&path.to_string_lossy()),
                 Err(reason) => {
                     eprintln!("[engine] ignoring invalid {engine_id} bin override: {reason}");
                 }
@@ -454,6 +686,7 @@ fn prepare_launch(
     model: Option<String>,
     effort: Option<String>,
     permission: Option<String>,
+    additional_dirs: Vec<String>,
 ) -> Result<Launch, String> {
     let engine_impl = engine_by_id(engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
     // Channels live in each CLI's native config file (provider_files); the
@@ -475,7 +708,20 @@ fn prepare_launch(
         images: image_paths.unwrap_or_default(),
         model,
         effort,
+        service_tier: if engine == "omp" {
+            settings.omp_openai_service_tier.clone()
+        } else {
+            None
+        },
         permission: permission.filter(|p| !p.trim().is_empty()),
+        // Cap defensively: the list lands on a command line, and a
+        // hand-edited db should not produce an argv bomb.
+        additional_dirs: additional_dirs
+            .into_iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty() && Path::new(d).is_absolute())
+            .take(32)
+            .collect(),
     };
     let bin = engine_bin(&settings, engine);
     let built = engine_impl.build_command(&req, &bin)?;
@@ -622,10 +868,32 @@ impl RunContext {
                 "thinking",
                 Value::String(text),
             ),
-            EngineEvent::Message { role, text, path } => {
+            EngineEvent::Message {
+                role,
+                text,
+                path,
+                todos,
+                args,
+                result,
+                patch,
+            } => {
                 let mut payload = serde_json::json!({ "role": role, "text": text });
                 if let Some(path) = path {
                     payload["path"] = Value::String(path);
+                }
+                if let Some(todos) = todos {
+                    if let Ok(value) = serde_json::to_value(todos) {
+                        payload["todos"] = value;
+                    }
+                }
+                if let Some(args) = args {
+                    payload["args"] = args;
+                }
+                if let Some(result) = result {
+                    payload["result"] = result;
+                }
+                if patch {
+                    payload["patch"] = Value::Bool(true);
                 }
                 state.push(
                     &self.sink,
@@ -658,6 +926,21 @@ impl RunContext {
                     &self.engine_id,
                     "warn",
                     Value::String(error),
+                );
+            }
+            EngineEvent::PermissionDenied {
+                tool,
+                path,
+                message,
+            } => {
+                // Not terminal either: the CLI works around the denial and
+                // the turn continues — the UI offers the grant alongside.
+                state.push(
+                    &self.sink,
+                    &self.run_id,
+                    &self.engine_id,
+                    "permission_denied",
+                    serde_json::json!({ "tool": tool, "path": path, "message": message }),
                 );
             }
             EngineEvent::Done { session_id, usage } => {
@@ -710,6 +993,12 @@ async fn run_reader(stdout: ChildStdout, ctx: RunContext) {
     for path in &ctx.cleanup_files {
         let _ = std::fs::remove_file(path);
     }
+    // Drain this run's registry entries: under the native session id after
+    // rekey, and under the run id when the session id never arrived.
+    if let Some(key) = state.native_session_id.clone() {
+        ctx.registry.remove_if_pid(&key, ctx.pid);
+    }
+    ctx.registry.remove_if_pid(&ctx.run_id, ctx.pid);
     // omp writes some failures (upstream 403/5xx, quota exhaustion) to
     // stderr and then exits — sometimes cleanly, after a normal turn_end.
     // A non-empty stderr on a failed exit must reach the user even when a
@@ -801,6 +1090,10 @@ pub async fn send_message(
         model,
         effort,
         permission,
+        // Every user-granted directory rides along as a launch argument, so
+        // a grant approved mid-conversation takes effect on the next send
+        // (each send is a fresh process).
+        state.db.granted_roots().unwrap_or_default(),
     )?;
 
     let mut command = launch.built.command;
@@ -902,7 +1195,9 @@ mod permission_tests {
             images: Vec::new(),
             model: None,
             effort: None,
+            service_tier: None,
             permission: permission.map(str::to_string),
+            additional_dirs: Vec::new(),
         }
     }
 
@@ -917,6 +1212,67 @@ mod permission_tests {
     }
 
     #[test]
+    fn omp_fast_tier_is_explicit_and_independent_of_effort() {
+        let mut request = req(None);
+        request.model = Some("openai-codex/gpt-5.4".into());
+        request.effort = Some("high".into());
+        for tier in [None, Some("priority"), Some("default")] {
+            request.service_tier = tier.map(str::to_string);
+            let args = argv(&pi_family::omp(), &request);
+            let actual = args
+                .iter()
+                .position(|a| a == "--service-tier")
+                .map(|i| args[i + 1].as_str());
+            assert_eq!(actual, tier);
+            assert!(args.windows(2).any(|a| a == ["--thinking", "high"]));
+        }
+    }
+
+    #[test]
+    fn omp_fast_tier_does_not_leak_to_other_models_or_pi() {
+        let mut request = req(None);
+        request.service_tier = Some("priority".into());
+        for model in [
+            None,
+            Some("anthropic/claude"),
+            Some("google/gemini"),
+            Some("gpt-5.4"),
+            Some("openai/"),
+            Some("openai/gpt-5.4"),
+            Some("openai-codex/"),
+            Some("custom/gpt-5.4"),
+        ] {
+            request.model = model.map(str::to_string);
+            assert!(!argv(&pi_family::omp(), &request)
+                .iter()
+                .any(|a| a == "--service-tier"));
+        }
+        request.model = Some("openai-codex/gpt-5.4".into());
+        assert!(!argv(&pi_family::pi(), &request)
+            .iter()
+            .any(|a| a == "--service-tier"));
+        assert!(argv(&pi_family::omp(), &request)
+            .iter()
+            .any(|a| a == "--service-tier"));
+        request.service_tier = Some("invalid".into());
+        assert!(pi_family::omp()
+            .build_command(&request, "fake-bin")
+            .is_err());
+    }
+
+    #[test]
+    fn omp_tier_settings_are_backward_compatible_and_roundtrip() {
+        let mut settings: crate::settings::AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.omp_openai_service_tier, None);
+        for tier in [Some("priority"), Some("default"), None] {
+            settings.omp_openai_service_tier = tier.map(str::to_string);
+            let encoded = serde_json::to_string(&settings).unwrap();
+            let decoded: crate::settings::AppSettings = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded.omp_openai_service_tier.as_deref(), tier);
+        }
+    }
+
+    #[test]
     fn unsupported_mode_falls_back_to_first_supported() {
         let codex = codex::CodexEngine;
         assert_eq!(codex.resolve_permission(Some("plan")), "auto");
@@ -928,7 +1284,7 @@ mod permission_tests {
 
     #[test]
     fn claude_maps_modes_to_permission_flags() {
-        let e = claude::ClaudeEngine;
+        let e = claude::ClaudeEngine::new();
         let auto = argv(&e, &req(Some("auto")));
         assert!(auto.contains(&"--permission-mode".to_string()));
         assert!(auto.contains(&"acceptEdits".to_string()));
@@ -977,6 +1333,38 @@ mod permission_tests {
     }
 
     #[test]
+    fn codex_prompt_goes_through_stdin_not_argv() {
+        // Windows resolves npm codex to a `.cmd` shim spawned via `cmd /c`;
+        // cmd.exe cuts a multiline argument at the first newline, so only line
+        // 1 ever reached the model. The prompt must ride stdin (`-`) verbatim.
+        let e = codex::CodexEngine;
+        let mut request = req(Some("auto"));
+        request.prompt = "first line\nmodel = \"gpt-5\"\n%PATH%".to_string();
+        let built = e.build_command(&request, "fake-bin").unwrap();
+        let args: Vec<String> = built
+            .command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.contains(&"-".to_string()));
+        assert!(!args.iter().any(|a| a.contains("first line")));
+        assert_eq!(built.stdin_payload.as_deref(), Some(request.prompt.as_str()));
+
+        let mut resume = req(Some("auto"));
+        resume.session_id = Some("00000000-0000-0000-0000-000000000000".to_string());
+        let built = e.build_command(&resume, "fake-bin").unwrap();
+        let args: Vec<String> = built
+            .command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.contains(&"-".to_string()));
+        assert_eq!(built.stdin_payload.as_deref(), Some("hi"));
+    }
+
+    #[test]
     fn kimi_maps_plan_and_bypass() {
         let e = kimi::KimiEngine;
         let auto = argv(&e, &req(Some("auto")));
@@ -996,6 +1384,30 @@ mod permission_tests {
     }
 
     #[test]
+    fn claude_passes_granted_dirs_as_add_dir() {
+        let e = claude::ClaudeEngine::new();
+        let mut r = req(Some("auto"));
+        // Workspace itself, blanks and duplicates must not reach argv.
+        r.additional_dirs = vec![
+            "/data/shared".to_string(),
+            "/tmp".to_string(),
+            "   ".to_string(),
+            "/data/shared".to_string(),
+        ];
+        let args = argv(&e, &r);
+        let pairs: Vec<&[String]> = args
+            .windows(2)
+            .filter(|w| w[0] == "--add-dir")
+            .collect();
+        assert_eq!(pairs.len(), 1, "{args:?}");
+        assert_eq!(pairs[0][1], "/data/shared");
+
+        // Other engines have no equivalent flag: the field stays inert.
+        let codex_args = argv(&codex::CodexEngine, &r);
+        assert!(!codex_args.iter().any(|a| a == "--add-dir"));
+    }
+
+    #[test]
     fn grok_always_approves_regardless_of_request() {
         let e = grok::GrokEngine;
         for mode in [
@@ -1006,6 +1418,49 @@ mod permission_tests {
             None,
         ] {
             assert!(argv(&e, &req(mode)).contains(&"--always-approve".to_string()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_args_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_tool_args_value_drops_empty_and_parses_strings() {
+        assert_eq!(parse_tool_args_value(&Value::Null), None);
+        assert_eq!(parse_tool_args_value(&json!({})), None);
+        assert_eq!(parse_tool_args_value(&json!([])), None);
+        assert_eq!(
+            parse_tool_args_value(&json!("{\"path\":\"a.ts\"}")),
+            Some(json!({"path": "a.ts"}))
+        );
+        assert_eq!(
+            parse_tool_args_value(&json!({"file_path": "a.ts"})),
+            Some(json!({"file_path": "a.ts"}))
+        );
+        assert_eq!(
+            parse_tool_args_value(&json!("plain command")),
+            Some(json!("plain command"))
+        );
+    }
+
+    #[test]
+    fn tool_call_message_extracts_path_and_marks_patch() {
+        match tool_call_message("Read", Some(&json!({"file_path": "src/a.ts"}))) {
+            EngineEvent::Message {
+                path, args, patch, ..
+            } => {
+                assert_eq!(path.as_deref(), Some("src/a.ts"));
+                assert_eq!(args, Some(json!({"file_path": "src/a.ts"})));
+                assert!(!patch);
+            }
+            _ => panic!("expected tool message"),
+        }
+        match tool_call_patch("Read", Some(&json!({"file_path": "src/a.ts"}))) {
+            EngineEvent::Message { patch, .. } => assert!(patch),
+            _ => panic!("expected patch"),
         }
     }
 }

@@ -5,11 +5,20 @@ import { useShallow } from "zustand/react/shallow";
 import type { ComposerInputHandle } from "@/components/application/ai-chat/ai-chat-composer";
 import { mentionToken } from "@/components/application/ai-chat/file-tags";
 import { AddMenu } from "@/components/application/ai-chat/add-menu";
+import { PermissionMenu } from "@/components/application/ai-chat/permission-menu";
+import type { ComposerPermission } from "@/components/application/ai-chat/permission-menu";
 import {
-  PermissionMenu,
-} from "@/components/application/ai-chat/permission-menu";
-import { CliMenu, type EffortLevel } from "@/components/application/ai-chat/cli-menu";
-import { effectivePermission, useChatStore, sessionKey, type ActiveSession, type QueuedMessage } from "../store";
+  CliMenu,
+  type EffortLevel,
+  type ModelOption,
+} from "@/components/application/ai-chat/cli-menu";
+import {
+  effectivePermission,
+  useChatStore,
+  sessionKey,
+  type ActiveSession,
+  type QueuedMessage,
+} from "../store";
 import { recordPrompt } from "../prompt-history";
 import { MessageTimeline } from "./MessageTimeline";
 import { ConversationFooter } from "./ConversationFooter";
@@ -17,6 +26,7 @@ import { useBranchSwitcher } from "./use-branch-switcher";
 import { useComposerImages } from "./use-composer-images";
 import { useEngineModels } from "./use-engine-models";
 import type { EngineInfo, Workspace } from "@/lib/ipc";
+import type { OmpServiceTier } from "@/lib/omp-service-tier";
 import { EmptyState } from "@/components/base/empty-state";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
@@ -49,126 +59,70 @@ const SessionTimeline = memo(function SessionTimeline({
   );
 });
 
-/** Conversation column: timeline, message queue, composer, status bar. The
- * high-frequency session/draft subscriptions live here so streaming deltas
- * (one store write per animation frame) re-render only this subtree — never
- * the sidebar, tab strip, or side panel. */
-export const ChatConversation = memo(function ChatConversation({
-  active,
-  engines,
-  workspaces,
-  startNewChat,
-  composerInputRef,
+/** Session error banner above the timeline. */
+function SessionErrorBanner({
+  error,
+  onDismiss,
 }: {
-  active: ActiveSession | null;
+  error: string;
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="alert"
+      className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary"
+    >
+      <span className="min-w-0 flex-1 break-all">{error}</span>
+      <button
+        type="button"
+        aria-label={t("common.close")}
+        onClick={onDismiss}
+        className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+/** Composer menu slots (add / CLI / permission) plus the all-engines-disabled
+ * state, memoized so per-keystroke draft updates don't rebuild the menus. */
+function useConversationMenus({
+  engines,
+  engineInfo,
+  supportsImages,
+  activeEngine,
+  modelsByEngine,
+  displayModels,
+  displayEfforts,
+  ompServiceTier,
+  permission,
+  setActiveEngine,
+  setPermission,
+  setModel,
+  setEffort,
+  setOmpServiceTier,
+  refreshModels,
+}: {
   engines: EngineInfo[];
-  workspaces: Workspace[];
-  startNewChat: (workspacePath: string) => void;
-  composerInputRef: React.RefObject<ComposerInputHandle | null>;
+  engineInfo: EngineInfo | undefined;
+  supportsImages: boolean;
+  activeEngine: string;
+  modelsByEngine: Record<string, ModelOption[]>;
+  displayModels: Record<string, string>;
+  displayEfforts: Record<string, EffortLevel>;
+  ompServiceTier: OmpServiceTier;
+  permission: ComposerPermission;
+  setActiveEngine: (engine: string) => void;
+  setPermission: (permission: ComposerPermission) => void;
+  setModel: (engine: string, model: string) => Promise<void>;
+  setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
+  setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
+  refreshModels: () => Promise<void>;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const key = active ? sessionKey(active.engine, active.sessionId, active.workspacePath) : "";
-  // Key-scoped, LOW-frequency slices only: streaming flips at turn start/end,
-  // queue/error/usage change on discrete actions. The per-flush messages
-  // array is subscribed inside SessionTimeline so stream deltas re-render
-  // only that subtree — never the composer, queue bar, or status bar here.
-  const streaming = useChatStore((s) => (key ? (s.bySession[key]?.streaming ?? false) : false));
-  const sessionError = useChatStore((s) => (key ? (s.bySession[key]?.error ?? null) : null));
-  const dismissSessionError = useChatStore((s) => s.dismissSessionError);
-  const queue = useChatStore((s) => (key ? (s.bySession[key]?.queue ?? EMPTY_QUEUE) : EMPTY_QUEUE));
-  const sessionUsage = useChatStore((s) => (key ? s.bySession[key]?.usage : undefined));
-  const hasSession = useChatStore((s) => key in s.bySession);
-  const draft = useChatStore((s) => s.drafts[key] ?? "");
-  const sendShortcut = useChatStore((s) => s.sendShortcut);
-  const pendingMention = useChatStore((s) => s.pendingMention);
-  // Engine/effort/model prefs: low-frequency, grouped into one shallow watch.
-  const { activeEngine, efforts, models } = useChatStore(
-    useShallow((s) => ({
-      activeEngine: s.activeEngine,
-      efforts: s.efforts,
-      models: s.models,
-    })),
-  );
-  const {
-    setActiveEngine,
-    setEffort,
-    setModel,
-    pinModels,
-    setDraft,
-    clearPendingMention,
-    loadEarlier,
-    send,
-    queueMessage,
-    removeQueued,
-    clearQueue,
-    interrupt,
-  } = useChatStore(
-    useShallow((s) => ({
-      setActiveEngine: s.setActiveEngine,
-      setEffort: s.setEffort,
-      setModel: s.setModel,
-      pinModels: s.pinModels,
-      setDraft: s.setDraft,
-      clearPendingMention: s.clearPendingMention,
-      loadEarlier: s.loadEarlier,
-      send: s.send,
-      queueMessage: s.queueMessage,
-      removeQueued: s.removeQueued,
-      clearQueue: s.clearQueue,
-      interrupt: s.interrupt,
-    })),
-  );
-  const { branch, branches, branchError, handleBranchSelect, dismissBranchError } = useBranchSwitcher(active);
-  // Permission mode lives in the store (persisted) and flows into every
-  // send; engines that cannot honor the selected mode fall back to their
-  // first supported one, which is what the chip displays.
-  const permission = useChatStore((s) => s.permission);
-  const setPermission = useChatStore((s) => s.setPermission);
-  const { images, previews, imageError, removeImage, clearImages, pasteImages, dismissImageError } =
-    useComposerImages();
-  const { catalogs, modelsByEngine, refresh: refreshModels } = useEngineModels(engines, models, pinModels);
-
-  // The catalog's context window beats the 200k assumption when the
-  // selected model reports one.
-  const contextMax =
-    (catalogs[activeEngine]?.models ?? []).find((m) => m.id === models[activeEngine])
-      ?.contextWindow || CONTEXT_WINDOW_TOKENS;
-
-  const engineInfo = engines.find((e) => e.id === activeEngine);
-  const supportsImages = engineInfo?.supportsImages ?? false;
-
-  const handleLoadEarlier = useCallback(() => void loadEarlier(), [loadEarlier]);
-
-  const submit = useCallback(
-    (value: string) => {
-      if (!active || (!value.trim() && images.length === 0)) return;
-      recordPrompt(value);
-      setDraft(key, "");
-      clearImages();
-      // A turn is in flight: park the message in the session's queue; the
-      // store drains it FIFO when the turn ends.
-      if (streaming) {
-        queueMessage(value, images);
-        return;
-      }
-      void send(value, images);
-    },
-    [active, images, streaming, key, setDraft, clearImages, send, queueMessage],
-  );
-
-  // File-tree "+" asks the composer to insert an @path mention at the caret.
-  useEffect(() => {
-    if (!pendingMention) return;
-    clearPendingMention();
-    const input = composerInputRef.current;
-    if (!input) return;
-    input.focus();
-    input.insertText(`${mentionToken(pendingMention.path)} `);
-  }, [pendingMention, clearPendingMention, composerInputRef]);
-
-  const handleDraftChange = useCallback((v: string) => setDraft(key, v), [key, setDraft]);
-  const handleStop = useCallback(() => void interrupt(), [interrupt]);
   // Disabled-in-settings CLIs leave the picker entirely; the greyed-out
   // state stays reserved for CLIs whose binary is not installed.
   const cliOptions = useMemo(
@@ -224,10 +178,12 @@ export const ChatConversation = memo(function ChatConversation({
           value={activeEngine}
           onChange={setActiveEngine}
           modelsByEngine={modelsByEngine}
-          models={models}
+          models={displayModels}
           onModelChange={handleModelChange}
-          efforts={efforts}
+          efforts={displayEfforts}
           onEffortChange={handleEffortChange}
+          ompServiceTier={ompServiceTier}
+          onOmpServiceTierChange={setOmpServiceTier}
           onRefreshModels={refreshModels}
         />
       ),
@@ -239,10 +195,12 @@ export const ChatConversation = memo(function ChatConversation({
       activeEngine,
       setActiveEngine,
       modelsByEngine,
-      models,
+      displayModels,
       handleModelChange,
-      efforts,
+      displayEfforts,
       handleEffortChange,
+      ompServiceTier,
+      setOmpServiceTier,
       refreshModels,
     ],
   );
@@ -257,25 +215,213 @@ export const ChatConversation = memo(function ChatConversation({
     [engines, activeEngine, permission, setPermission, engineInfo],
   );
 
+  return { addMenu, cliMenu, permissionMenu, noEnabledEngines };
+}
+
+/** Conversation column: timeline, message queue, composer, status bar. The
+ * high-frequency session/draft subscriptions live here so streaming deltas
+ * (one store write per animation frame) re-render only this subtree — never
+ * the sidebar, tab strip, or side panel. */
+export const ChatConversation = memo(function ChatConversation({
+  active,
+  engines,
+  workspaces,
+  startNewChat,
+  composerInputRef,
+}: {
+  active: ActiveSession | null;
+  engines: EngineInfo[];
+  workspaces: Workspace[];
+  startNewChat: (workspacePath: string) => void;
+  composerInputRef: React.RefObject<ComposerInputHandle | null>;
+}) {
+  const { t } = useTranslation();
+  const key = active
+    ? sessionKey(active.engine, active.sessionId, active.workspacePath)
+    : "";
+  // Key-scoped, LOW-frequency slices only: streaming flips at turn start/end,
+  // queue/error/usage change on discrete actions. The per-flush messages
+  // array is subscribed inside SessionTimeline so stream deltas re-render
+  // only that subtree — never the composer, queue bar, or status bar here.
+  const streaming = useChatStore((s) =>
+    key ? (s.bySession[key]?.streaming ?? false) : false,
+  );
+  const sessionError = useChatStore((s) =>
+    key ? (s.bySession[key]?.error ?? null) : null,
+  );
+  const dismissSessionError = useChatStore((s) => s.dismissSessionError);
+  const queue = useChatStore((s) =>
+    key ? (s.bySession[key]?.queue ?? EMPTY_QUEUE) : EMPTY_QUEUE,
+  );
+  const sessionUsage = useChatStore((s) =>
+    key ? s.bySession[key]?.usage : undefined,
+  );
+  const hasSession = useChatStore((s) => key in s.bySession);
+  const draft = useChatStore((s) => s.drafts[key] ?? "");
+  const sendShortcut = useChatStore((s) => s.sendShortcut);
+  const pendingMention = useChatStore((s) => s.pendingMention);
+  // Engine/effort/model prefs: low-frequency, grouped into one shallow watch.
+  const { activeEngine, efforts, models, ompServiceTier } = useChatStore(
+    useShallow((s) => ({
+      activeEngine: s.activeEngine,
+      efforts: s.efforts,
+      ompServiceTier: s.ompServiceTier,
+      models: s.models,
+    })),
+  );
+  const {
+    setActiveEngine,
+    setEffort,
+    setOmpServiceTier,
+    setModel,
+    pinModels,
+    setDraft,
+    clearPendingMention,
+    loadEarlier,
+    send,
+    queueMessage,
+    removeQueued,
+    clearQueue,
+    interrupt,
+  } = useChatStore(
+    useShallow((s) => ({
+      setActiveEngine: s.setActiveEngine,
+      setEffort: s.setEffort,
+      setOmpServiceTier: s.setOmpServiceTier,
+      setModel: s.setModel,
+      pinModels: s.pinModels,
+      setDraft: s.setDraft,
+      clearPendingMention: s.clearPendingMention,
+      loadEarlier: s.loadEarlier,
+      send: s.send,
+      queueMessage: s.queueMessage,
+      removeQueued: s.removeQueued,
+      clearQueue: s.clearQueue,
+      interrupt: s.interrupt,
+    })),
+  );
+  const {
+    branch,
+    branches,
+    branchError,
+    handleBranchSelect,
+    dismissBranchError,
+  } = useBranchSwitcher(active);
+  // Permission mode lives in the store (persisted) and flows into every
+  // send; engines that cannot honor the selected mode fall back to their
+  // first supported one, which is what the chip displays.
+  const permission = useChatStore((s) => s.permission);
+  const setPermission = useChatStore((s) => s.setPermission);
+  const {
+    images,
+    previews,
+    imageError,
+    removeImage,
+    clearImages,
+    pasteImages,
+    dismissImageError,
+  } = useComposerImages();
+  const {
+    catalogs,
+    modelsByEngine,
+    refresh: refreshModels,
+  } = useEngineModels(engines, models, pinModels);
+
+  // Per-tab model/effort overrides win over the engine's global defaults, so
+  // the picker follows each session across tab switches (multi-CLI tabs keep
+  // their own selection).
+  const tabModel =
+    active && active.engine === activeEngine ? active.model : undefined;
+  const tabEffort =
+    active && active.engine === activeEngine ? active.effort : undefined;
+  const displayModels = useMemo(
+    () =>
+      tabModel !== undefined ? { ...models, [activeEngine]: tabModel } : models,
+    [tabModel, models, activeEngine],
+  );
+  const displayEfforts = useMemo(
+    () =>
+      tabEffort !== undefined
+        ? { ...efforts, [activeEngine]: tabEffort }
+        : efforts,
+    [tabEffort, efforts, activeEngine],
+  );
+
+  // The catalog's context window beats the 200k assumption when the
+  // selected model reports one.
+  const contextMax =
+    (catalogs[activeEngine]?.models ?? []).find(
+      (m) => m.id === displayModels[activeEngine],
+    )?.contextWindow || CONTEXT_WINDOW_TOKENS;
+
+  const engineInfo = engines.find((e) => e.id === activeEngine);
+  const supportsImages = engineInfo?.supportsImages ?? false;
+
+  const handleLoadEarlier = useCallback(
+    () => void loadEarlier(),
+    [loadEarlier],
+  );
+
+  const submit = useCallback(
+    (value: string) => {
+      if (!active || (!value.trim() && images.length === 0)) return;
+      recordPrompt(value);
+      setDraft(key, "");
+      clearImages();
+      // A turn is in flight: park the message in the session's queue; the
+      // store drains it FIFO when the turn ends.
+      if (streaming) {
+        queueMessage(value, images);
+        return;
+      }
+      void send(value, images);
+    },
+    [active, images, streaming, key, setDraft, clearImages, send, queueMessage],
+  );
+
+  // File-tree "+" asks the composer to insert an @path mention at the caret.
+  useEffect(() => {
+    if (!pendingMention) return;
+    clearPendingMention();
+    const input = composerInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.insertText(`${mentionToken(pendingMention.path)} `);
+  }, [pendingMention, clearPendingMention, composerInputRef]);
+
+  const handleDraftChange = useCallback(
+    (v: string) => setDraft(key, v),
+    [key, setDraft],
+  );
+  const handleStop = useCallback(() => void interrupt(), [interrupt]);
+  const { addMenu, cliMenu, permissionMenu, noEnabledEngines } =
+    useConversationMenus({
+      engines,
+      engineInfo,
+      supportsImages,
+      activeEngine,
+      modelsByEngine,
+      displayModels,
+      displayEfforts,
+      ompServiceTier,
+      permission,
+      setActiveEngine,
+      setPermission,
+      setModel,
+      setEffort,
+      setOmpServiceTier,
+      refreshModels,
+    });
+
   return (
     <>
       {active && hasSession ? (
         <>
           {sessionError && (
-            <div
-              role="alert"
-              className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary"
-            >
-              <span className="min-w-0 flex-1 break-all">{sessionError}</span>
-              <button
-                type="button"
-                aria-label={t("common.close")}
-                onClick={() => dismissSessionError(key)}
-                className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
-              >
-                ×
-              </button>
-            </div>
+            <SessionErrorBanner
+              error={sessionError}
+              onDismiss={() => dismissSessionError(key)}
+            />
           )}
           <SessionTimeline
             sessionKey={key}
@@ -284,7 +430,9 @@ export const ChatConversation = memo(function ChatConversation({
           />
         </>
       ) : (
-        <EmptyState className="text-body-medium">{t("chat.selectSession")}</EmptyState>
+        <EmptyState className="text-body-medium">
+          {t("chat.selectSession")}
+        </EmptyState>
       )}
 
       <ConversationFooter

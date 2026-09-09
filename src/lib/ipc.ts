@@ -20,17 +20,48 @@ export interface SessionMeta {
   customTitle: string | null;
 }
 
+export type TodoStatus = "pending" | "active" | "complete" | "blocked" | "dropped";
+
+export interface TodoItem {
+  content: string;
+  status: TodoStatus;
+}
+
+/** Todo-list payload on todo-class tool rows: replace = full snapshot,
+ * otherwise a patch matched by content (status "dropped" removes). */
+export interface TodosPayload {
+  items: TodoItem[];
+  replace: boolean;
+}
+
 export interface Message {
   seq: number;
   role: string; // "user" | "assistant" | "tool" | "thinking"
   text: string;
   /** Target file of a tool call (read/edit/write/...); renders as a file chip. */
   path?: string | null;
+  /** Full tool-call arguments; shown in the expandable tool-call panel. */
+  args?: unknown;
+  /** Tool execution result/output; shown in the tool panel. */
+  result?: unknown;
+  todos?: TodosPayload;
   ts: string | null;
   usage?: unknown;
   model?: string | null;
+  /** Reasoning effort level ("low" | "medium" | "high" | "xhigh" | "max") */
+  effort?: string | null;
+  /** Turn duration in milliseconds (measured from prompt send to turn completion) */
+  durationMs?: number | null;
   /** True while the row belongs to the in-flight stream and may still grow. */
   live?: boolean;
+  /** Permission-denial card state (role "grant"): the CLI denied a tool call
+   * targeting `path`; pending until the user answers the card. `dir` is the
+   * directory a grant would cover (grant_scope preview). Grant rows are
+   * ephemeral UI — they are not part of the CLI's session history. */
+  grant?: {
+    status: "pending" | "granted" | "declined";
+    dir?: string | null;
+  };
   /** Image attachments: data URLs render directly, absolute paths load via readFile. */
   images?: string[];
 }
@@ -155,6 +186,7 @@ export interface AppSettings {
   dshBin: string | null;
   defaultModels: Record<string, string>;
   defaultEfforts: Record<string, string>;
+  ompOpenaiServiceTier?: "default" | "priority" | null;
   /** Max sessions listed per workspace in the sidebar (default 5). */
   sidebarThreadLimit: number;
   /** Composer send gesture: "enter" (Enter sends) or "cmdEnter" (⌘/Ctrl+Enter sends). */
@@ -312,6 +344,24 @@ export interface PiFamilyModelsConfigReadResult {
   parseError: string | null;
 }
 
+// ==================== Plugins (Phase 1 runtime, plan §4.3) ====================
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  tier: "declarative" | "js";
+  source: "marketplace" | "local" | "ai" | "builtin";
+  enabled: boolean;
+  quarantined: boolean;
+  lastError: string | null;
+  permissions: string[];
+  installedAt: number;
+  minAppVersion: string | null;
+}
+
 export const ipc = {
   // config
   getCliConfig: () => invoke<CliConfig>("get_cli_config"),
@@ -444,6 +494,12 @@ export const ipc = {
     withGrantRetry(() => invoke<FileIndexEntry[]>("list_file_index", { path })),
   // granted directories (desktop-only commands; the settings list hides on web)
   listGrantedRoots: () => invoke<string[]>("list_granted_roots"),
+  /** Directory a grant for `path` would cover (path itself when a dir, else
+   * its parent) — the grant card shows this before the user approves. */
+  grantScope: (path: string) => invoke<string>("grant_scope", { path }),
+  /** Persist a user-approved directory grant; subsequent claude launches
+   * receive it as --add-dir. */
+  grantRoot: (path: string) => invoke<void>("grant_root", { path }),
   revokeGrantedRoot: (path: string) => invoke<void>("revoke_granted_root", { path }),
   // git
   gitStatus: (path: string) => invoke<GitStatus>("git_status", { path }),
@@ -468,6 +524,24 @@ export const ipc = {
     invoke<void>("reveal_in_file_manager", { path }),
   // metrics
   appMetrics: () => invoke<AppMetrics>("app_metrics"),
+  // plugins
+  pluginList: () => invoke<PluginInfo[]>("plugin_list"),
+  pluginInstallFromPath: (path: string) =>
+    invoke<PluginInfo>("plugin_install_from_path", { path }),
+  pluginUninstall: (id: string, deleteData: boolean) =>
+    invoke<void>("plugin_uninstall", { id, deleteData }),
+  pluginSetEnabled: (id: string, enabled: boolean) =>
+    invoke<PluginInfo>("plugin_set_enabled", { id, enabled }),
+  pluginQuarantine: (id: string, error: string) =>
+    invoke<PluginInfo>("plugin_quarantine", { id, error }),
+  pluginReadFile: (id: string, name: string) =>
+    invoke<string>("plugin_read_file", { id, name }),
+  pluginStorageGet: (id: string, key: string) =>
+    invoke<unknown>("plugin_storage_get", { id, key }),
+  pluginStorageSet: (id: string, key: string, value: unknown) =>
+    invoke<void>("plugin_storage_set", { id, key, value }),
+  pluginStorageDelete: (id: string, key: string) =>
+    invoke<void>("plugin_storage_delete", { id, key }),
   // web access (start/stop are desktop-only; the bridge answers status too)
   webAccessStart: () => invoke<WebAccessInfo>("web_access_start"),
   webAccessStop: () => invoke<void>("web_access_stop"),

@@ -937,15 +937,16 @@ export function AiChatSidebar({
       openWorkspaceMenu(event, workspaceId, true),
     [openWorkspaceMenu],
   );
-  const toggleGroup = useCallback((groupId: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
+  const toggleGroup = useCallback(
+    (groupId: string) => {
+      const next = new Set(collapsedGroups);
       if (next.has(groupId)) next.delete(groupId);
       else next.add(groupId);
+      setCollapsedGroups(next);
       writeCollapsedGroups(next);
-      return next;
-    });
-  }, []);
+    },
+    [collapsedGroups],
+  );
 
   const filteredRepos = useMemo(
     () =>
@@ -973,15 +974,16 @@ export function AiChatSidebar({
       );
       return threads.length ? { ...repo, threads } : null;
     };
-    return sections
-      .map((section) => ({
-        ...section,
-        repos: section.repos.flatMap((repo) => {
-          const match = matches(repo);
-          return match ? [match] : [];
-        }),
-      }))
-      .filter((section) => section.id === null || section.repos.length > 0);
+    return sections.reduce<AiChatRepoSection[]>((acc, section) => {
+      const repos = section.repos.flatMap((repo) => {
+        const match = matches(repo);
+        return match ? [match] : [];
+      });
+      if (section.id === null || repos.length > 0) {
+        acc.push({ ...section, repos });
+      }
+      return acc;
+    }, []);
   }, [sections, normalizedQuery]);
 
   // Same query filter for the 已归档 section (label match only — archived

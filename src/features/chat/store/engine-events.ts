@@ -1,4 +1,4 @@
-import { ipc, type SessionMeta } from "@/lib/ipc";
+import { ipc, type Message, type SessionMeta, type TodosPayload } from "@/lib/ipc";
 import type { EngineEventPayload } from "@/lib/events";
 import { dedupeTabs, persistTabs, sessionKey } from "./persistence";
 import {
@@ -83,25 +83,89 @@ export function upsertSessionMetaInto(
   });
 }
 
-function onDelta(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  bufferStreamPart(key, "delta", event.data as string, deps.get().models[event.engine] || null);
+/** Effective model for event-stamped rows: the owning tab's per-tab override
+ * wins over the engine's global default, mirroring sendPrompt. */
+function stampedModel(
+  deps: EngineEventDeps,
+  engine: string,
+  key: string,
+): string | null {
+  const s = deps.get();
+  const tab = s.openTabs.find(
+    (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+  );
+  return (tab?.model ?? s.models[engine]) || null;
+}
+
+/** Effective reasoning effort for event-stamped rows: the owning tab's per-tab override
+ * wins over the engine's global default, mirroring sendPrompt. */
+function stampedEffort(
+  deps: EngineEventDeps,
+  engine: string,
+  key: string,
+): string | null {
+  const s = deps.get();
+  const tab = s.openTabs.find(
+    (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+  );
+  return (tab?.effort ?? s.efforts[engine]) || null;
+}
+
+function onDelta(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  bufferStreamPart(
+    key,
+    "delta",
+    event.data as string,
+    stampedModel(deps, event.engine, key),
+    stampedEffort(deps, event.engine, key),
+  );
   scheduleDeltaFlush(deps.set);
 }
 
-function onThinking(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  bufferStreamPart(key, "thinking", event.data as string, deps.get().models[event.engine] || null);
+function onThinking(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  bufferStreamPart(
+    key,
+    "thinking",
+    event.data as string,
+    stampedModel(deps, event.engine, key),
+    stampedEffort(deps, event.engine, key),
+  );
   scheduleDeltaFlush(deps.set);
 }
 
-function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  const data = event.data as { role: string; text: string; path?: string | null };
-  if (data.role === "tool") {
+function onMessage(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  const data = event.data as {
+    role: string;
+    text: string;
+    path?: string | null;
+    todos?: TodosPayload;
+    args?: unknown;
+    result?: unknown;
+    patch?: boolean;
+  };
+  if (data.role === "tool" || data.role === "tool_result") {
     appendToolMessage(
       deps.set,
       key,
       data.text,
-      deps.get().models[event.engine] || null,
+      stampedModel(deps, event.engine, key),
       data.path ?? null,
+      data.todos ?? null,
+      data.args,
+      data.patch === true,
+      data.result,
     );
     return;
   }
@@ -112,6 +176,9 @@ function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps
     const prev = s.bySession[key] ?? EMPTY_SESSION;
     const settled = settleLiveRows(prev.messages);
     const seq = settled.length ? settled[settled.length - 1].seq + 1 : 1;
+    const durationMs = prev.turnStartedAt
+      ? Math.max(0, Date.now() - prev.turnStartedAt)
+      : null;
     return {
       bySession: {
         ...s.bySession,
@@ -123,7 +190,9 @@ function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps
               role: "assistant",
               text: data.text,
               ts: new Date().toISOString(),
-              model: deps.get().models[event.engine] || null,
+              model: stampedModel(deps, event.engine, key),
+              effort: stampedEffort(deps, event.engine, key),
+              durationMs,
               seq,
             },
           ],
@@ -133,15 +202,22 @@ function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps
   });
 }
 
-function onSession(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
+function onSession(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
   const nativeId = event.data as string;
   // Resolve the workspace from the tab that owns this key — not from the
   // active tab. A first message sent on a background tab must not adopt the
   // foreground tab's workspace (the session would be orphaned there).
   const tab = deps
     .get()
-    .openTabs.find((t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key);
-  const workspacePath = tab?.workspacePath ?? deps.get().active?.workspacePath ?? "";
+    .openTabs.find(
+      (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+    );
+  const workspacePath =
+    tab?.workspacePath ?? deps.get().active?.workspacePath ?? "";
   const newKey = sessionKey(event.engine, nativeId, workspacePath);
   runRouting.set(event.runId, newKey);
   // Unflushed stream chunks sit under the pre-migration key; move them too.
@@ -206,21 +282,49 @@ function onSession(event: EngineEventPayload, key: string, deps: EngineEventDeps
   );
 }
 
-function onUsage(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
+function onUsage(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
   patchSession(deps.set, key, { usage: event.data });
 }
 
-function onError(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
+function onError(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
   // Fold unflushed chunks into rows and settle them: the turn stops here,
   // and the scheduled flush must not write them in after the fact.
   const pending = drainPending(key);
   deps.set((s) => {
     const cur = s.bySession[key] ?? EMPTY_SESSION;
-    const messages = settleLiveRows(
+    let messages = settleLiveRows(
       pending
-        ? applyStreamParts(cur.messages, pending.parts, pending.model ?? (deps.get().models[event.engine] || null))
+        ? applyStreamParts(
+            cur.messages,
+            pending.parts,
+            pending.model ?? (deps.get().models[event.engine] || null),
+            pending.effort ?? stampedEffort(deps, event.engine, key),
+          )
         : cur.messages,
     );
+    const durationMs = cur.turnStartedAt
+      ? Math.max(0, Date.now() - cur.turnStartedAt)
+      : null;
+    if (durationMs != null) {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "assistant") {
+          messages = [
+            ...messages.slice(0, i),
+            { ...messages[i], durationMs },
+            ...messages.slice(i + 1),
+          ];
+          break;
+        }
+      }
+    }
     return {
       bySession: {
         ...s.bySession,
@@ -238,6 +342,96 @@ function onError(event: EngineEventPayload, key: string, deps: EngineEventDeps) 
   // The run is over: drop its routing entry so the map cannot grow forever.
   runRouting.delete(event.runId);
   deps.markUnseenIfBackground(key);
+}
+
+/** Patch the grant state of one card row, located by its message seq. */
+export function patchGrantBySeq(
+  set: (fn: (s: ChatStore) => Partial<ChatStore>) => void,
+  key: string,
+  seq: number,
+  patch: (grant: NonNullable<Message["grant"]>) => NonNullable<Message["grant"]>,
+) {
+  set((s) => {
+    const cur = s.bySession[key];
+    if (!cur) return {};
+    let changed = false;
+    const messages = cur.messages.map((m) => {
+      if (m.seq !== seq || m.role !== "grant" || !m.grant) return m;
+      changed = true;
+      return { ...m, grant: patch(m.grant) };
+    });
+    if (!changed) return {};
+    return { bySession: { ...s.bySession, [key]: { ...cur, messages } } };
+  });
+}
+
+/** A permission denial arrives mid-turn (tool_result) and again in the
+ * final result's permission_denials; one card per denied path. The card is
+ * the actionable surface: grant → next launch gets --add-dir. */
+function onPermissionDenied(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  const data = event.data as {
+    tool?: string | null;
+    path?: string | null;
+    message?: string;
+  };
+  const path = data.path?.trim() || null;
+  const message = (data.message ?? "").trim();
+  // Fold unflushed chunks first so the card lands after the streamed text.
+  const pending = drainPending(key);
+  let rowSeq = -1;
+  deps.set((s) => {
+    const cur = s.bySession[key] ?? EMPTY_SESSION;
+    const base = pending
+      ? applyStreamParts(
+          cur.messages,
+          pending.parts,
+          pending.model ?? (deps.get().models[event.engine] || null),
+        )
+      : cur.messages;
+    const messages = settleLiveRows(base);
+    const dup = messages.some(
+      (m) =>
+        m.role === "grant" &&
+        (path ? m.path === path : m.text === message) &&
+        m.grant?.status !== "declined",
+    );
+    if (dup) return {};
+    const seq = messages.length ? messages[messages.length - 1].seq + 1 : 1;
+    rowSeq = seq;
+    return {
+      bySession: {
+        ...s.bySession,
+        [key]: {
+          ...cur,
+          messages: [
+            ...messages,
+            {
+              role: "grant",
+              text: message,
+              path,
+              ts: new Date().toISOString(),
+              seq,
+              grant: { status: "pending" as const },
+            },
+          ],
+        },
+      },
+    };
+  });
+  // Preview the directory a grant would cover; failure is non-fatal — the
+  // backend re-resolves inside grant_root.
+  if (path && rowSeq > 0) {
+    void ipc
+      .grantScope(path)
+      .then((dir) =>
+        patchGrantBySeq(deps.set, key, rowSeq, (grant) => ({ ...grant, dir })),
+      )
+      .catch(() => {});
+  }
 }
 
 function onWarn(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
@@ -259,22 +453,33 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   deps.set((s) => {
     const cur = s.bySession[key] ?? EMPTY_SESSION;
     let messages = pending
-      ? applyStreamParts(cur.messages, pending.parts, pending.model ?? (deps.get().models[event.engine] || null))
+      ? applyStreamParts(
+          cur.messages,
+          pending.parts,
+          pending.model ?? (deps.get().models[event.engine] || null),
+          pending.effort ?? stampedEffort(deps, event.engine, key),
+        )
       : cur.messages;
     messages = settleLiveRows(messages);
-    // Stamp usage onto the turn's last assistant message, mirroring how
-    // history parsing attaches __usage__ rows; without this the footer shows
-    // tokens only after a reload.
-    if (finalUsage) {
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "assistant") {
-          messages = [
-            ...messages.slice(0, i),
-            { ...messages[i], usage: finalUsage },
-            ...messages.slice(i + 1),
-          ];
-          break;
-        }
+    const turnStart = cur.turnStartedAt ?? prev.turnStartedAt;
+    const durationMs = turnStart ? Math.max(0, Date.now() - turnStart) : null;
+    const model = stampedModel(deps, event.engine, key);
+    const effort = stampedEffort(deps, event.engine, key);
+    // Stamp usage, durationMs, effort, and model onto the turn's last assistant message.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") {
+        messages = [
+          ...messages.slice(0, i),
+          {
+            ...messages[i],
+            ...(finalUsage ? { usage: finalUsage } : {}),
+            ...(durationMs != null ? { durationMs } : {}),
+            ...(effort ? { effort } : {}),
+            ...(model ? { model } : {}),
+          },
+          ...messages.slice(i + 1),
+        ];
+        break;
       }
     }
     return {
@@ -305,7 +510,10 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
 
 /** Resolve an event's session key (run routing, then session-id match) and
  * dispatch to the per-kind handler. */
-export function handleEngineEvents(events: EngineEventPayload[], deps: EngineEventDeps) {
+export function handleEngineEvents(
+  events: EngineEventPayload[],
+  deps: EngineEventDeps,
+) {
   for (const event of events) {
     const state = deps.get();
     let key = runRouting.get(event.runId);
@@ -342,6 +550,9 @@ export function handleEngineEvents(events: EngineEventPayload[], deps: EngineEve
         break;
       case "warn":
         onWarn(event, key, deps);
+        break;
+      case "permission_denied":
+        onPermissionDenied(event, key, deps);
         break;
       case "done":
         onDone(event, key, deps);

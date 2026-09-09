@@ -1,12 +1,14 @@
 import { useTranslation } from "react-i18next";
-import { ChangesPanel } from "@/features/git/ChangesPanel";
-import { FilesPanel } from "@/features/files/FilesPanel";
+import { PluginBoundary } from "@/features/plugins/boundary/PluginBoundary";
+import { pluginIdFromRegistryKey } from "@ccgui/plugin-sdk";
 import { cx } from "@/utils/cx";
+import { resolveActivePanelTab, useSortedPanelTabs } from "./panel-tabs";
 import type { ActiveSession } from "./store";
 
 /** Right-hand side panel: files/changes tabs with the full-height resize
- * strip on its left edge. Both panels stay mounted so tab switches preserve
- * tree expansion and scroll state. */
+ * strip on its left edge. Every registered tab's panel stays mounted so
+ * tab switches preserve tree expansion and scroll state; plugin tabs render
+ * inside a PluginBoundary (plan §4.2 #4). */
 export function ChatSidePanel({
   active,
   panelRef,
@@ -21,10 +23,14 @@ export function ChatSidePanel({
   panelWidth: number;
   panelCollapsed: boolean;
   dragging: "sidebar" | "panel" | null;
-  panelTab: "files" | "changes";
+  panelTab: string;
   onResizeStart: (e: React.PointerEvent) => void;
 }) {
   const { t } = useTranslation();
+  const panelTabs = useSortedPanelTabs();
+  // Persisted tab may point at an unloaded plugin tab; fall back to the
+  // first tab so the sidebar never renders fully hidden (read-side only).
+  const activeTab = active ? resolveActivePanelTab(panelTabs, panelTab) : undefined;
   if (!active) return null;
   return (
     <div
@@ -63,24 +69,30 @@ export function ChatSidePanel({
           !panelCollapsed && "border-l",
         )}
       >
-        {/* Both panels stay mounted so tab switches preserve tree
-            expansion and scroll state. */}
-        <div
-          className={cx(
-            "min-h-0 flex-1",
-            panelTab === "files" ? "flex flex-col" : "hidden",
-          )}
-        >
-          <FilesPanel workspacePath={active.workspacePath} />
-        </div>
-        <div
-          className={cx(
-            "min-h-0 flex-1",
-            panelTab === "changes" ? "flex flex-col" : "hidden",
-          )}
-        >
-          <ChangesPanel key={active.workspacePath} workspacePath={active.workspacePath} className="w-full" />
-        </div>
+        {/* All tab panels stay mounted so tab
+            switches preserve tree expansion and scroll state. */}
+        {panelTabs.map((tab) => {
+          const TabComponent = tab.component;
+          const panel = <TabComponent workspacePath={active.workspacePath} />;
+          return (
+            <div
+              key={tab.id}
+              className={cx(
+                "min-h-0 flex-1",
+                activeTab === tab.id ? "flex flex-col" : "hidden",
+              )}
+            >
+              {tab.id.startsWith("plugin:") ? (
+                // Plugin tabs get a crash boundary scoped to their plugin id.
+                <PluginBoundary pluginId={pluginIdFromRegistryKey(tab.id)}>
+                  {panel}
+                </PluginBoundary>
+              ) : (
+                panel
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

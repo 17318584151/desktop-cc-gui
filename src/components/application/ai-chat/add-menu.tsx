@@ -1,5 +1,6 @@
 "use client";
 
+import type { ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import Plus from "lucide-react/dist/esm/icons/plus";
 import Paperclip from "lucide-react/dist/esm/icons/paperclip";
@@ -13,6 +14,7 @@ import {
 } from "react-aria-components";
 import { menuPopoverSurface } from "@/components/base/dropdown/menu-styles";
 import { cx } from "@/utils/cx";
+import { addMenuRegistry, useRegistry } from "@ccgui/plugin-sdk";
 import { usePopoverState } from "@/utils/use-dismiss-on-outside-press";
 
 /**
@@ -38,8 +40,9 @@ interface AddMenuRow {
   label: string;
   /** Muted inline description after the label. */
   description?: string;
-  /** 20px lucide rows ("Add" group). */
-  icon?: typeof Paperclip;
+  /** 20px icon rows; lucide for builtins, any className-driven component for
+   *  plugin-registered rows. */
+  icon?: ComponentType<{ className?: string }>;
   /** Wired action. Rows without one render disabled: no row has a backend
    *  yet. */
   onSelect?: () => void;
@@ -93,12 +96,24 @@ export function AddMenu({
 }) {
   const { t } = useTranslation();
   const { isOpen, triggerRef, popoverRef, setOpen } = usePopoverState();
+  // Plugin rows (plan §4.2 #3): registered via ctx.ui.registerAddMenuRow;
+  // labels are thunks so a language flip re-labels live rows.
+  const pluginDefs = useRegistry(addMenuRegistry);
 
   const addRows: AddMenuRow[] = [
     { icon: Paperclip, label: t("chat.addFilesFolders") },
     { icon: Crosshair, label: t("chat.addGoal"), description: t("chat.addGoalDesc") },
     { icon: ListChecks, label: t("chat.addPlanMode"), description: t("chat.addPlanModeDesc") },
   ];
+  const pluginRows: AddMenuRow[] = pluginDefs.map((def) => ({
+    icon: def.icon,
+    label: def.label(),
+    description: def.description?.(),
+    onSelect: () => {
+      setOpen(false);
+      def.onSelect();
+    },
+  }));
 
   return (
     <AriaDialogTrigger
@@ -134,6 +149,9 @@ export function AddMenu({
       >
         <AriaDialog aria-label={t("chat.attach")} className="flex flex-col gap-2 outline-none">
           <AddMenuGroup label={t("chat.attach")} rows={addRows} />
+          {pluginRows.length > 0 && (
+            <AddMenuGroup label={t("plugins.menuGroup")} rows={pluginRows} />
+          )}
         </AriaDialog>
       </AriaPopover>
     </AriaDialogTrigger>

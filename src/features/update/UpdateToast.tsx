@@ -5,6 +5,115 @@ import RefreshCcw from "lucide-react/dist/esm/icons/refresh-ccw";
 import X from "lucide-react/dist/esm/icons/x";
 import { Button } from "@/components/base/buttons/button";
 import { useUpdateStore } from "./store";
+import type { UpdateStage } from "./store";
+
+/** Stages that surface the toast; idle/checking/latest stay silent. */
+const VISIBLE_STAGES: readonly UpdateStage[] = [
+  "available",
+  "downloading",
+  "installing",
+  "restarting",
+  "error",
+];
+
+/** One-line status text for the current stage. */
+function UpdateToastMessage({
+  stage,
+  version,
+  percent,
+  error,
+}: {
+  stage: UpdateStage;
+  version?: string;
+  /** Download progress 0–100, null when the total size is unknown. */
+  percent: number | null;
+  error?: string;
+}) {
+  const { t } = useTranslation();
+  switch (stage) {
+    case "available":
+      return t("settings.updateAvailable", { version });
+    case "downloading":
+      return t("settings.updateDownloading") + (percent !== null ? ` ${percent}%` : "");
+    case "installing":
+      return t("settings.updateInstalling");
+    case "restarting":
+      return t("settings.updateRestarting");
+    case "error":
+      return t("settings.updateError", { message: error });
+    default:
+      return null;
+  }
+}
+
+/** Dismiss affordance, offered only while the toast expects a decision
+ *  (update available / error), not mid-install. */
+function DismissToastButton({ onDismiss }: { onDismiss: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label={t("settings.updateDismiss")}
+      className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
+    >
+      <X className="size-4" aria-hidden />
+    </button>
+  );
+}
+
+/** Thin download progress bar under the header while downloading. */
+function DownloadProgressBar({ percent }: { percent: number | null }) {
+  return (
+    <div className="h-1 w-full overflow-hidden rounded-full bg-background-secondary-default">
+      <div
+        className="h-full rounded-full bg-button-primary transition-[width]"
+        style={{ width: `${percent ?? 0}%` }}
+      />
+    </div>
+  );
+}
+
+/** Footer actions for the stages that expect a decision: Later/Update now
+ *  when available, Dismiss/Check again on error; nothing mid-install. */
+function UpdateToastActions({
+  stage,
+  onStart,
+  onDismiss,
+  onRetry,
+}: {
+  stage: UpdateStage;
+  onStart: () => void;
+  onDismiss: () => void;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  if (stage === "available") {
+    return (
+      <div className="flex items-center justify-end gap-2">
+        <Button size="small" variant="secondary" onClick={onDismiss}>
+          {t("settings.updateLater")}
+        </Button>
+        <Button size="small" variant="primary" onClick={onStart}>
+          {t("settings.updateNow")}
+        </Button>
+      </div>
+    );
+  }
+  if (stage === "error") {
+    return (
+      <div className="flex items-center justify-end gap-2">
+        <Button size="small" variant="secondary" onClick={onDismiss}>
+          {t("settings.updateDismiss")}
+        </Button>
+        <Button size="small" variant="primary" leadingIcon={RefreshCcw} onClick={onRetry}>
+          {t("settings.checkUpdates")}
+        </Button>
+      </div>
+    );
+  }
+  return null;
+}
 
 /**
  * Floating update banner, mounted once in App. Auto-check failures stay
@@ -12,7 +121,6 @@ import { useUpdateStore } from "./store";
  * download/install, and surfaces errors from user-initiated actions.
  */
 export function UpdateToast() {
-  const { t } = useTranslation();
   const stage = useUpdateStore((s) => s.stage);
   const version = useUpdateStore((s) => s.version);
   const downloadedBytes = useUpdateStore((s) => s.downloadedBytes);
@@ -22,12 +130,7 @@ export function UpdateToast() {
   const checkForUpdates = useUpdateStore((s) => s.checkForUpdates);
   const dismiss = useUpdateStore((s) => s.dismiss);
 
-  const visible =
-    stage === "available" ||
-    stage === "downloading" ||
-    stage === "installing" ||
-    stage === "restarting" ||
-    stage === "error";
+  const visible = VISIBLE_STAGES.includes(stage);
 
   const percent =
     totalBytes && totalBytes > 0
@@ -49,61 +152,27 @@ export function UpdateToast() {
             <div className="flex items-center gap-2">
               <Download className="size-[18px] shrink-0 text-foreground-icon-secondary" aria-hidden />
               <p className="text-body-medium text-text-primary">
-                {stage === "available" && t("settings.updateAvailable", { version })}
-                {stage === "downloading" &&
-                  t("settings.updateDownloading") + (percent !== null ? ` ${percent}%` : "")}
-                {stage === "installing" && t("settings.updateInstalling")}
-                {stage === "restarting" && t("settings.updateRestarting")}
-                {stage === "error" && t("settings.updateError", { message: error })}
+                <UpdateToastMessage
+                  stage={stage}
+                  version={version}
+                  percent={percent}
+                  error={error}
+                />
               </p>
             </div>
             {(stage === "available" || stage === "error") && (
-              <button
-                type="button"
-                onClick={dismiss}
-                aria-label={t("settings.updateDismiss")}
-                className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
+              <DismissToastButton onDismiss={dismiss} />
             )}
           </div>
 
-          {stage === "downloading" && (
-            <div className="h-1 w-full overflow-hidden rounded-full bg-background-secondary-default">
-              <div
-                className="h-full rounded-full bg-button-primary transition-[width]"
-                style={{ width: `${percent ?? 0}%` }}
-              />
-            </div>
-          )}
+          {stage === "downloading" && <DownloadProgressBar percent={percent} />}
 
-          {stage === "available" && (
-            <div className="flex items-center justify-end gap-2">
-              <Button size="small" variant="secondary" onClick={dismiss}>
-                {t("settings.updateLater")}
-              </Button>
-              <Button size="small" variant="primary" onClick={() => void startUpdate()}>
-                {t("settings.updateNow")}
-              </Button>
-            </div>
-          )}
-
-          {stage === "error" && (
-            <div className="flex items-center justify-end gap-2">
-              <Button size="small" variant="secondary" onClick={dismiss}>
-                {t("settings.updateDismiss")}
-              </Button>
-              <Button
-                size="small"
-                variant="primary"
-                leadingIcon={RefreshCcw}
-                onClick={() => void checkForUpdates({ interactive: true })}
-              >
-                {t("settings.checkUpdates")}
-              </Button>
-            </div>
-          )}
+          <UpdateToastActions
+            stage={stage}
+            onStart={() => void startUpdate()}
+            onDismiss={dismiss}
+            onRetry={() => void checkForUpdates({ interactive: true })}
+          />
         </m.div>
       )}
     </AnimatePresence>

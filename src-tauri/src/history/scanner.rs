@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Bump when title derivation changes so unchanged files still re-title.
-const TITLE_VERSION: &str = "6";
+const TITLE_VERSION: &str = "7";
 
 /// Titles matching these prefixes were derived before envelope stripping
 /// existed; one migration pass re-derives them even when files are unchanged.
@@ -17,7 +17,7 @@ const NOISE_TITLE_WHERE: &str = "title LIKE '<file %' ESCAPE '\\'
      OR title LIKE '<environment\\_context%' ESCAPE '\\'
      OR title LIKE '<agents-instructions%'
      OR title LIKE '<skill>%'
-     OR title LIKE '<recommended\\_plugins%' ESCAPE '\'
+     OR title LIKE '<recommended\\_plugins%' ESCAPE '\\'
      OR title LIKE '<command-message%'
      OR title LIKE '<command-name%'
      OR title LIKE '<INSTRUCTIONS>%'";
@@ -510,7 +510,7 @@ fn tier1_gate(db: &crate::db::Db, signature: String) -> Result<Option<Tier1>, St
                 [],
                 |r| r.get::<_, i64>(0),
             )
-            .unwrap_or(0)
+            .map_err(|e| e.to_string())?
             > 0;
     if previous.as_deref() == Some(signature.as_str()) && row_count > 0 && !retitle_pending {
         return Ok(None);
@@ -698,6 +698,9 @@ fn scan_inner(
     let candidates = gather_candidates(&workspaces);
     let (stats, signature) = stat_all(&workspaces, &candidates);
     let Some(tier1) = tier1_gate(db, signature)? else {
+        if super::codex_titles::sync(db)? {
+            on_changed();
+        }
         return Ok(ScanReport {
             scanned: candidates.len(),
             reparsed: 0,
@@ -743,6 +746,7 @@ fn scan_inner(
     // Phase B: the db lock is held only for the upsert transaction.
     let reparsed = rows.len();
     upsert_rows(db, &rows, &tier1)?;
+    super::codex_titles::sync(db)?;
     on_changed();
     if total > 0 {
         on_progress(crate::event_sink::ScanProgress {
@@ -793,21 +797,22 @@ mod tests {
     static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     struct HomeGuard {
         _lock: std::sync::MutexGuard<'static, ()>,
-        prev: Option<HomeEnvPair>,
+        prev: HomeEnvPair,
     }
     impl HomeGuard {
         fn set(home: &Path) -> Self {
             let lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let prev = std::env::var_os("HOME");
             std::env::set_var("HOME", home);
-            // `dirs` resolves the Windows profile from the user's shell
-            // registry entry, ignoring HOME; USERPROFILE is what engine_home
-            // falls back to there, so both must point at the scratch home.
+            // engine_home's test fallback reads HOME, then USERPROFILE on
+            // Windows — both must point at the scratch home, and BOTH must
+            // be restored on drop even when HOME was unset before (the
+            // typical Windows case).
             let prev_profile = std::env::var_os("USERPROFILE");
             std::env::set_var("USERPROFILE", home);
             Self {
                 _lock: lock,
-                prev: prev.map(|p| HomeEnvPair(Some(p), prev_profile)),
+                prev: HomeEnvPair(prev, prev_profile),
             }
         }
     }
@@ -819,15 +824,14 @@ mod tests {
 
     impl Drop for HomeGuard {
         fn drop(&mut self) {
-            if let Some(HomeEnvPair(home, profile)) = &self.prev {
-                match home {
-                    Some(value) => std::env::set_var("HOME", value),
-                    None => std::env::remove_var("HOME"),
-                }
-                match profile {
-                    Some(value) => std::env::set_var("USERPROFILE", value),
-                    None => std::env::remove_var("USERPROFILE"),
-                }
+            let HomeEnvPair(home, profile) = &self.prev;
+            match home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            match profile {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
             }
         }
     }
@@ -971,6 +975,42 @@ mod tests {
             .map_err(|e| e.to_string())?
         };
         assert_eq!(title, "hello");
+
+        // Simulate a v6 cache with an unchanged rollout and an injected title.
+        // The migration must bypass both stat caches and preserve custom titles.
+        {
+            let conn = db.0.lock();
+            conn.execute(
+                "UPDATE sessions SET title='<recommended_plugins>plugins', custom_title='My title'",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute("UPDATE meta SET value='6' WHERE key='title_version'", [])
+                .map_err(|e| e.to_string())?;
+        }
+        let report = scan_with(&db, || {})?;
+        assert_eq!(report.reparsed, 1);
+        {
+            let conn = db.0.lock();
+            let (title, custom): (String, String) = conn
+                .query_row(
+                    "SELECT title, custom_title FROM sessions WHERE session_id='sid-1'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?;
+            assert_eq!(title, "hello");
+            assert_eq!(custom, "My title");
+            let version: String = conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key='title_version'",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            assert_eq!(version, TITLE_VERSION);
+        }
+        assert_eq!(scan_with(&db, || {})?.reparsed, 0);
         drop(db);
         std::fs::remove_dir_all(&home).ok();
         Ok(())

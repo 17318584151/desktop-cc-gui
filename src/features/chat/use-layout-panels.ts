@@ -56,7 +56,7 @@ export function useLayoutPanels() {
   }, []);
   const [dragging, setDragging] = useState<"sidebar" | "panel" | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(() => readStoredWidth(SIDEBAR_WIDTH_KEY, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_DEFAULT_WIDTH));
-  const [panelTab, setPanelTab] = useState<"files" | "changes">("files");
+  const [panelTab, setPanelTab] = useState("files");
   const widthAtDragStart = useRef(PANEL_DEFAULT_WIDTH);
   const dragStartX = useRef(0);
   const dragWidth = useRef(PANEL_DEFAULT_WIDTH);
