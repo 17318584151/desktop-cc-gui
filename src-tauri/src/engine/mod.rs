@@ -916,6 +916,14 @@ impl RunContext {
                     "error",
                     Value::String(error),
                 );
+                // The turn failed terminally: the frontend settles (send
+                // button back to idle) on this event, so a still-running
+                // CLI process would keep burning tokens invisibly while the
+                // UI claims the session ended. Kill the process tree now —
+                // the killed flag makes the runner's EOF path a no-op
+                // (saw_error already settled the turn) and the registry
+                // entry drains as usual.
+                self.registry.kill(&self.run_id);
             }
             EngineEvent::Warn(error) => {
                 // Not terminal: no saw_error — EOF settle still decides the
