@@ -42,6 +42,9 @@ pub struct AppSettings {
     pub default_models: HashMap<String, String>,
     #[serde(default)]
     pub default_efforts: HashMap<String, String>,
+    /// Per-app OMP OpenAI tier override; None preserves native CLI settings.
+    #[serde(default)]
+    pub omp_openai_service_tier: Option<String>,
     /// Max sessions shown per workspace in the sidebar before collapsing
     /// behind a "show more" row.
     #[serde(default = "default_sidebar_thread_limit")]
@@ -102,6 +105,7 @@ impl Default for AppSettings {
             language: default_language(),
             default_models: HashMap::new(),
             default_efforts: HashMap::new(),
+            omp_openai_service_tier: None,
             sidebar_thread_limit: default_sidebar_thread_limit(),
             composer_send_shortcut: default_composer_send_shortcut(),
             terminal_shell_path: None,
@@ -371,6 +375,13 @@ pub fn get_app_settings() -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
+    if settings
+        .omp_openai_service_tier
+        .as_deref()
+        .is_some_and(|tier| !matches!(tier, "default" | "priority"))
+    {
+        return Err("Invalid OMP OpenAI service tier".to_string());
+    }
     // Reject only the offending bin-override fields: the rest of the settings
     // still persist, and the error names what was dropped.
     let mut rejected = Vec::new();

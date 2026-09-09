@@ -155,6 +155,7 @@ export interface AppSettings {
   dshBin: string | null;
   defaultModels: Record<string, string>;
   defaultEfforts: Record<string, string>;
+  ompOpenaiServiceTier?: "default" | "priority" | null;
   /** Max sessions listed per workspace in the sidebar (default 5). */
   sidebarThreadLimit: number;
   /** Composer send gesture: "enter" (Enter sends) or "cmdEnter" (⌘/Ctrl+Enter sends). */

@@ -1,7 +1,9 @@
+import { OmpSpeedSection } from "./omp-speed-section";
+import { supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { Ref } from "react";
+import type { Ref, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import Check from "lucide-react/dist/esm/icons/check";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
@@ -344,14 +346,16 @@ function groupModelsByProvider(models: ModelOption[]): ModelGroup[] {
 function FlyoutEffortSection({
   effort,
   onChange,
+  header,
 }: {
   effort: EffortLevel;
   onChange: (level: EffortLevel) => void;
+  header?: ReactNode;
 }) {
   const { t } = useTranslation();
   return (
     <div className="flex w-full flex-col">
-      <span className="pl-2 text-body-medium text-text-secondary">
+      {header ?? <span className="pl-2 text-body-medium text-text-secondary">
         {t("chat.effort")}{" "}
         {/* Keyed on the value so each change remounts and blurs in. */}
         <m.span
@@ -363,8 +367,8 @@ function FlyoutEffortSection({
         >
           {t(EFFORT_LABEL_KEYS[effort])}
         </m.span>
-      </span>
-      <div className="flex w-full items-center justify-between px-2 pt-2 pb-[3px]">
+      </span>}
+      <div className={cx("flex w-full items-center justify-between px-2 pb-[3px]", header ? "pt-0" : "pt-2")}>
         <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
           {t("chat.effortFaster")}
         </span>
@@ -395,6 +399,8 @@ function EngineModelPanel({
   effort,
   onPickModel,
   onEffortChange,
+  ompServiceTier,
+  onOmpServiceTierChange,
   onRefresh,
   onClose,
 }: {
@@ -406,6 +412,8 @@ function EngineModelPanel({
   effort: EffortLevel;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  ompServiceTier: OmpServiceTier;
+  onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs without an app restart. */
   onRefresh?: () => void | Promise<void>;
   onClose?: () => void;
@@ -530,8 +538,13 @@ function EngineModelPanel({
       </div>
 
       {/* Full-bleed divider, like the reference submenu. */}
-      <div aria-hidden className="-mx-1 mt-[7px] mb-3 h-px bg-border-button-default" />
+      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", option.id === "omp" && supportsOmpFastMode(selectedModelId) ? "mb-1" : "mb-3")} />
       <FlyoutEffortSection
+        header={option.id === "omp" && supportsOmpFastMode(selectedModelId) ? (
+          <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange}>
+            <span className="text-body-medium text-text-primary">{t(EFFORT_LABEL_KEYS[effort])}</span>
+          </OmpSpeedSection>
+        ) : undefined}
         effort={effort}
         onChange={(level) => onEffortChange(option.id, level)}
       />
@@ -562,6 +575,8 @@ function CliMenuTrigger({
   engineName,
   model,
   effort,
+  ompServiceTier,
+  modelId,
 }: {
   triggerRef: Ref<HTMLButtonElement>;
   engine: string;
@@ -570,6 +585,8 @@ function CliMenuTrigger({
   /** Selected model of the active engine, when it has a model list. */
   model: ModelOption | undefined;
   effort: EffortLevel;
+  ompServiceTier: OmpServiceTier;
+  modelId: string;
 }) {
   const { t } = useTranslation();
   return (
@@ -592,7 +609,17 @@ function CliMenuTrigger({
         <span aria-hidden className="shrink-0 text-text-tertiary max-md:hidden">
           ·
         </span>
-        <span className="shrink-0 max-md:hidden">{t(EFFORT_LABEL_KEYS[effort])}</span>
+        {/* Reserve the widest localized level so the right-aligned popover stays put. */}
+        <span className="inline-grid shrink-0 max-md:hidden">
+          {EFFORT_LEVELS.map(level => (
+            <span key={level} aria-hidden={level !== effort} className={cx("col-start-1 row-start-1", level !== effort && "invisible")}>
+              {t(EFFORT_LABEL_KEYS[level])}
+            </span>
+          ))}
+        </span>
+        {engine === "omp" && supportsOmpFastMode(modelId) && (
+          <span aria-hidden={ompServiceTier !== "priority"} className={cx("w-7 shrink-0 text-center text-text-primary", ompServiceTier !== "priority" && "invisible")}>Fast</span>
+        )}
       </span>
     </AriaButton>
   );
@@ -616,6 +643,8 @@ function EngineMenuBody({
   onHoverEngine,
   onPickModel,
   onEffortChange,
+  ompServiceTier,
+  onOmpServiceTierChange,
   onRefreshModels,
   onFlyoutEnter,
   onFlyoutLeave,
@@ -634,6 +663,8 @@ function EngineMenuBody({
   onHoverEngine: (option: MenuOption) => void;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  ompServiceTier: OmpServiceTier;
+  onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   onRefreshModels?: () => void | Promise<void>;
   onFlyoutEnter: () => void;
   onFlyoutLeave: () => void;
@@ -678,6 +709,8 @@ function EngineMenuBody({
             effort={efforts[flyoutOption.id] ?? "medium"}
             onPickModel={onPickModel}
             onEffortChange={onEffortChange}
+            ompServiceTier={ompServiceTier}
+            onOmpServiceTierChange={onOmpServiceTierChange}
             onRefresh={onRefreshModels}
           />
         )}
@@ -697,6 +730,8 @@ function EngineModelDialog({
   onQueryChange,
   onPickModel,
   onEffortChange,
+  ompServiceTier,
+  onOmpServiceTierChange,
   onRefreshModels,
   onClose,
 }: {
@@ -709,6 +744,8 @@ function EngineModelDialog({
   onQueryChange: (value: string) => void;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  ompServiceTier: OmpServiceTier;
+  onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   onRefreshModels?: () => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -727,6 +764,8 @@ function EngineModelDialog({
         effort={efforts[option.id] ?? "medium"}
         onPickModel={onPickModel}
         onEffortChange={onEffortChange}
+            ompServiceTier={ompServiceTier}
+            onOmpServiceTierChange={onOmpServiceTierChange}
         onRefresh={onRefreshModels}
         onClose={onClose}
       />
@@ -751,6 +790,8 @@ export function CliMenu({
   onModelChange,
   efforts,
   onEffortChange,
+  ompServiceTier,
+  onOmpServiceTierChange,
   onRefreshModels,
 }: {
   options: MenuOption[];
@@ -764,6 +805,8 @@ export function CliMenu({
   /** Per-engine reasoning effort, rendered under each flyout's model list. */
   efforts: Record<string, EffortLevel>;
   onEffortChange: (engine: string, level: EffortLevel) => void;
+  ompServiceTier: OmpServiceTier;
+  onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs (flyout refresh button). */
   onRefreshModels?: () => void | Promise<void>;
 }) {
@@ -853,6 +896,8 @@ export function CliMenu({
         engineName={engineName}
         model={selectedModel}
         effort={triggerEffort}
+        ompServiceTier={ompServiceTier}
+        modelId={selectedModelId}
       />
 
       <AriaPopover
@@ -877,6 +922,8 @@ export function CliMenu({
             onHoverEngine={hoverEngine}
             onPickModel={pickModel}
             onEffortChange={onEffortChange}
+            ompServiceTier={ompServiceTier}
+            onOmpServiceTierChange={onOmpServiceTierChange}
             onRefreshModels={onRefreshModels}
             onFlyoutEnter={cancelFlyoutClose}
             onFlyoutLeave={scheduleFlyoutClose}
@@ -894,6 +941,8 @@ export function CliMenu({
       onQueryChange={setQuery}
       onPickModel={pickModel}
       onEffortChange={onEffortChange}
+            ompServiceTier={ompServiceTier}
+            onOmpServiceTierChange={onOmpServiceTierChange}
       onRefreshModels={onRefreshModels}
       onClose={() => setDialogEngine(null)}
     />

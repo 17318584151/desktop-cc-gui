@@ -15,6 +15,17 @@ export const en: Messages = {
     copied: "Copied",
   },
   chat: {
+    ompFastToggle: "Fast mode",
+    ompFastEnable: "Enable Fast",
+    ompFastDisable: "Disable Fast",
+    ompSpeedReset: "Reset to OMP speed setting",
+
+    ompSpeed: "Generation speed",
+    ompSpeedInherit: "Use OMP setting",
+    ompSpeedStandard: "Standard",
+    ompSpeedUnsupported: "Select a Codex model to configure Fast.",
+    ompSpeedSaveError: "Could not save. Speed setting is unchanged; please retry.",
+
     newChat: "New chat",
     newSession: "New session",
     collapseSidebar: "Collapse sidebar",
