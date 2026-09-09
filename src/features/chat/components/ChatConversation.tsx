@@ -83,16 +83,18 @@ export const ChatConversation = memo(function ChatConversation({
   const sendShortcut = useChatStore((s) => s.sendShortcut);
   const pendingMention = useChatStore((s) => s.pendingMention);
   // Engine/effort/model prefs: low-frequency, grouped into one shallow watch.
-  const { activeEngine, efforts, models } = useChatStore(
+  const { activeEngine, efforts, models, ompServiceTier } = useChatStore(
     useShallow((s) => ({
       activeEngine: s.activeEngine,
       efforts: s.efforts,
+      ompServiceTier: s.ompServiceTier,
       models: s.models,
     })),
   );
   const {
     setActiveEngine,
     setEffort,
+    setOmpServiceTier,
     setModel,
     pinModels,
     setDraft,
@@ -107,6 +109,7 @@ export const ChatConversation = memo(function ChatConversation({
     useShallow((s) => ({
       setActiveEngine: s.setActiveEngine,
       setEffort: s.setEffort,
+      setOmpServiceTier: s.setOmpServiceTier,
       setModel: s.setModel,
       pinModels: s.pinModels,
       setDraft: s.setDraft,
@@ -228,6 +231,8 @@ export const ChatConversation = memo(function ChatConversation({
           onModelChange={handleModelChange}
           efforts={efforts}
           onEffortChange={handleEffortChange}
+          ompServiceTier={ompServiceTier}
+          onOmpServiceTierChange={setOmpServiceTier}
           onRefreshModels={refreshModels}
         />
       ),
@@ -243,6 +248,8 @@ export const ChatConversation = memo(function ChatConversation({
       handleModelChange,
       efforts,
       handleEffortChange,
+      ompServiceTier,
+      setOmpServiceTier,
       refreshModels,
     ],
   );

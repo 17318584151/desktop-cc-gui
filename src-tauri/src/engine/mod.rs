@@ -40,6 +40,8 @@ pub struct SendRequest {
     /// Reasoning effort ("low" | "medium" | "high" | "xhigh" | "max"); engines without an
     /// effort knob ignore it, engines with a narrower knob clamp.
     pub effort: Option<String>,
+    /// OMP OpenAI service tier override, independent of reasoning effort.
+    pub service_tier: Option<String>,
     /// Permission mode ("auto" | "manual" | "plan" | "bypass"); each engine
     /// resolves it against the modes it can actually honor at spawn (see
     /// `Engine::resolve_permission`).
@@ -491,9 +493,7 @@ fn engine_bin(settings: &crate::settings::AppSettings, engine_id: &str) -> Strin
             // Defense in depth: settings write validates too, but the file
             // may have been hand-edited since.
             match crate::settings::validate_bin_override(trimmed) {
-                Ok(path) => {
-                    return resolve::resolve_launchable_cli_binary(&path.to_string_lossy())
-                }
+                Ok(path) => return resolve::resolve_launchable_cli_binary(&path.to_string_lossy()),
                 Err(reason) => {
                     eprintln!("[engine] ignoring invalid {engine_id} bin override: {reason}");
                 }
@@ -575,6 +575,11 @@ fn prepare_launch(
         images: image_paths.unwrap_or_default(),
         model,
         effort,
+        service_tier: if engine == "omp" {
+            settings.omp_openai_service_tier.clone()
+        } else {
+            None
+        },
         permission: permission.filter(|p| !p.trim().is_empty()),
     };
     let bin = engine_bin(&settings, engine);
@@ -1002,6 +1007,7 @@ mod permission_tests {
             images: Vec::new(),
             model: None,
             effort: None,
+            service_tier: None,
             permission: permission.map(str::to_string),
         }
     }
@@ -1014,6 +1020,67 @@ mod permission_tests {
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect()
+    }
+
+    #[test]
+    fn omp_fast_tier_is_explicit_and_independent_of_effort() {
+        let mut request = req(None);
+        request.model = Some("openai-codex/gpt-5.4".into());
+        request.effort = Some("high".into());
+        for tier in [None, Some("priority"), Some("default")] {
+            request.service_tier = tier.map(str::to_string);
+            let args = argv(&pi_family::omp(), &request);
+            let actual = args
+                .iter()
+                .position(|a| a == "--service-tier")
+                .map(|i| args[i + 1].as_str());
+            assert_eq!(actual, tier);
+            assert!(args.windows(2).any(|a| a == ["--thinking", "high"]));
+        }
+    }
+
+    #[test]
+    fn omp_fast_tier_does_not_leak_to_other_models_or_pi() {
+        let mut request = req(None);
+        request.service_tier = Some("priority".into());
+        for model in [
+            None,
+            Some("anthropic/claude"),
+            Some("google/gemini"),
+            Some("gpt-5.4"),
+            Some("openai/"),
+            Some("openai/gpt-5.4"),
+            Some("openai-codex/"),
+            Some("custom/gpt-5.4"),
+        ] {
+            request.model = model.map(str::to_string);
+            assert!(!argv(&pi_family::omp(), &request)
+                .iter()
+                .any(|a| a == "--service-tier"));
+        }
+        request.model = Some("openai-codex/gpt-5.4".into());
+        assert!(!argv(&pi_family::pi(), &request)
+            .iter()
+            .any(|a| a == "--service-tier"));
+        assert!(argv(&pi_family::omp(), &request)
+            .iter()
+            .any(|a| a == "--service-tier"));
+        request.service_tier = Some("invalid".into());
+        assert!(pi_family::omp()
+            .build_command(&request, "fake-bin")
+            .is_err());
+    }
+
+    #[test]
+    fn omp_tier_settings_are_backward_compatible_and_roundtrip() {
+        let mut settings: crate::settings::AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.omp_openai_service_tier, None);
+        for tier in [Some("priority"), Some("default"), None] {
+            settings.omp_openai_service_tier = tier.map(str::to_string);
+            let encoded = serde_json::to_string(&settings).unwrap();
+            let decoded: crate::settings::AppSettings = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded.omp_openai_service_tier.as_deref(), tier);
+        }
     }
 
     #[test]

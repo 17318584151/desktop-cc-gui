@@ -1,3 +1,4 @@
+import { normalizeOmpServiceTier, type OmpServiceTier } from "@/lib/omp-service-tier";
 import { create } from "zustand";
 import { ipc, type AppSettings, type Message, type SessionMeta, type Workspace, type WorkspaceGroup, type EngineInfo } from "@/lib/ipc";
 import type { EffortLevel } from "@/components/application/ai-chat/cli-menu";
@@ -100,6 +101,7 @@ export interface ChatStore {
   permission: ComposerPermission;
   /** Per-engine reasoning effort ("low" | … | "max"), persisted in app settings. */
   efforts: Record<string, EffortLevel>;
+  ompServiceTier: OmpServiceTier;
   /** Per-engine model override ("" = CLI/provider default), persisted in app settings. */
   models: Record<string, string>;
   /** Max sessions listed per workspace in the sidebar, persisted in app settings. */
@@ -152,6 +154,7 @@ export interface ChatStore {
   setActiveEngine: (engine: string) => void;
   setPermission: (permission: ComposerPermission) => void;
   setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
+  setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
   setModel: (engine: string, model: string) => Promise<void>;
   /** Pin several engines' models at once (startup defaulting); one settings
    * write instead of one per engine. */
@@ -410,6 +413,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     activeEngine: localStorage.getItem(ENGINE_PREF_KEY) ?? "claude",
     permission: readPermissionPref(),
     efforts: {},
+    ompServiceTier: null,
     models: {},
     threadLimit: 10,
     workspaceGroups: [],
@@ -477,6 +481,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         .then((settings) =>
           set({
             efforts: (settings.defaultEfforts ?? {}) as Record<string, EffortLevel>,
+            ompServiceTier: normalizeOmpServiceTier(settings.ompOpenaiServiceTier),
             models: settings.defaultModels ?? {},
             threadLimit: settings.sidebarThreadLimit ?? 5,
             workspaceGroups: settings.workspaceGroups ?? [],
@@ -681,6 +686,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
     setPermission: (permission) => {
       writeStored(PERMISSION_PREF_KEY, permission);
       set({ permission });
+    },
+    setOmpServiceTier: async (tier) => {
+      const settings = await ipc.getAppSettings();
+      await ipc.updateAppSettings({ ...settings, ompOpenaiServiceTier: tier });
+      set({ ompServiceTier: tier });
     },
     setEffort: async (engine, effort) => {
       set({ efforts: { ...get().efforts, [engine]: effort } });

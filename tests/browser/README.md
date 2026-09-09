@@ -19,3 +19,8 @@ budgeted separately: 32ms up to 4,000 UTF-16 units, 64ms up to 16,000, and 128ms
 above that. Completion bypasses the budget. These limits trade parser work
 against arrival latency; they do not guarantee a frame-time bound for very
 large Markdown documents.
+
+Open `/tests/browser/effort-layout.html` to verify the actual model menu keeps
+its trigger width and popover position while cycling all five reasoning levels.
+The fixture waits for fonts and the entrance animation before measuring; it
+uses local React state and never changes app settings or sends a model request.
