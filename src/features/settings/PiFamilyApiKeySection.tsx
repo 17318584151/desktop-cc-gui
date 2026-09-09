@@ -2,6 +2,7 @@
  *  editor / delete with confirmation (extracted from PiFamilyAuthSection).
  *  Keys never round-trip to the frontend — rows carry only a masked display
  *  string. All state stays with the parent; this file is presentational. */
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import Eye from "lucide-react/dist/esm/icons/eye";
 import EyeOff from "lucide-react/dist/esm/icons/eye-off";
@@ -50,9 +51,9 @@ interface ApiKeyEditorProps {
   onClose: () => void;
 }
 
-/** Inline key editor under an expanded row. The autoFocus on the input is
- *  intentional: expanding a row moves keyboard focus straight into the key
- *  field. */
+/** Inline key editor under an expanded row. Focus moves into the key field
+ *  when the editor opens (an explicit user action) via a mount-time ref —
+ *  the no-autofocus-safe way to place initial focus. */
 function ApiKeyEditor({
   provider,
   snap,
@@ -67,6 +68,10 @@ function ApiKeyEditor({
   onClose,
 }: ApiKeyEditorProps) {
   const { t } = useTranslation();
+  // Stable identity: focus runs once on mount, not on every re-render.
+  const focusInput = useCallback((el: HTMLInputElement | null) => {
+    el?.focus();
+  }, []);
   return (
     <div className="border-b border-separator-border px-2 py-3 last:border-b-0">
       <label
@@ -77,10 +82,10 @@ function ApiKeyEditor({
       </label>
       <div className="flex items-center gap-1 rounded-lg bg-background-tertiary px-2.5">
         <input
+          ref={focusInput}
           id={`pi-family-auth-key-${provider.id}`}
           type={draftVisible ? "text" : "password"}
           value={draftKey}
-          autoFocus
           autoComplete="off"
           spellCheck={false}
           onChange={(event) => onDraftKeyChange(event.target.value)}

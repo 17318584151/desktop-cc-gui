@@ -56,7 +56,7 @@ describe("PluginPageHost", () => {
     });
     renderAt("/p/plugin:demo:main");
 
-    const overlay = container.querySelector('[role="dialog"]');
+    const overlay = container.querySelector("dialog");
     expect(overlay).not.toBeNull();
     expect(overlay!.querySelector("h1")!.textContent).toBe("Demo Page");
     expect(overlay!.textContent).toContain("demo body");
@@ -65,7 +65,7 @@ describe("PluginPageHost", () => {
   it("an unknown page id falls back to the chat root", () => {
     renderAt("/p/plugin:ghost:missing");
 
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector("dialog")).toBeNull();
     expect(container.querySelector('[data-testid="chat-root"]')).not.toBeNull();
   });
 
@@ -77,11 +77,11 @@ describe("PluginPageHost", () => {
     });
     renderAt("/p/plugin:demo:main");
 
-    const closeButton = container.querySelector('[role="dialog"] button')!;
+    const closeButton = container.querySelector("dialog button")!;
     act(() => {
       closeButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector("dialog")).toBeNull();
     expect(container.querySelector('[data-testid="chat-root"]')).not.toBeNull();
   });
 });

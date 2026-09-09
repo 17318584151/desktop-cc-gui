@@ -112,10 +112,15 @@ export function PluginConfigForm({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const loaded: Record<string, unknown> = {};
-      for (const [name] of properties) {
-        loaded[name] = await ctx.storage.get(`config.${name}`);
-      }
+      // Per-key KV reads are independent — start them together instead of
+      // serializing one round-trip per property.
+      const loaded: Record<string, unknown> = Object.fromEntries(
+        await Promise.all(
+          properties.map(
+            async ([name]): Promise<[string, unknown]> => [name, await ctx.storage.get(`config.${name}`)],
+          ),
+        ),
+      );
       if (!cancelled) setValues(loaded);
     })();
     return () => {

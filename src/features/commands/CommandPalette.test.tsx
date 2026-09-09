@@ -7,6 +7,17 @@ import { CommandPalette } from "./CommandPalette";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// jsdom implements <dialog> but not its modal methods; the palette drives
+// showModal()/close() to keep the element in sync with React state.
+if (typeof HTMLDialogElement.prototype.showModal !== "function") {
+  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+    this.open = false;
+  };
+}
+
 const keydown = (init: KeyboardEventInit) => {
   act(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
@@ -25,7 +36,9 @@ const typeQuery = (input: HTMLInputElement, value: string) => {
 };
 
 const openPalette = () => keydown({ key: "k", metaKey: true });
-const dialog = () => document.querySelector('[role="dialog"]');
+// The native <dialog> stays mounted across open/close; its `open` property
+// is the observable open state.
+const dialog = () => document.querySelector("dialog");
 const optionTexts = () =>
   [...document.querySelectorAll('[role="option"]')].map((el) => el.textContent);
 
@@ -57,24 +70,24 @@ describe("CommandPalette", () => {
   });
 
   it("⌘K opens the palette listing builtin and registered commands; Esc closes it", () => {
-    expect(dialog()).toBeNull();
+    expect(dialog()!.open).toBe(false);
     register({ id: "test:hello", title: () => "Hello Command", run: () => {} });
 
     openPalette();
-    expect(dialog()).not.toBeNull();
+    expect(dialog()!.open).toBe(true);
     // Builtin dogfood commands register at module scope via ./builtins.
     expect(optionTexts()).toContain("打开设置");
     expect(optionTexts()).toContain("Hello Command");
 
     keydown({ key: "Escape" });
-    expect(dialog()).toBeNull();
+    expect(dialog()!.open).toBe(false);
   });
 
   it("Ctrl+K also toggles the palette (non-macOS)", () => {
     keydown({ key: "k", ctrlKey: true });
-    expect(dialog()).not.toBeNull();
+    expect(dialog()!.open).toBe(true);
     keydown({ key: "k", ctrlKey: true });
-    expect(dialog()).toBeNull();
+    expect(dialog()!.open).toBe(false);
   });
 
   it("filters by case-insensitive substring over title and keywords", () => {
@@ -106,7 +119,7 @@ describe("CommandPalette", () => {
 
     keydown({ key: "Enter" });
     expect(run).toHaveBeenCalledTimes(1);
-    expect(dialog()).toBeNull();
+    expect(dialog()!.open).toBe(false);
   });
 
   it("arrow keys move the active row before Enter runs it", () => {
@@ -138,7 +151,7 @@ describe("CommandPalette", () => {
 
     keydown({ key: "Enter" });
     expect(spy).toHaveBeenCalledWith('[commands] "test:broken" failed', error);
-    expect(dialog()).not.toBeNull();
+    expect(dialog()!.open).toBe(true);
     spy.mockRestore();
   });
 });

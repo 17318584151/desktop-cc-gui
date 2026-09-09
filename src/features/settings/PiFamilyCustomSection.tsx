@@ -1,6 +1,7 @@
 /** 自定义供应商 group — raw-text editor over models.json (pi) / models.yml
  *  (omp) with loose backend validation (extracted from PiFamilyAuthSection).
  *  All state stays with the parent; this file is presentational. */
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
   SettingsCard,
@@ -20,8 +21,9 @@ interface ModelsConfigEditorProps {
   onCancel: () => void;
 }
 
-/** Raw models.json/models.yml editor. The autoFocus on the textarea is
- *  intentional: opening the editor moves keyboard focus straight into it. */
+/** Raw models.json/models.yml editor. Focus moves into the textarea when
+ *  the editor opens (an explicit user action) via a mount-time ref — the
+ *  no-autofocus-safe way to place initial focus. */
 function ModelsConfigEditor({
   modelsConfig,
   draft,
@@ -32,6 +34,10 @@ function ModelsConfigEditor({
   onCancel,
 }: ModelsConfigEditorProps) {
   const { t } = useTranslation();
+  // Stable identity: focus runs once on mount, not on every re-render.
+  const focusTextarea = useCallback((el: HTMLTextAreaElement | null) => {
+    el?.focus();
+  }, []);
   return (
     <div className="border-b border-separator-border px-2 py-3 last:border-b-0">
       <label
@@ -41,9 +47,9 @@ function ModelsConfigEditor({
         {modelsConfig?.file.format === "yaml" ? "models.yml · YAML" : "models.json · JSONC"}
       </label>
       <textarea
+        ref={focusTextarea}
         id="pi-family-models-config-text"
         value={draft}
-        autoFocus
         autoComplete="off"
         spellCheck={false}
         rows={16}

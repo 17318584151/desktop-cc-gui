@@ -128,21 +128,20 @@ export function useChatSidebar({
   // 已归档 section: archived workspaces in sidebar order, labels resolved
   // with the same alias rule as the main tree. Threads stay hidden — the
   // section exists to unarchive, not to browse.
-  const archivedRepos: AiChatRepo[] = useMemo(
-    () =>
-      workspaces
-        .filter((w) => archivedIds.has(w.id))
-        .map((w) => {
-          const alias = workspaceAliases[w.id]?.trim();
-          return {
-            id: w.id,
-            label: alias || w.name,
-            originalLabel: alias ? w.name : undefined,
-            threads: [],
-          };
-        }),
-    [workspaces, archivedIds, workspaceAliases],
-  );
+  const archivedRepos: AiChatRepo[] = useMemo(() => {
+    const result: AiChatRepo[] = [];
+    for (const w of workspaces) {
+      if (!archivedIds.has(w.id)) continue;
+      const alias = workspaceAliases[w.id]?.trim();
+      result.push({
+        id: w.id,
+        label: alias || w.name,
+        originalLabel: alias ? w.name : undefined,
+        threads: [],
+      });
+    }
+    return result;
+  }, [workspaces, archivedIds, workspaceAliases]);
 
   const handleAddWorkspace = useCallback(() => {
     void pickDirectory(t("chat.addWorkspace"))

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, LazyMotion, domMax, m } from "motion/react";
 import { cx } from "@/utils/cx";
 
 /**
@@ -54,7 +54,7 @@ function ProgressLoadingText({ children, className }: { children: string; classN
 function SpinnerRing({ size = 16, strokeWidth = 2.5 }: { size?: number; strokeWidth?: number }) {
   const radius = (size - strokeWidth) / 2 - 0.25;
   return (
-    <motion.svg
+    <m.svg
       aria-hidden
       viewBox={`0 0 ${size} ${size}`}
       width={size}
@@ -81,7 +81,7 @@ function SpinnerRing({ size = 16, strokeWidth = 2.5 }: { size?: number; strokeWi
         strokeLinecap="round"
         strokeDasharray={`${radius * 1.9} ${radius * 4.4}`}
       />
-    </motion.svg>
+    </m.svg>
   );
 }
 
@@ -156,13 +156,13 @@ function ExpandIcon() {
 
 function AnimatedStatusLabel({ label, className }: { label: string; className?: string }) {
   return (
-    <motion.span
+    <m.span
       layout="position"
       transition={SPRING}
       className={cx("relative inline-flex min-w-0 overflow-hidden", className)}
     >
       <AnimatePresence initial={false} mode="popLayout">
-        <motion.span
+        <m.span
           key={label}
           initial={{ opacity: 0, y: 4, filter: "blur(3px)" }}
           animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
@@ -171,9 +171,9 @@ function AnimatedStatusLabel({ label, className }: { label: string; className?: 
           className="block whitespace-nowrap"
         >
           {label}
-        </motion.span>
+        </m.span>
       </AnimatePresence>
-    </motion.span>
+    </m.span>
   );
 }
 
@@ -196,7 +196,7 @@ function AnimatedStepLabel({
       {active ? <ProgressLoadingText>{label}</ProgressLoadingText> : label}
       <AnimatePresence>
         {complete && (
-          <motion.span
+          <m.span
             aria-hidden
             className="absolute top-1/2 right-0 left-0 h-px origin-left bg-current"
             initial={{ scaleX: 0, opacity: 0 }}
@@ -223,7 +223,7 @@ function StepRow({
   const active = state === "active";
 
   return (
-    <motion.div
+    <m.div
       layout="position"
       initial={{ opacity: 0, y: -4, filter: "blur(6px)" }}
       animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
@@ -245,7 +245,7 @@ function StepRow({
             than one row can be active at once. */}
         <AnimatePresence>
           {active && (
-            <motion.span
+            <m.span
               aria-hidden
               className="pointer-events-none absolute inset-0 rounded-full border border-border-button-default"
               initial={{ opacity: 0 }}
@@ -259,7 +259,7 @@ function StepRow({
         <span className="relative z-10 flex size-3.5 shrink-0 items-center justify-center">
           <AnimatePresence initial={false} mode="popLayout">
             {complete ? (
-              <motion.span
+              <m.span
                 key="complete"
                 initial={{ opacity: 0, scale: 0.72, rotate: -18 }}
                 animate={{ opacity: 1, scale: 1, rotate: 0 }}
@@ -267,9 +267,9 @@ function StepRow({
                 className="absolute inset-[-0.5px]"
               >
                 <CompletedStepIcon />
-              </motion.span>
+              </m.span>
             ) : active ? (
-              <motion.span
+              <m.span
                 key="active"
                 initial={{ opacity: 0, scale: 0.82 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -278,9 +278,9 @@ function StepRow({
                 className="absolute inset-0 flex items-center justify-center"
               >
                 <SpinnerRing size={14} strokeWidth={1.5} />
-              </motion.span>
+              </m.span>
             ) : (
-              <motion.span
+              <m.span
                 key="pending"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -288,7 +288,7 @@ function StepRow({
                 className="absolute inset-[-0.5px]"
               >
                 <PendingStepIcon />
-              </motion.span>
+              </m.span>
             )}
           </AnimatePresence>
         </span>
@@ -297,7 +297,7 @@ function StepRow({
           <AnimatedStepLabel label={label} complete={complete} active={active} />
         </span>
       </div>
-    </motion.div>
+    </m.div>
   );
 }
 
@@ -311,7 +311,17 @@ export interface AgentProgressProps {
   className?: string;
 }
 
-export function AgentProgress({
+export function AgentProgress(props: AgentProgressProps) {
+  // Steps and status labels use layout="position"/popLayout, which domAnimation
+  // (the app root's bundle) doesn't cover — scope domMax to this subtree.
+  return (
+    <LazyMotion features={domMax}>
+      <AgentProgressInner {...props} />
+    </LazyMotion>
+  );
+}
+
+function AgentProgressInner({
   steps,
   statusLabel,
   expandLabel = "Expand steps",
@@ -325,7 +335,7 @@ export function AgentProgress({
   const expandedHeight = Math.max(44, 45 + steps.length * 38);
 
   return (
-    <motion.div
+    <m.div
       initial={{ opacity: 0, y: -12, filter: "blur(8px)" }}
       animate={{
         opacity: 1,
@@ -358,7 +368,7 @@ export function AgentProgress({
     >
       <AnimatePresence initial={false}>
         {!complete && (
-          <motion.span
+          <m.span
             key="persistent-progress-ring"
             className="pointer-events-none absolute top-[14px] left-[14px] z-20 flex size-4 items-center justify-center"
             initial={{ opacity: 0, scale: 0.82 }}
@@ -367,13 +377,13 @@ export function AgentProgress({
             transition={{ duration: 0.25, ease: EASE }}
           >
             <SpinnerRing size={16} />
-          </motion.span>
+          </m.span>
         )}
       </AnimatePresence>
 
       <AnimatePresence mode="sync">
         {minimized ? (
-          <motion.button
+          <m.button
             key="minimized"
             type="button"
             data-testid="agent-progress-minimized"
@@ -391,7 +401,7 @@ export function AgentProgress({
             <span className="flex min-w-0 shrink-0 items-center pl-1">
               <AnimatePresence initial={false}>
                 {!complete && (
-                  <motion.span
+                  <m.span
                     key="progress-ring"
                     className="flex h-4 w-6 shrink-0 origin-left items-center overflow-hidden"
                     initial={{ opacity: 1 }}
@@ -421,9 +431,9 @@ export function AgentProgress({
             <span className="absolute top-1/2 right-2.5 size-5 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">
               <ExpandIcon />
             </span>
-          </motion.button>
+          </m.button>
         ) : (
-          <motion.div
+          <m.div
             key="expanded"
             data-testid="agent-progress-expanded"
             initial={{ opacity: 0, filter: "blur(3px)" }}
@@ -440,7 +450,7 @@ export function AgentProgress({
               <div className="flex h-5 w-full items-center pl-1">
                 <AnimatePresence initial={false}>
                   {!complete && (
-                    <motion.span
+                    <m.span
                       key="progress-ring"
                       className="flex h-4 w-6 shrink-0 origin-left items-center overflow-hidden"
                       initial={{ opacity: 1 }}
@@ -470,9 +480,9 @@ export function AgentProgress({
                 ))}
               </div>
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </m.div>
   );
 }

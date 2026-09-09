@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { AgentProgress } from "@/components/application/agent-progress/agent-progress";
 import { Collapsible } from "@/components/application/collapsible/collapsible";
@@ -24,7 +24,7 @@ function EditedFilesCard({ files, live }: { files: string[]; live: boolean }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
-    <motion.div
+    <m.div
       initial={{ opacity: 0, y: -8, filter: "blur(6px)" }}
       animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
       exit={{ opacity: 0, y: -8, filter: "blur(6px)" }}
@@ -66,7 +66,7 @@ function EditedFilesCard({ files, live }: { files: string[]; live: boolean }) {
         {open && (
           <div className="flex flex-col gap-0.5 px-3.5 pt-0 pb-2.5">
               {files.map((file, index) => (
-                <motion.div
+                <m.div
                   key={file}
                   initial={{ opacity: 0, y: -3 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -80,12 +80,12 @@ function EditedFilesCard({ files, live }: { files: string[]; live: boolean }) {
                   <span className="min-w-0 flex-1 truncate text-caption-1-regular text-text-tertiary">
                     {file}
                   </span>
-                </motion.div>
+                </m.div>
               ))}
           </div>
         )}
       </Collapsible>
-    </motion.div>
+    </m.div>
   );
 }
 

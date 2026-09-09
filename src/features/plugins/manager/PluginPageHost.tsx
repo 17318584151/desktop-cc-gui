@@ -44,10 +44,10 @@ export default function PluginPageHost() {
   };
 
   return (
-    <div
-      role="dialog"
+    <dialog
+      open
       aria-label={entry.title()}
-      className="fixed inset-0 z-100 flex flex-col bg-background-primary-default"
+      className="fixed inset-0 z-100 m-0 flex h-full max-h-none w-full max-w-none flex-col bg-background-primary-default"
     >
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-separator-border px-4">
         <h1 className="truncate text-title-3-medium text-text-primary">{entry.title()}</h1>
@@ -65,6 +65,6 @@ export default function PluginPageHost() {
           <Component />
         </PluginBoundary>
       </div>
-    </div>
+    </dialog>
   );
 }

@@ -33,6 +33,7 @@ export function CommandPalette() {
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
   // ⌘K / Ctrl+K toggles the palette (same global-keydown pattern as the
   // ⌘J terminal toggle in ChatPage).
@@ -46,6 +47,16 @@ export function CommandPalette() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  // Native <dialog>: keep the modal open state in sync with React state.
+  // Declared before the focus effect below so showModal() runs first and the
+  // input focus afterwards sticks; close() gives native focus restoration.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open && !dialog.open) dialog.showModal();
+    else if (!open && dialog.open) dialog.close();
+  }, [open]);
 
   // Fresh query + focus every time the palette opens.
   useEffect(() => {
@@ -86,6 +97,19 @@ export function CommandPalette() {
     setOpen(false);
   };
 
+  // Backdrop press-to-close: with showModal() the dialog element itself is
+  // the full-screen overlay, so a press whose target is the dialog (not its
+  // panel contents) landed on the backdrop. Window-level listener keeps the
+  // <dialog> free of interaction handlers (same pattern as ContextMenu).
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target === dialogRef.current) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
   // Keyboard navigation lives on window too: Esc/↑/↓/Enter work regardless
   // of which element inside the palette currently holds focus.
   useEffect(() => {
@@ -118,19 +142,17 @@ export function CommandPalette() {
     listRef.current?.children[active]?.scrollIntoView?.({ block: "nearest" });
   }, [open, active]);
 
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-110 flex items-start justify-center bg-overlay-backdrop px-4 pt-[15vh]"
-      onClick={() => setOpen(false)}
+    <dialog
+      ref={dialogRef}
+      aria-label={t("commands.paletteTitle")}
+      className={cx(
+        "fixed inset-0 z-110 m-0 h-full max-h-none w-full max-w-none items-start justify-center bg-overlay-backdrop px-4 pt-[15vh]",
+        open ? "flex" : "hidden",
+      )}
+      onCancel={() => setOpen(false)}
     >
-      <div
-        role="dialog"
-        aria-label={t("commands.paletteTitle")}
-        className="w-[560px] max-w-full overflow-hidden rounded-2xl border border-border-button-default bg-background-primary-default shadow-dropdown"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="w-[560px] max-w-full overflow-hidden rounded-2xl border border-border-button-default bg-background-primary-default shadow-dropdown">
         <div className="flex items-center gap-2 border-b border-separator-border px-3">
           <Search className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
           <input
@@ -170,6 +192,6 @@ export function CommandPalette() {
           )}
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

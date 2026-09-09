@@ -757,7 +757,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         .map((id) => byId.get(id))
         .filter((g): g is WorkspaceGroup => Boolean(g));
       // Groups missing from the submitted order keep trailing positions.
-      const rest = current.filter((g) => !orderedIds.includes(g.id));
+      const orderedIdSet = new Set(orderedIds);
+      const rest = current.filter((g) => !orderedIdSet.has(g.id));
       const workspaceGroups = [...ordered, ...rest].map((g, i) => ({ ...g, sortOrder: i }));
       set({ workspaceGroups });
       await persistSettings(() => ({ workspaceGroups }));

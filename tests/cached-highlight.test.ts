@@ -9,13 +9,11 @@ import { createCachedHighlighter } from "../src/features/chat/components/cached-
 
 function render(text: string, plugin = createCachedHighlighter(), streaming = false) {
   return renderToStaticMarkup(createElement(Markdown, {
-    remarkPlugins: [remarkGfm], rehypePlugins: [[plugin, { streaming }]], children: text,
-  }));
+    remarkPlugins: [remarkGfm], rehypePlugins: [[plugin, { streaming }]] }, text));
 }
 function reference(text: string, highlight = true) {
   return renderToStaticMarkup(createElement(Markdown, {
-    remarkPlugins: [remarkGfm], rehypePlugins: highlight ? [rehypeHighlight] : [], children: text,
-  }));
+    remarkPlugins: [remarkGfm], rehypePlugins: highlight ? [rehypeHighlight] : [] }, text));
 }
 
 const fixtures = [
@@ -90,8 +88,7 @@ test("reveal wrapping preserves code cache, tables, inline paths and visible tex
   const text = "**你好 👩‍💻** `src/app.ts`\n\n```js\nconst x = '<script>';\n```\n\n|a|b|\n|-|-|\n|1|2|\n\n[link](https://example.com)";
   const plan = createRevealPlan();
   const html = renderToStaticMarkup(createElement(Markdown, {
-    remarkPlugins: [remarkGfm], rehypePlugins: [[cached, {streaming:false}], plan.plugin], children:text,
-  }));
+    remarkPlugins: [remarkGfm], rehypePlugins: [[cached, {streaming:false}], plan.plugin] }, text));
   const unwrapped = html.replace(/<span data-stream-start="\d+">([^<]*(?:&[^;]+;[^<]*)*)<\/span>/g, "$1");
   assert.equal(unwrapped, reference(text));
   assert.ok(plan.text.includes("你好 👩‍💻"));
@@ -108,8 +105,7 @@ test("external mutating rehype plugins cannot accumulate changes with caching di
     code.children.push({ type: "text", value: " plugin suffix" });
   };
   const renderWithPlugin = () => renderToStaticMarkup(createElement(Markdown, {
-    rehypePlugins: [highlighter, mutate], children: "```js\nconst x = 1;\n```",
-  }));
+    rehypePlugins: [highlighter, mutate] }, "```js\nconst x = 1;\n```"));
   const first = renderWithPlugin();
   assert.equal(renderWithPlugin(), first);
   assert.equal((first.match(/plugin suffix/g) ?? []).length, 1);

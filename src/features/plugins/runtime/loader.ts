@@ -341,38 +341,46 @@ async function doBootstrap(
   }
   const byId: Record<string, PluginInfo> = {};
   for (const info of installed) byId[info.id] = info;
+  // Plugin loads are independent of each other — per-id state maps, scoped
+  // registry keys, per-plugin <style> tags — so each group loads
+  // concurrently. The two groups stay phased (builtins first), and every
+  // plugin keeps its own try/catch so one bad plugin never strands the rest.
   // Builtin state rides the same plugins.json record (source "builtin");
   // absent record = enabled, never quarantined.
-  for (const builtin of builtins) {
-    const record = byId[builtin.info.id];
-    const info = {
-      ...builtin.info,
-      enabled: record?.enabled ?? true,
-      quarantined: record?.quarantined ?? false,
-      lastError: record?.lastError ?? null,
-    };
-    try {
-      if (info.enabled)
-        await loadPlugin(
-          { info, manifest: builtin.manifest, builtinActivate: builtin.builtinActivate },
-          backend,
-        );
-      else setState(info.id, "installed");
-    } catch (error) {
-      console.error(`[plugins] bootstrap load of ${info.id} threw`, error);
-    }
-  }
-  for (const info of installed) {
-    if (info.source === "builtin") continue; // handled above
-    try {
-      if (info.enabled) await loadPlugin({ info }, backend);
-      else setState(info.id, "installed");
-    } catch (error) {
-      // Reached only when loadPlugin itself rejects outside its own error
-      // handling (e.g. the app-version probe); the next retry re-attempts.
-      console.error(`[plugins] bootstrap load of ${info.id} threw`, error);
-    }
-  }
+  await Promise.all(
+    builtins.map(async (builtin) => {
+      const record = byId[builtin.info.id];
+      const info = {
+        ...builtin.info,
+        enabled: record?.enabled ?? true,
+        quarantined: record?.quarantined ?? false,
+        lastError: record?.lastError ?? null,
+      };
+      try {
+        if (info.enabled)
+          await loadPlugin(
+            { info, manifest: builtin.manifest, builtinActivate: builtin.builtinActivate },
+            backend,
+          );
+        else setState(info.id, "installed");
+      } catch (error) {
+        console.error(`[plugins] bootstrap load of ${info.id} threw`, error);
+      }
+    }),
+  );
+  await Promise.all(
+    installed.map(async (info) => {
+      if (info.source === "builtin") return; // handled above
+      try {
+        if (info.enabled) await loadPlugin({ info }, backend);
+        else setState(info.id, "installed");
+      } catch (error) {
+        // Reached only when loadPlugin itself rejects outside its own error
+        // handling (e.g. the app-version probe); the next retry re-attempts.
+        console.error(`[plugins] bootstrap load of ${info.id} threw`, error);
+      }
+    }),
+  );
   if (listError) throw listError;
   return installed;
 }

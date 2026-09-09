@@ -114,7 +114,10 @@ export function ConversationFooter({
   // stay hidden until unarchived.
   const archivedWorkspaces = useChatStore((s) => s.archivedWorkspaces);
   const visibleWorkspaces = useMemo(
-    () => workspaces.filter((w) => !archivedWorkspaces.includes(w.id)),
+    () => {
+      const archivedIds = new Set(archivedWorkspaces);
+      return workspaces.filter((w) => !archivedIds.has(w.id));
+    },
     [workspaces, archivedWorkspaces],
   );
   const statusFolders = useMemo(() => visibleWorkspaces.map((w) => baseName(w.path)), [visibleWorkspaces]);

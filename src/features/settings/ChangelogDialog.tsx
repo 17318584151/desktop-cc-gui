@@ -15,8 +15,11 @@ import type { ChangelogEntry } from "@/version/changelog";
  * Resolve content to display. Shows both EN and ZH when both exist,
  * ordered by the active UI language (zh / zh-TW get Chinese first).
  */
-function resolveContent(entry: ChangelogEntry, language?: string): string[] {
-  const parts = [entry.content.zh, entry.content.en].filter(Boolean);
+function resolveContent(entry: ChangelogEntry, language?: string): { lang: "zh" | "en"; text: string }[] {
+  const parts = [
+    { lang: "zh" as const, text: entry.content.zh },
+    { lang: "en" as const, text: entry.content.en },
+  ].filter((part) => part.text);
   return (language ?? "").toLowerCase().startsWith("zh") ? parts : parts.reverse();
 }
 
@@ -96,7 +99,7 @@ export function ChangelogDialog({ entries, githubUrl, onClose }: ChangelogDialog
       {/* Body */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
         {resolveContent(entry, i18n.language).map((part, idx) => (
-          <div key={idx} className={cx(idx > 0 && "border-t border-separator-border pt-3")}>
+          <div key={part.lang} className={cx(idx > 0 && "border-t border-separator-border pt-3")}>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
@@ -122,7 +125,7 @@ export function ChangelogDialog({ entries, githubUrl, onClose }: ChangelogDialog
                 ),
               }}
             >
-              {part}
+              {part.text}
             </ReactMarkdown>
           </div>
         ))}

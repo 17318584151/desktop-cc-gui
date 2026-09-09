@@ -27,9 +27,9 @@ async function waitForSession(id: string, timeoutMs = 5000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (hasTerminalSession(id)) return true;
-    const { promise, resolve } = Promise.withResolvers<void>();
-    setTimeout(resolve, 100);
-    await promise;
+    // Poll loop: each sleep must finish before the next check — sequential
+    // by design (react-doctor/async-await-in-loop false positive).
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
   }
   return false;
 }
