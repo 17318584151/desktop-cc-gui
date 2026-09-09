@@ -24,8 +24,8 @@ export function OmpSpeedSection({ model, value, onChange, children }: {
     finally { setSaving(false); }
   };
   const buttonClass = "flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors disabled:cursor-default disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2";
-  return <div className="px-2 pb-2">
-    <div className="flex items-start justify-between gap-2">
+  return <div className="px-2 pb-1">
+    <div className="flex items-center justify-between gap-2">
       <button
         type="button"
         aria-label={t("chat.ompFastToggle")}
@@ -37,7 +37,7 @@ export function OmpSpeedSection({ model, value, onChange, children }: {
       >
         <Zap className="size-4" fill={enabled ? "currentColor" : "none"} aria-hidden />
       </button>
-      <div className="flex min-w-0 flex-1 flex-col items-center gap-1 pt-1 text-center">{children}</div>
+      <div className="min-w-0 flex-1 truncate text-center">{children}</div>
       <button
         type="button"
         aria-label={t("chat.ompSpeedReset")}

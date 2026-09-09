@@ -367,7 +367,7 @@ function FlyoutEffortSection({
           {t(EFFORT_LABEL_KEYS[effort])}
         </m.span>
       </span>}
-      <div className="flex w-full items-center justify-between px-2 pt-2 pb-[3px]">
+      <div className={cx("flex w-full items-center justify-between px-2 pb-[3px]", header ? "pt-0" : "pt-2")}>
         <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
           {t("chat.effortFaster")}
         </span>
@@ -537,14 +537,11 @@ function EngineModelPanel({
       </div>
 
       {/* Full-bleed divider, like the reference submenu. */}
-      <div aria-hidden className="-mx-1 mt-[7px] mb-3 h-px bg-border-button-default" />
+      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", option.id === "omp" ? "mb-1" : "mb-3")} />
       <FlyoutEffortSection
         header={option.id === "omp" ? (
           <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange}>
             <span className="text-body-medium text-text-primary">{t(EFFORT_LABEL_KEYS[effort])}</span>
-            <span className="max-w-full truncate text-body-2-regular text-text-tertiary" title={models.find(model => model.id === selectedModelId)?.label ?? selectedModelId}>
-              {models.find(model => model.id === selectedModelId)?.label || selectedModelId || t("chat.ompSpeedInherit")}
-            </span>
           </OmpSpeedSection>
         ) : undefined}
         effort={effort}
