@@ -23,7 +23,7 @@ export function OmpSpeedSection({ model, value, onChange, children }: {
     catch { setError(true); }
     finally { setSaving(false); }
   };
-  const buttonClass = "flex size-9 shrink-0 items-center justify-center rounded-xl transition-colors disabled:cursor-default disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2";
+  const buttonClass = "flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors disabled:cursor-default disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2";
   return <div className="px-2 pb-2">
     <div className="flex items-start justify-between gap-2">
       <button
@@ -35,7 +35,7 @@ export function OmpSpeedSection({ model, value, onChange, children }: {
         className={`${buttonClass} ${enabled ? "bg-background-tertiary-hover text-text-primary" : "bg-background-secondary-default text-text-tertiary hover:text-text-primary"}`}
         onClick={() => void change(enabled ? "default" : "priority")}
       >
-        <Zap className="size-5" fill={enabled ? "currentColor" : "none"} aria-hidden />
+        <Zap className="size-4" fill={enabled ? "currentColor" : "none"} aria-hidden />
       </button>
       <div className="flex min-w-0 flex-1 flex-col items-center gap-1 pt-1 text-center">{children}</div>
       <button
@@ -46,7 +46,7 @@ export function OmpSpeedSection({ model, value, onChange, children }: {
         className={`${buttonClass} text-text-tertiary hover:bg-background-secondary-default hover:text-text-primary`}
         onClick={() => void change(null)}
       >
-        <RotateCcw className="size-5" aria-hidden />
+        <RotateCcw className="size-4" aria-hidden />
       </button>
     </div>
     {error && <p role="alert" className="mt-1 text-body-2-regular text-text-primary">{t("chat.ompSpeedSaveError")}</p>}

@@ -686,7 +686,11 @@ export function CliMenu({
             ·
           </span>
           <span className="shrink-0 max-md:hidden">{t(EFFORT_LABEL_KEYS[triggerEffort])}</span>
-          {value === "omp" && ompServiceTier === "priority" && supportsOmpFastMode(models[value] ?? "") && <span className="shrink-0 text-text-primary">Fast</span>}
+          {value === "omp" && supportsOmpFastMode(models[value] ?? "") && (
+            // Preserve the trigger's width: this popover is anchored to its
+            // right edge, so inserting/removing the badge moves both panels.
+            <span aria-hidden={ompServiceTier !== "priority"} className={cx("w-7 shrink-0 text-center text-text-primary", ompServiceTier !== "priority" && "invisible")}>Fast</span>
+          )}
         </span>
       </AriaButton>
 
