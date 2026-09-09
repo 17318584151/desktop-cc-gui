@@ -10,51 +10,14 @@ import { AgentThinking } from "@/components/application/agent-thinking/agent-thi
 import { useThrottled } from "@/hooks/use-throttled";
 import { useCopied } from "@/hooks/use-copied";
 import { MessageImages } from "./MessageImages";
-import { MessageAnchorRail, type MessageAnchor } from "./MessageAnchorRail";
+import { MessageAnchorRail } from "./MessageAnchorRail";
+import { createAnchorRowsBuilder } from "./timeline-anchors";
 import { buildRows, collectToolKeys, rowKey, type TimelineRow } from "./timeline-rows";
 import { ProcessDisclosure } from "./ProcessDisclosure";
 import { useScrollFollow, useTailPin } from "./use-scroll-follow";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { useAnchorRailScroll } from "./use-anchor-rail-scroll";
 import { useLoadEarlier } from "./use-load-earlier";
-
-const ANCHOR_TITLE_MAX_LENGTH = 60;
-const ANCHOR_DESCRIPTION_MAX_LENGTH = 160;
-
-/** Bounded plain-text preview copy for one anchor: first line is the title,
- * the rest folds into a short description (reference: deriveAnchorPreviewCopy). */
-type AnchorRow = MessageAnchor & { rowIndex: number };
-
-function buildAnchorRows(rows: TimelineRow[]): AnchorRow[] {
-  const anchors: AnchorRow[] = [];
-  rows.forEach((row, rowIndex) => {
-    if (row.kind !== "msg" || row.message.role !== "user") return;
-    const normalizedLines = row.message.text
-      .split("\n")
-      .map((line) => line.trim().replace(/\s+/g, " "))
-      .filter(Boolean);
-    const firstLine = normalizedLines[0] ?? "";
-    const title =
-      firstLine.length > ANCHOR_TITLE_MAX_LENGTH
-        ? `${firstLine.slice(0, ANCHOR_TITLE_MAX_LENGTH)}…`
-        : firstLine;
-    const descriptionSource =
-      normalizedLines.length > 1
-        ? normalizedLines.slice(1).join(" ")
-        : firstLine.slice(ANCHOR_TITLE_MAX_LENGTH).trim();
-    const description =
-      descriptionSource.length > ANCHOR_DESCRIPTION_MAX_LENGTH
-        ? `${descriptionSource.slice(0, ANCHOR_DESCRIPTION_MAX_LENGTH)}…`
-        : descriptionSource;
-    anchors.push({
-      id: `u-${row.message.seq}`,
-      rowIndex,
-      title,
-      ...(description ? { description } : {}),
-    });
-  });
-  return anchors;
-}
 
 const TimelineRowView = memo(function TimelineRowView({
   row,
@@ -236,7 +199,8 @@ export const MessageTimeline = memo(function MessageTimeline({
   const items = session.messages;
   const rows = useMemo(() => buildRows(items), [items]);
   // Anchor rail: one dash per user message (reference: messageAnchors).
-  const anchors = useMemo(() => buildAnchorRows(rows), [rows]);
+  const buildAnchorRows = useMemo(createAnchorRowsBuilder, []);
+  const anchors = useMemo(() => buildAnchorRows(rows), [buildAnchorRows, rows]);
   // Per-timeline, not a module singleton: ChatConversation remounts this
   // with key={sessionKey}, so a tab switch gets a fresh set. Prime from
   // the first snapshot that already has rows so history / tab-open does
