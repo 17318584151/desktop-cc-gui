@@ -33,3 +33,7 @@ skills-lock.json
 boardui.dev.env
 CLAUDE.md
 .codegraph
+artifacts/
+artifact.zip
+smoke*.png
+rust-test.log

@@ -1,11 +1,6 @@
 name: Build Windows artifact
 
-on:
-  push:
-    # A full Windows Tauri build costs 20–40 min of runner time — only run
-    # it for the release line and feature/fix branches, not every WIP push.
-    branches: [v1.0.0, "feat/**", "fix/**"]
-  workflow_dispatch:
+on: [push]
 
 jobs:
   build-windows:
@@ -25,7 +20,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
