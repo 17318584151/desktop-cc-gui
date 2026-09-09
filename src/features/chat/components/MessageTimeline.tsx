@@ -159,7 +159,7 @@ const MessageRow = memo(function MessageRow({
   // flush scales linearly with reply length (~30ms at 32KB) and starves the
   // main thread, so the parse is throttled. Settled rows never change and
   // render as-is.
-  const text = useThrottled(message.text, message.live ? 120 : 0);
+  const text = useThrottled(message.text, message.live ? 64 : 0);
   if (message.role === "user") {
     return (
       <div className="-mr-1.5 ml-auto flex w-fit max-w-[85%] flex-col rounded-xl bg-bubble-user px-3.5 py-2.5 text-left text-body-regular whitespace-pre-wrap break-words text-text-white">

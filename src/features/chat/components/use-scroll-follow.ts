@@ -153,7 +153,9 @@ export function useTailPin({
   // and text growth.
   useEffect(() => {
     if (!scrollRef.current || !streaming || !isFollowing()) return;
-    const frame = requestAnimationFrame(scrollToBottom);
+    const frame = requestAnimationFrame(() => {
+      if (isFollowing()) scrollToBottom();
+    });
     return () => cancelAnimationFrame(frame);
   }, [items, streaming, count, isFollowing, scrollToBottom, scrollRef]);
 

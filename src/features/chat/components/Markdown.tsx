@@ -1,6 +1,10 @@
-import { isValidElement, memo, useMemo, useState, type ReactNode } from "react";
+import { isValidElement, memo, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useReducedMotion } from "motion/react";
+import { StreamReveal } from "./stream-reveal";
+import { RevealText } from "./reveal-text";
+import { createRevealPlan } from "./reveal-plan";
 import { createCachedHighlighter } from "./cached-highlight";
 import { openExternal } from "@/lib/platform";
 import { useTranslation } from "react-i18next";
@@ -135,14 +139,40 @@ export default memo(function Markdown({
   streaming?: boolean;
 }) {
   const cachedHighlight = useMemo(() => createCachedHighlighter(), []);
+  // Historical rows need no reveal spans/subscriptions. Once a live row uses
+  // them, retain its DOM shape on settle so selection does not jump.
+  const [revealEnabled, setRevealEnabled] = useState(streaming);
+  if (streaming && !revealEnabled) setRevealEnabled(true);
+  // Show already-received text on mount (including virtualizer remounts);
+  // smooth only subsequent arrivals, never replay a paragraph from empty.
+  const controller = useMemo(() => new StreamReveal(false), []);
+  const plan = useMemo(createRevealPlan, [text]);
+  const reducedMotion = useReducedMotion();
   const rehypePlugins = useMemo(
-    () => [[cachedHighlight, { streaming }] as [typeof cachedHighlight, { streaming: boolean }]],
-    [cachedHighlight, streaming],
+    () => [[cachedHighlight, { streaming }] as [typeof cachedHighlight, { streaming: boolean }], ...(revealEnabled ? [plan.plugin] : [])],
+    [cachedHighlight, streaming, plan, revealEnabled],
   );
+  useLayoutEffect(() => {
+    controller.update(plan.text, streaming && !reducedMotion && !document.hidden);
+  }, [controller, plan, streaming, reducedMotion]);
+  useLayoutEffect(() => {
+    const onVisibility = () => { if (document.hidden) controller.finish(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      controller.cancel();
+    };
+  }, [controller]);
   // Stable components map: a new reference makes ReactMarkdown discard its
   // HAST tree and re-parse the whole document.
   const components = useMemo<Components>(
     () => ({
+      span: ({ node, className, children }) => {
+        const start = node?.properties.dataStreamStart;
+        return typeof start === "number" && typeof children === "string"
+          ? <RevealText controller={controller} start={start}>{children}</RevealText>
+          : <span className={className}>{children}</span>;
+      },
       a: ({ href, children }) => {
         const url = href ?? "";
         if (isFileLinkUrl(url)) {
@@ -182,7 +212,7 @@ export default memo(function Markdown({
       code: ({ className, children }) => {
         // Block code (inside <pre>) carries the hljs class — leave it alone.
         if (className) return <code className={className}>{children}</code>;
-        const value = String(children ?? "").trim();
+        const value = extractText(children).trim();
         if (!value || !isLinkableFilePath(value)) return <code>{children}</code>;
         return (
           <FileLink href={toFileLink(value)} path={value} workspacePath={workspacePath}>
@@ -192,7 +222,7 @@ export default memo(function Markdown({
       },
       pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
     }),
-    [workspacePath],
+    [workspacePath, controller],
   );
 
   return (

@@ -8,6 +8,7 @@ import { cx } from "@/utils/cx";
 import { SOFT_EASE } from "@/components/application/agent-log/agent-log-motion";
 import { StepRow, type TaskListChip } from "@/components/application/task-list/task-list";
 import { getFileTreeIconSvg } from "@/features/files/fileIcons";
+import { SmoothThinkingText } from "./reveal-text";
 import { markToolKeys, toolEntranceKey, type ProcessItem } from "./timeline-rows";
 
 /** Classify a tool-call label (tool name or shell command) into a type chip. */
@@ -135,7 +136,7 @@ function ThinkingSurface({
         </div>
       )}
       <div className="ml-2 whitespace-pre-wrap break-words border-l border-foreground-icon-quaternary pl-4 text-[12px] leading-[1.65] text-text-tertiary">
-        {live ? text.slice(-2000) : text}
+        {live ? <SmoothThinkingText text={text} /> : text}
       </div>
     </div>
   );

@@ -83,3 +83,20 @@ test("cache eviction and oversized blocks retain identical output", () => {
   }
   assert.equal(calls, 4);
 });
+
+test("reveal wrapping preserves code cache, tables, inline paths and visible text", async () => {
+  const { createRevealPlan } = await import("../src/features/chat/components/reveal-plan.ts");
+  const cached = createCachedHighlighter();
+  const text = "**你好 👩‍💻** `src/app.ts`\n\n```js\nconst x = '<script>';\n```\n\n|a|b|\n|-|-|\n|1|2|\n\n[link](https://example.com)";
+  const plan = createRevealPlan();
+  const html = renderToStaticMarkup(createElement(Markdown, {
+    remarkPlugins: [remarkGfm], rehypePlugins: [[cached, {streaming:false}], plan.plugin], children:text,
+  }));
+  const unwrapped = html.replace(/<span data-stream-start="\d+">([^<]*(?:&[^;]+;[^<]*)*)<\/span>/g, "$1");
+  assert.equal(unwrapped, reference(text));
+  assert.ok(plan.text.includes("你好 👩‍💻"));
+  assert.ok(plan.text.includes("src/app.ts"));
+  assert.ok(plan.text.includes("const x = '<script>';"));
+  // Wrapping must not modify shared highlighted children in the cache.
+  assert.equal(render(text, cached), reference(text));
+});
