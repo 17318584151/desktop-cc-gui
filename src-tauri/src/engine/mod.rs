@@ -15,7 +15,7 @@ use crate::event_sink;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
@@ -46,6 +46,11 @@ pub struct SendRequest {
     /// resolves it against the modes it can actually honor at spawn (see
     /// `Engine::resolve_permission`).
     pub permission: Option<String>,
+    /// User-granted extra directories (db `granted_roots`); claude launches
+    /// pass them as `--add-dir` so reads outside the workspace stop hitting
+    /// headless permission denials. Engines without an equivalent flag
+    /// ignore them.
+    pub additional_dirs: Vec<String>,
 }
 
 pub struct BuiltCommand {
@@ -83,6 +88,15 @@ pub enum EngineEvent {
     /// Non-terminal engine notice (e.g. an upstream 429 the CLI is
     /// retrying): surfaced to the UI, but the turn is still running.
     Warn(String),
+    /// A tool call was denied by the CLI's permission system (headless mode
+    /// cannot prompt). `path` is the denied absolute path when the denial
+    /// text or tool input carries one — the UI offers a directory grant for
+    /// it; `tool` is the denied tool name when known.
+    PermissionDenied {
+        tool: Option<String>,
+        path: Option<String>,
+        message: String,
+    },
     /// Turn finished successfully.
     Done {
         session_id: Option<String>,
@@ -554,6 +568,7 @@ fn prepare_launch(
     model: Option<String>,
     effort: Option<String>,
     permission: Option<String>,
+    additional_dirs: Vec<String>,
 ) -> Result<Launch, String> {
     let engine_impl = engine_by_id(engine).ok_or_else(|| format!("unknown engine: {engine}"))?;
     // Channels live in each CLI's native config file (provider_files); the
@@ -581,6 +596,14 @@ fn prepare_launch(
             None
         },
         permission: permission.filter(|p| !p.trim().is_empty()),
+        // Cap defensively: the list lands on a command line, and a
+        // hand-edited db should not produce an argv bomb.
+        additional_dirs: additional_dirs
+            .into_iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty() && Path::new(d).is_absolute())
+            .take(32)
+            .collect(),
     };
     let bin = engine_bin(&settings, engine);
     let built = engine_impl.build_command(&req, &bin)?;
@@ -775,6 +798,21 @@ impl RunContext {
                     Value::String(error),
                 );
             }
+            EngineEvent::PermissionDenied {
+                tool,
+                path,
+                message,
+            } => {
+                // Not terminal either: the CLI works around the denial and
+                // the turn continues — the UI offers the grant alongside.
+                state.push(
+                    &self.sink,
+                    &self.run_id,
+                    &self.engine_id,
+                    "permission_denied",
+                    serde_json::json!({ "tool": tool, "path": path, "message": message }),
+                );
+            }
             EngineEvent::Done { session_id, usage } => {
                 state.saw_done = true;
                 if let Some(id) = session_id {
@@ -906,6 +944,10 @@ pub async fn send_message(
         model,
         effort,
         permission,
+        // Every user-granted directory rides along as a launch argument, so
+        // a grant approved mid-conversation takes effect on the next send
+        // (each send is a fresh process).
+        state.db.granted_roots().unwrap_or_default(),
     )?;
 
     let mut command = launch.built.command;
@@ -1009,6 +1051,7 @@ mod permission_tests {
             effort: None,
             service_tier: None,
             permission: permission.map(str::to_string),
+            additional_dirs: Vec::new(),
         }
     }
 
@@ -1192,6 +1235,30 @@ mod permission_tests {
         let manual = argv(&e, &req(Some("manual")));
         assert!(!manual.contains(&"--yolo".to_string()));
         assert!(!manual.contains(&"--plan".to_string()));
+    }
+
+    #[test]
+    fn claude_passes_granted_dirs_as_add_dir() {
+        let e = claude::ClaudeEngine;
+        let mut r = req(Some("auto"));
+        // Workspace itself, blanks and duplicates must not reach argv.
+        r.additional_dirs = vec![
+            "/data/shared".to_string(),
+            "/tmp".to_string(),
+            "   ".to_string(),
+            "/data/shared".to_string(),
+        ];
+        let args = argv(&e, &r);
+        let pairs: Vec<&[String]> = args
+            .windows(2)
+            .filter(|w| w[0] == "--add-dir")
+            .collect();
+        assert_eq!(pairs.len(), 1, "{args:?}");
+        assert_eq!(pairs[0][1], "/data/shared");
+
+        // Other engines have no equivalent flag: the field stays inert.
+        let codex_args = argv(&codex::CodexEngine, &r);
+        assert!(!codex_args.iter().any(|a| a == "--add-dir"));
     }
 
     #[test]

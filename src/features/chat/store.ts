@@ -46,6 +46,7 @@ import {
   firstLineTitle,
   handleEngineEvents,
   optimisticMeta,
+  patchGrantBySeq,
   upsertSessionMetaInto,
 } from "./store/engine-events";
 
@@ -235,6 +236,12 @@ export interface ChatStore {
   dismissSessionError: (key: string) => void;
   loadEarlier: () => Promise<void>;
   send: (prompt: string, images: string[]) => Promise<void>;
+  /** Answer a permission-denial grant card: persist the directory grant
+   * (accept) or mark the card declined. */
+  respondToGrant: (key: string, seq: number, accept: boolean) => Promise<void>;
+  /** Re-send the session's last user message (grant card's one-click retry
+   * after a directory grant takes effect on the next launch). */
+  resendLastUser: (key: string) => Promise<void>;
   /** Enqueue a message on the active session while a turn streams. */
   queueMessage: (text: string, images: string[]) => void;
   /** Drop a queued message from the active session. */
@@ -1113,6 +1120,41 @@ export const useChatStore = create<ChatStore>((set, get) => {
     send: async (prompt, images) => {
       const { active } = get();
       if (active) await sendPrompt(active, prompt, images);
+    },
+
+    respondToGrant: async (key, seq, accept) => {
+      const message = get().bySession[key]?.messages.find((m) => m.seq === seq);
+      if (!message || message.role !== "grant" || message.grant?.status !== "pending") {
+        return;
+      }
+      if (!accept) {
+        patchGrantBySeq(set, key, seq, () => ({ status: "declined" }));
+        return;
+      }
+      const path = message.path;
+      if (!path) return;
+      try {
+        await ipc.grantRoot(path);
+        patchGrantBySeq(set, key, seq, (grant) => ({
+          ...grant,
+          status: "granted",
+        }));
+      } catch (error) {
+        patchSession(set, key, { error: errorText(error) });
+      }
+    },
+
+    resendLastUser: async (key) => {
+      const s = get();
+      if (s.streamingByKey[key]) return; // a turn is already running
+      const messages = s.bySession[key]?.messages ?? [];
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      if (!lastUser) return;
+      const tab =
+        s.openTabs.find(
+          (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+        ) ?? s.active;
+      if (tab) await sendPrompt(tab, lastUser.text, lastUser.images ?? []);
     },
 
     queueMessage: (text, images) => {

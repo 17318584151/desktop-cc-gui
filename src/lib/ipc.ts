@@ -46,6 +46,14 @@ export interface Message {
   model?: string | null;
   /** True while the row belongs to the in-flight stream and may still grow. */
   live?: boolean;
+  /** Permission-denial card state (role "grant"): the CLI denied a tool call
+   * targeting `path`; pending until the user answers the card. `dir` is the
+   * directory a grant would cover (grant_scope preview). Grant rows are
+   * ephemeral UI — they are not part of the CLI's session history. */
+  grant?: {
+    status: "pending" | "granted" | "declined";
+    dir?: string | null;
+  };
   /** Image attachments: data URLs render directly, absolute paths load via readFile. */
   images?: string[];
 }
@@ -478,6 +486,12 @@ export const ipc = {
     withGrantRetry(() => invoke<FileIndexEntry[]>("list_file_index", { path })),
   // granted directories (desktop-only commands; the settings list hides on web)
   listGrantedRoots: () => invoke<string[]>("list_granted_roots"),
+  /** Directory a grant for `path` would cover (path itself when a dir, else
+   * its parent) — the grant card shows this before the user approves. */
+  grantScope: (path: string) => invoke<string>("grant_scope", { path }),
+  /** Persist a user-approved directory grant; subsequent claude launches
+   * receive it as --add-dir. */
+  grantRoot: (path: string) => invoke<void>("grant_root", { path }),
   revokeGrantedRoot: (path: string) => invoke<void>("revoke_granted_root", { path }),
   // git
   gitStatus: (path: string) => invoke<GitStatus>("git_status", { path }),

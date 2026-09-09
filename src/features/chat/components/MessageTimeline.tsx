@@ -10,6 +10,7 @@ import { AgentThinking } from "@/components/application/agent-thinking/agent-thi
 import { streamParseInterval, useThrottled } from "@/hooks/use-throttled";
 import { useCopied } from "@/hooks/use-copied";
 import { MessageImages } from "./MessageImages";
+import { GrantCard } from "./GrantCard";
 import { MessageAnchorRail } from "./MessageAnchorRail";
 import { createAnchorRowsBuilder } from "./timeline-anchors";
 import { buildRows, collectToolKeys, rowKey, type TimelineRow } from "./timeline-rows";
@@ -176,6 +177,10 @@ const MessageRow = memo(function MessageRow({
   // main thread, so the parse is throttled. Settled rows never change and
   // render as-is.
   const text = useThrottled(message.text, message.live ? streamParseInterval(message.text.length) : 0);
+  if (message.role === "grant") {
+    // Permission-denial card: actionable directory grant, not a chat bubble.
+    return <GrantCard message={message} />;
+  }
   if (message.role === "user") {
     return (
       <div className="-mr-1.5 ml-auto flex w-fit max-w-[85%] flex-col rounded-xl bg-bubble-user px-3.5 py-2.5 text-left text-body-regular whitespace-pre-wrap break-words text-text-white">

@@ -1,4 +1,4 @@
-import { ipc, type SessionMeta, type TodosPayload } from "@/lib/ipc";
+import { ipc, type Message, type SessionMeta, type TodosPayload } from "@/lib/ipc";
 import type { EngineEventPayload } from "@/lib/events";
 import { dedupeTabs, persistTabs, sessionKey } from "./persistence";
 import {
@@ -301,6 +301,96 @@ function onError(
   deps.markUnseenIfBackground(key);
 }
 
+/** Patch the grant state of one card row, located by its message seq. */
+export function patchGrantBySeq(
+  set: (fn: (s: ChatStore) => Partial<ChatStore>) => void,
+  key: string,
+  seq: number,
+  patch: (grant: NonNullable<Message["grant"]>) => NonNullable<Message["grant"]>,
+) {
+  set((s) => {
+    const cur = s.bySession[key];
+    if (!cur) return {};
+    let changed = false;
+    const messages = cur.messages.map((m) => {
+      if (m.seq !== seq || m.role !== "grant" || !m.grant) return m;
+      changed = true;
+      return { ...m, grant: patch(m.grant) };
+    });
+    if (!changed) return {};
+    return { bySession: { ...s.bySession, [key]: { ...cur, messages } } };
+  });
+}
+
+/** A permission denial arrives mid-turn (tool_result) and again in the
+ * final result's permission_denials; one card per denied path. The card is
+ * the actionable surface: grant → next launch gets --add-dir. */
+function onPermissionDenied(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  const data = event.data as {
+    tool?: string | null;
+    path?: string | null;
+    message?: string;
+  };
+  const path = data.path?.trim() || null;
+  const message = (data.message ?? "").trim();
+  // Fold unflushed chunks first so the card lands after the streamed text.
+  const pending = drainPending(key);
+  let rowSeq = -1;
+  deps.set((s) => {
+    const cur = s.bySession[key] ?? EMPTY_SESSION;
+    const base = pending
+      ? applyStreamParts(
+          cur.messages,
+          pending.parts,
+          pending.model ?? (deps.get().models[event.engine] || null),
+        )
+      : cur.messages;
+    const messages = settleLiveRows(base);
+    const dup = messages.some(
+      (m) =>
+        m.role === "grant" &&
+        (path ? m.path === path : m.text === message) &&
+        m.grant?.status !== "declined",
+    );
+    if (dup) return {};
+    const seq = messages.length ? messages[messages.length - 1].seq + 1 : 1;
+    rowSeq = seq;
+    return {
+      bySession: {
+        ...s.bySession,
+        [key]: {
+          ...cur,
+          messages: [
+            ...messages,
+            {
+              role: "grant",
+              text: message,
+              path,
+              ts: new Date().toISOString(),
+              seq,
+              grant: { status: "pending" as const },
+            },
+          ],
+        },
+      },
+    };
+  });
+  // Preview the directory a grant would cover; failure is non-fatal — the
+  // backend re-resolves inside grant_root.
+  if (path && rowSeq > 0) {
+    void ipc
+      .grantScope(path)
+      .then((dir) =>
+        patchGrantBySeq(deps.set, key, rowSeq, (grant) => ({ ...grant, dir })),
+      )
+      .catch(() => {});
+  }
+}
+
 function onWarn(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   // Non-terminal notice (e.g. an upstream 429 the CLI is retrying): show the
   // banner, but the turn is still alive — streaming state, unflushed chunks,
@@ -410,6 +500,9 @@ export function handleEngineEvents(
         break;
       case "warn":
         onWarn(event, key, deps);
+        break;
+      case "permission_denied":
+        onPermissionDenied(event, key, deps);
         break;
       case "done":
         onDone(event, key, deps);
