@@ -18,7 +18,6 @@ it("offers inherit/standard/Fast and saves explicit priority", async () => {
   expect(Array.from(select.options, o => o.value)).toEqual(["inherit", "default", "priority"]);
   await act(async () => { select.value = "priority"; select.dispatchEvent(new Event("change", { bubbles: true })); });
   expect(save).toHaveBeenCalledWith("priority");
-  expect(node.textContent).toContain("chat.ompSpeedHint");
 });
 it("disables unsupported models without displaying remembered Fast as active", async () => {
   await act(async () => root.render(<OmpSpeedSection model="anthropic/claude" value="priority" onChange={vi.fn()} />));

@@ -33,7 +33,7 @@ export function OmpSpeedSection({ model, value, onChange }: {
         <option value="priority">Fast</option>
       </select>
     </label>
-    <p className="mt-1 text-body-2-regular text-text-tertiary">{t(supported ? "chat.ompSpeedHint" : "chat.ompSpeedUnsupported")}</p>
+    {!supported && <p className="mt-1 text-body-2-regular text-text-tertiary">{t("chat.ompSpeedUnsupported")}</p>}
     {error && <p role="alert" className="mt-1 text-body-2-regular text-text-primary">{t("chat.ompSpeedSaveError")}</p>}
   </div>;
 }
