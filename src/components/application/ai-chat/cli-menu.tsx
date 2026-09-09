@@ -685,7 +685,15 @@ export function CliMenu({
           <span aria-hidden className="shrink-0 text-text-tertiary max-md:hidden">
             ·
           </span>
-          <span className="shrink-0 max-md:hidden">{t(EFFORT_LABEL_KEYS[triggerEffort])}</span>
+          {/* Stack every localized label in one grid cell so the widest
+              level reserves space without hard-coded English/Chinese widths. */}
+          <span className="inline-grid shrink-0 max-md:hidden">
+            {EFFORT_LEVELS.map(level => (
+              <span key={level} aria-hidden={level !== triggerEffort} className={cx("col-start-1 row-start-1", level !== triggerEffort && "invisible")}>
+                {t(EFFORT_LABEL_KEYS[level])}
+              </span>
+            ))}
+          </span>
           {value === "omp" && supportsOmpFastMode(models[value] ?? "") && (
             // Preserve the trigger's width: this popover is anchored to its
             // right edge, so inserting/removing the badge moves both panels.
