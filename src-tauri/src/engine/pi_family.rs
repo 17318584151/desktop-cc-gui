@@ -139,7 +139,7 @@ fn parse_pi_family_line(line: &str, out: &mut Vec<EngineEvent>) {
     let event_type = envelope.kind.as_str();
     if !matches!(
         event_type,
-        "session" | "tool_execution_start" | "message_end" | "turn_end" | "agent_end"
+        "session" | "tool_execution_start" | "tool_execution_end" | "message_end" | "turn_end" | "agent_end"
     ) {
         return;
     }
@@ -156,14 +156,18 @@ fn parse_pi_family_line(line: &str, out: &mut Vec<EngineEvent>) {
                 .and_then(Value::as_str)
                 .unwrap_or("tool");
             let intent = value.get("intent").and_then(Value::as_str);
-            let path = value.get("args").and_then(super::tool_path_arg);
-            let todos = value.get("args").and_then(super::parse_todo_args);
-            out.push(EngineEvent::Message {
-                role: "tool".to_string(),
-                text: tool_label(name, intent),
-                path,
-                todos,
-            });
+            out.push(super::tool_call_message(
+                tool_label(name, intent),
+                value.get("args"),
+            ));
+        }
+        "tool_execution_end" => {
+            let name = value
+                .get("toolName")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let result = value.get("result");
+            out.push(super::tool_result_patch(name, result));
         }
         "message_end" => {
             if let Some(usage) = value
@@ -290,16 +294,25 @@ mod tests {
         parse_pi_family_line(&line, &mut out);
         match &out[0] {
             EngineEvent::Message {
-                role, text, path, ..
+                role,
+                text,
+                path,
+                args,
+                ..
             } => {
                 assert_eq!(role, "tool");
                 assert_eq!(text, "edit · Adding chrome token");
                 assert_eq!(path.as_deref(), Some("src/app.tsx"));
+                assert_eq!(
+                    args,
+                    &Some(serde_json::json!({"path": "src/app.tsx", "input": {}}))
+                );
             }
             _ => panic!("expected tool message"),
         }
 
-        // bash-style args carry no path key -> None.
+        // bash-style args carry no path key -> None. No file chip, but the
+        // command still lands in `args` for the expandable panel.
         let line = serde_json::json!({
             "type": "tool_execution_start",
             "toolCallId": "tool_2",
@@ -310,7 +323,10 @@ mod tests {
         let mut out = Vec::new();
         parse_pi_family_line(&line, &mut out);
         match &out[0] {
-            EngineEvent::Message { path, .. } => assert_eq!(*path, None),
+            EngineEvent::Message { path, args, .. } => {
+                assert_eq!(*path, None);
+                assert_eq!(args, &Some(serde_json::json!({"command": "ls"})));
+            }
             _ => panic!("expected tool message"),
         }
     }

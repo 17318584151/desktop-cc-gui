@@ -10,6 +10,7 @@ import { StepRow, type TaskListChip } from "@/components/application/task-list/t
 import { getFileTreeIconSvg } from "@/features/files/fileIcons";
 import { SmoothThinkingText } from "./reveal-text";
 import { markToolKeys, toolEntranceKey, type ProcessItem } from "./timeline-rows";
+import { ToolPayloadViewer } from "./ToolPayloadViewer";
 
 /** Classify a tool-call label (tool name or shell command) into a type chip. */
 function toolTypeKey(text: string): string {
@@ -62,7 +63,17 @@ function fileChipFor(path: string | null | undefined): TaskListChip | null {
 
 type ProcessSection =
   | { type: "thinking"; text: string; live?: boolean; firstIndex: number }
-  | { type: "tools"; calls: { text: string; path: string | null; index: number }[]; firstIndex: number };
+  | {
+      type: "tools";
+      calls: {
+        text: string;
+        path: string | null;
+        args?: unknown;
+        result?: unknown;
+        index: number;
+      }[];
+      firstIndex: number;
+    };
 
 function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
   const sections: ProcessSection[] = [];
@@ -71,7 +82,13 @@ function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
       sections.push({ type: "thinking", text: item.text, live: item.live, firstIndex: index });
     } else {
       const last = sections[sections.length - 1];
-      const call = { text: item.text, path: item.path ?? null, index };
+      const call = {
+        text: item.text,
+        path: item.path ?? null,
+        args: item.args,
+        result: item.result,
+        index,
+      };
       if (last?.type === "tools") last.calls.push(call);
       else sections.push({ type: "tools", calls: [call], firstIndex: index });
     }
@@ -85,17 +102,23 @@ const FrozenStepRow = memo(function FrozenStepRow({
   play,
   text,
   path,
+  args,
+  result,
   first,
   last,
 }: {
   play: boolean;
   text: string;
   path: string | null;
+  args?: unknown;
+  result?: unknown;
   first: boolean;
   last: boolean;
 }) {
   const reduceRef = useRef(!play);
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const hasPayload = args != null || result != null;
   const fileChip = fileChipFor(path);
   const step = {
     label: text,
@@ -111,7 +134,36 @@ const FrozenStepRow = memo(function FrozenStepRow({
       first={first}
       last={last}
       reduce={reduceRef.current}
-    />
+    >
+      {hasPayload ? (
+        <div className="-mt-0.5 mb-1">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={open ? t("chat.toolCallCollapse") : t("chat.toolCallExpand")}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((v) => !v);
+            }}
+            className="flex cursor-pointer items-center gap-0.5 text-caption-1-regular text-text-tertiary transition-colors hover:text-text-secondary"
+          >
+            <ChevronRight
+              className={cx("size-3 transition-transform duration-150", open && "rotate-90")}
+              aria-hidden
+            />
+            <span>{t("chat.toolCallArgs")}</span>
+          </button>
+          {open ? (
+            <ToolPayloadViewer
+              toolName={text}
+              path={path}
+              args={args}
+              result={result}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </StepRow>
   );
 });
 
@@ -227,6 +279,8 @@ function ProcessDisclosureBody({
                   play={play}
                   text={call.text}
                   path={call.path}
+                  args={call.args}
+                  result={call.result}
                   first={j === 0}
                   last={j === section.calls.length - 1}
                 />

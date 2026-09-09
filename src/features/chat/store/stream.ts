@@ -65,6 +65,7 @@ interface StreamPart {
 }
 interface PendingStream {
   model: string | null;
+  effort?: string | null;
   parts: StreamPart[];
 }
 /** sessionKey -> ordered stream chunks not yet flushed into rows */
@@ -82,6 +83,7 @@ export function applyStreamParts(
   messages: Message[],
   parts: StreamPart[],
   model: string | null,
+  effort: string | null = null,
 ): Message[] {
   let out = messages;
   for (const part of parts) {
@@ -101,7 +103,7 @@ export function applyStreamParts(
       text: part.text,
       ts: new Date().toISOString(),
       live: true,
-      ...(role === "assistant" ? { model } : {}),
+      ...(role === "assistant" ? { model, effort } : {}),
     });
   }
   return out;
@@ -119,8 +121,11 @@ export function bufferStreamPart(
   kind: StreamPart["kind"],
   text: string,
   model: string | null,
+  effort: string | null = null,
 ) {
-  const pending = pendingStreams.get(key) ?? { model, parts: [] };
+  const pending = pendingStreams.get(key) ?? { model, effort, parts: [] };
+  if (!pending.model && model) pending.model = model;
+  if (!pending.effort && effort) pending.effort = effort;
   const last = pending.parts[pending.parts.length - 1];
   if (last?.kind === kind) last.text += text;
   else pending.parts.push({ kind, text });
@@ -164,6 +169,9 @@ export function appendToolMessage<T extends BySessionSlice>(
   model: string | null,
   path: string | null = null,
   todos: TodosPayload | null = null,
+  args?: unknown,
+  patch = false,
+  result?: unknown,
 ) {
   const pending = drainPending(key);
   set((s) => {
@@ -172,6 +180,41 @@ export function appendToolMessage<T extends BySessionSlice>(
       ? applyStreamParts(prev.messages, pending.parts, pending.model ?? model)
       : prev.messages;
     messages = settleLiveRows(messages);
+    // If this is a result patch, attach to the matching or latest tool message
+    if (patch && result !== undefined) {
+      const target = text
+        ? messages.slice().reverse().find((m) => m.role === "tool" && (!text || m.text.includes(text)))
+        : messages.slice().reverse().find((m) => m.role === "tool");
+      if (target) {
+        messages = messages.map((m) =>
+          m.seq === target.seq ? { ...m, result } : m,
+        );
+      }
+      return { bySession: { ...s.bySession, [key]: { ...prev, messages } } } as Partial<T>;
+    }
+    // Claude streams the tool name first, then patches args onto that row.
+    // Match the oldest still-empty same-name tool so parallel Reads stay in
+    // order. Unmatched patches are dropped — appending would duplicate.
+    if (patch) {
+      const target = messages.find(
+        (m) => m.role === "tool" && m.text === text && m.args == null,
+      );
+      if (!target) {
+        return { bySession: { ...s.bySession, [key]: { ...prev, messages } } } as Partial<T>;
+      }
+      messages = messages.map((m) =>
+        m.seq === target.seq
+          ? {
+              ...m,
+              path: path ?? m.path,
+              ...(todos ? { todos } : {}),
+              ...(args !== undefined ? { args } : {}),
+              ...(result !== undefined ? { result } : {}),
+            }
+          : m,
+      );
+      return { bySession: { ...s.bySession, [key]: { ...prev, messages } } } as Partial<T>;
+    }
     const seq = messages.length ? messages[messages.length - 1].seq + 1 : 1;
     messages = [
       ...messages,
@@ -182,6 +225,8 @@ export function appendToolMessage<T extends BySessionSlice>(
         ts: new Date().toISOString(),
         seq,
         ...(todos ? { todos } : {}),
+        ...(args !== undefined ? { args } : {}),
+        ...(result !== undefined ? { result } : {}),
       },
     ];
     return { bySession: { ...s.bySession, [key]: { ...prev, messages } } } as Partial<T>;

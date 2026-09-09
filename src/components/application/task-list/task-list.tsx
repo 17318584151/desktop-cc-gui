@@ -60,12 +60,14 @@ export function StepRow({
   first,
   last,
   reduce,
+  children,
 }: {
   step: TaskListStep;
   active: boolean;
   first: boolean;
   last: boolean;
   reduce: boolean;
+  children?: ReactNode;
 }) {
   return (
     <LogRow first={first} last={last} reduce={reduce}>
@@ -75,6 +77,7 @@ export function StepRow({
           <Chip key={chip.label} chip={chip} />
         ))}
       </span>
+      {children}
     </LogRow>
   );
 }
