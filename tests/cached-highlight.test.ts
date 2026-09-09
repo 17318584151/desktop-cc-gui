@@ -100,3 +100,17 @@ test("reveal wrapping preserves code cache, tables, inline paths and visible tex
   // Wrapping must not modify shared highlighted children in the cache.
   assert.equal(render(text, cached), reference(text));
 });
+
+test("external mutating rehype plugins cannot accumulate changes with caching disabled", () => {
+  const highlighter = createCachedHighlighter(undefined, { entries: 0, characters: 256_000 });
+  const mutate = () => (tree: any) => {
+    const code = tree.children.find((n: any) => n.tagName === "pre").children[0];
+    code.children.push({ type: "text", value: " plugin suffix" });
+  };
+  const renderWithPlugin = () => renderToStaticMarkup(createElement(Markdown, {
+    rehypePlugins: [highlighter, mutate], children: "```js\nconst x = 1;\n```",
+  }));
+  const first = renderWithPlugin();
+  assert.equal(renderWithPlugin(), first);
+  assert.equal((first.match(/plugin suffix/g) ?? []).length, 1);
+});

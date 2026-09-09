@@ -1,4 +1,4 @@
-import { isValidElement, memo, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { isValidElement, memo, useLayoutEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useReducedMotion } from "motion/react";
@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import Copy from "lucide-react/dist/esm/icons/copy";
 import Check from "lucide-react/dist/esm/icons/check";
 import { useFilesStore } from "@/features/files/store";
+import { markdownRegistry, useRegistry } from "@ccgui/plugin-sdk";
 import { useCopied } from "@/hooks/use-copied";
 import { FileLinkContextMenu } from "./FileLinkContextMenu";
 import {
@@ -22,6 +23,11 @@ import {
 } from "@/lib/fileLinks";
 
 const REMARK_PLUGINS = [remarkGfm];
+/** ReactMarkdown's plugin-list prop type, derived here instead of importing
+ * `PluggableList` from unified (a transitive dep we don't declare). */
+type PluginListProp = NonNullable<
+  ComponentProps<typeof ReactMarkdown>["remarkPlugins"]
+>;
 
 function openFileFromChat(rawPath: string, workspacePath: string) {
   const path = resolveFilePath(rawPath, workspacePath);
@@ -138,7 +144,13 @@ export default memo(function Markdown({
   workspacePath: string;
   streaming?: boolean;
 }) {
-  const cachedHighlight = useMemo(() => createCachedHighlighter(), []);
+  const contributions = useRegistry(markdownRegistry);
+  // External rehype plugins may mutate highlighted nodes in place. Avoid
+  // sharing cached subtrees with that pipeline so mutations cannot accumulate.
+  const cachedHighlight = useMemo(() => createCachedHighlighter(undefined, {
+    entries: contributions.some(c => c.rehypePlugins?.length) ? 0 : 32,
+    characters: 256_000,
+  }), [contributions]);
   // Historical rows need no reveal spans/subscriptions. Once a live row uses
   // them, retain its DOM shape on settle so selection does not jump.
   const [revealEnabled, setRevealEnabled] = useState(streaming);
@@ -146,12 +158,8 @@ export default memo(function Markdown({
   // Show already-received text on mount (including virtualizer remounts);
   // smooth only subsequent arrivals, never replay a paragraph from empty.
   const controller = useMemo(() => new StreamReveal(false), []);
-  const plan = useMemo(createRevealPlan, [text]);
+  const plan = useMemo(createRevealPlan, [text, contributions]);
   const reducedMotion = useReducedMotion();
-  const rehypePlugins = useMemo(
-    () => [[cachedHighlight, { streaming }] as [typeof cachedHighlight, { streaming: boolean }], ...(revealEnabled ? [plan.plugin] : [])],
-    [cachedHighlight, streaming, plan, revealEnabled],
-  );
   useLayoutEffect(() => {
     controller.update(plan.text, streaming && !reducedMotion && !document.hidden);
   }, [controller, plan, streaming, reducedMotion]);
@@ -165,7 +173,7 @@ export default memo(function Markdown({
   }, [controller]);
   // Stable components map: a new reference makes ReactMarkdown discard its
   // HAST tree and re-parse the whole document.
-  const components = useMemo<Components>(
+  const hostComponents = useMemo<Components>(
     () => ({
       span: ({ node, className, children }) => {
         const start = node?.properties.dataStreamStart;
@@ -224,11 +232,42 @@ export default memo(function Markdown({
     }),
     [workspacePath, controller],
   );
+  // Plugin pipeline contributions (plan §4.2 #5): host defaults first, then
+  // each plugin's in registration order. Plugin halves arrive as `unknown[]`
+  // — blob bundles can't share the host's unified/react-markdown type
+  // identities — so the merged lists are asserted back to ReactMarkdown's
+  // prop type once, here at the boundary.
+  const remarkPlugins = useMemo(
+    () =>
+      [
+        ...REMARK_PLUGINS,
+        ...contributions.flatMap((c) => c.remarkPlugins ?? []),
+      ] as PluginListProp,
+    [contributions],
+  );
+  const rehypePlugins = useMemo(
+    () =>
+      [
+        [cachedHighlight, { streaming }],
+        ...contributions.flatMap((c) => c.rehypePlugins ?? []),
+        ...(revealEnabled ? [plan.plugin] : []),
+      ] as PluginListProp,
+    [contributions, cachedHighlight, streaming, revealEnabled, plan],
+  );
+  // Later wins: plugin component overrides may intentionally shadow host
+  // keys, and later registrations shadow earlier ones.
+  const components = useMemo<Components>(() => {
+    let merged = hostComponents;
+    for (const contrib of contributions) {
+      if (contrib.components) merged = { ...merged, ...contrib.components };
+    }
+    return merged;
+  }, [hostComponents, contributions]);
 
   return (
     <div className="prose-chat text-body-regular text-text-primary">
       <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
         components={components}
         urlTransform={(url) =>

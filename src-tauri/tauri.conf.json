@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' https://hm.baidu.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: https://asset.localhost http://hm.baidu.com https://hm.baidu.com; connect-src 'self' ipc: http://ipc.localhost; font-src 'self' data:",
+      "csp": "default-src 'self'; script-src 'self' https://hm.baidu.com blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: https://asset.localhost http://hm.baidu.com https://hm.baidu.com; connect-src 'self' ipc: http://ipc.localhost; font-src 'self' data:",
       "assetProtocol": {
         "enable": true,
         "scope": {

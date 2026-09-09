@@ -16,6 +16,8 @@ import { buildRows, collectToolKeys, rowKey, type TimelineRow } from "./timeline
 import { ProcessDisclosure } from "./ProcessDisclosure";
 import { useScrollFollow, useTailPin } from "./use-scroll-follow";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
+import { pluginIdFromRegistryKey, timelineRowRegistry, useRegistry } from "@ccgui/plugin-sdk";
+import { PluginBoundary } from "@/features/plugins/boundary/PluginBoundary";
 import { useAnchorRailScroll } from "./use-anchor-rail-scroll";
 import { useLoadEarlier } from "./use-load-earlier";
 
@@ -35,6 +37,20 @@ const TimelineRowView = memo(function TimelineRowView({
   autoExpand: boolean;
   seenTools: Set<string>;
 }) {
+  // Plugin-defined row kinds (plan §4.2 #5) dispatch to the registered
+  // renderer before the builtin switch below; builtin kinds never hit this
+  // unless a plugin deliberately shadows one.
+  const customRenderers = useRegistry(timelineRowRegistry);
+  const custom = customRenderers.find((r) => r.kind === row.kind);
+  if (custom) {
+    const pluginId = pluginIdFromRegistryKey(custom.id);
+    const Renderer = custom.component;
+    return (
+      <PluginBoundary pluginId={pluginId}>
+        <Renderer row={row} />
+      </PluginBoundary>
+    );
+  }
   // Every process run — thinking, tools, or both — folds into the same
   // collapsed summary line ("思考 N 次 工具调用 M 次 >"); expanding shows
   // the per-step details.

@@ -312,6 +312,24 @@ export interface PiFamilyModelsConfigReadResult {
   parseError: string | null;
 }
 
+// ==================== Plugins (Phase 1 runtime, plan §4.3) ====================
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  tier: "declarative" | "js";
+  source: "marketplace" | "local" | "ai" | "builtin";
+  enabled: boolean;
+  quarantined: boolean;
+  lastError: string | null;
+  permissions: string[];
+  installedAt: number;
+  minAppVersion: string | null;
+}
+
 export const ipc = {
   // config
   getCliConfig: () => invoke<CliConfig>("get_cli_config"),
@@ -468,6 +486,24 @@ export const ipc = {
     invoke<void>("reveal_in_file_manager", { path }),
   // metrics
   appMetrics: () => invoke<AppMetrics>("app_metrics"),
+  // plugins
+  pluginList: () => invoke<PluginInfo[]>("plugin_list"),
+  pluginInstallFromPath: (path: string) =>
+    invoke<PluginInfo>("plugin_install_from_path", { path }),
+  pluginUninstall: (id: string, deleteData: boolean) =>
+    invoke<void>("plugin_uninstall", { id, deleteData }),
+  pluginSetEnabled: (id: string, enabled: boolean) =>
+    invoke<PluginInfo>("plugin_set_enabled", { id, enabled }),
+  pluginQuarantine: (id: string, error: string) =>
+    invoke<PluginInfo>("plugin_quarantine", { id, error }),
+  pluginReadFile: (id: string, name: string) =>
+    invoke<string>("plugin_read_file", { id, name }),
+  pluginStorageGet: (id: string, key: string) =>
+    invoke<unknown>("plugin_storage_get", { id, key }),
+  pluginStorageSet: (id: string, key: string, value: unknown) =>
+    invoke<void>("plugin_storage_set", { id, key, value }),
+  pluginStorageDelete: (id: string, key: string) =>
+    invoke<void>("plugin_storage_delete", { id, key }),
   // web access (start/stop are desktop-only; the bridge answers status too)
   webAccessStart: () => invoke<WebAccessInfo>("web_access_start"),
   webAccessStop: () => invoke<void>("web_access_stop"),

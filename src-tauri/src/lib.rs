@@ -11,6 +11,8 @@ pub mod history;
 pub mod metrics;
 pub mod open_app;
 pub mod paths;
+pub mod plugins;
+pub mod plugin_caps;
 pub mod proxy;
 pub mod provider_files;
 pub mod provider_models;
@@ -134,6 +136,7 @@ pub fn run() {
                 if let Some(state) = window.try_state::<AppState>() {
                     state.processes.kill_all();
                     state.dsh_host.kill_spawned();
+                    plugin_caps::kill_all_tracked_children();
                     tauri::async_runtime::block_on(terminal::kill_all(&state.terminals));
                 }
             }
@@ -157,6 +160,16 @@ pub fn run() {
             // settings
             settings::get_app_settings,
             settings::update_app_settings,
+            // plugins
+            plugins::plugin_list,
+            plugins::plugin_install_from_path,
+            plugins::plugin_uninstall,
+            plugins::plugin_set_enabled,
+            plugins::plugin_quarantine,
+            plugins::plugin_read_file,
+            plugins::plugin_storage_get,
+            plugins::plugin_storage_set,
+            plugins::plugin_storage_delete,
             // engine
             engine::send_message,
             engine::interrupt_session,
@@ -219,6 +232,11 @@ pub fn run() {
             terminal::terminal_close,
             // metrics
             metrics::app_metrics,
+            // plugin capability egress (network:/exec: manifest grants)
+            plugin_caps::plugin_http_request,
+            plugin_caps::plugin_exec_run,
+            plugin_caps::plugin_exec_spawn,
+            plugin_caps::plugin_exec_kill,
             // web access
             web::web_access_start,
             web::web_access_stop,
