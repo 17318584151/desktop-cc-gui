@@ -6,9 +6,11 @@ import type { ComposerInputHandle } from "@/components/application/ai-chat/ai-ch
 import { mentionToken } from "@/components/application/ai-chat/file-tags";
 import { AddMenu } from "@/components/application/ai-chat/add-menu";
 import { PermissionMenu } from "@/components/application/ai-chat/permission-menu";
+import type { ComposerPermission } from "@/components/application/ai-chat/permission-menu";
 import {
   CliMenu,
   type EffortLevel,
+  type ModelOption,
 } from "@/components/application/ai-chat/cli-menu";
 import {
   effectivePermission,
@@ -24,6 +26,7 @@ import { useBranchSwitcher } from "./use-branch-switcher";
 import { useComposerImages } from "./use-composer-images";
 import { useEngineModels } from "./use-engine-models";
 import type { EngineInfo, Workspace } from "@/lib/ipc";
+import type { OmpServiceTier } from "@/lib/omp-service-tier";
 import { EmptyState } from "@/components/base/empty-state";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
@@ -56,6 +59,165 @@ const SessionTimeline = memo(function SessionTimeline({
   );
 });
 
+/** Session error banner above the timeline. */
+function SessionErrorBanner({
+  error,
+  onDismiss,
+}: {
+  error: string;
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="alert"
+      className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary"
+    >
+      <span className="min-w-0 flex-1 break-all">{error}</span>
+      <button
+        type="button"
+        aria-label={t("common.close")}
+        onClick={onDismiss}
+        className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+/** Composer menu slots (add / CLI / permission) plus the all-engines-disabled
+ * state, memoized so per-keystroke draft updates don't rebuild the menus. */
+function useConversationMenus({
+  engines,
+  engineInfo,
+  supportsImages,
+  activeEngine,
+  modelsByEngine,
+  displayModels,
+  displayEfforts,
+  ompServiceTier,
+  permission,
+  setActiveEngine,
+  setPermission,
+  setModel,
+  setEffort,
+  setOmpServiceTier,
+  refreshModels,
+}: {
+  engines: EngineInfo[];
+  engineInfo: EngineInfo | undefined;
+  supportsImages: boolean;
+  activeEngine: string;
+  modelsByEngine: Record<string, ModelOption[]>;
+  displayModels: Record<string, string>;
+  displayEfforts: Record<string, EffortLevel>;
+  ompServiceTier: OmpServiceTier;
+  permission: ComposerPermission;
+  setActiveEngine: (engine: string) => void;
+  setPermission: (permission: ComposerPermission) => void;
+  setModel: (engine: string, model: string) => Promise<void>;
+  setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
+  setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
+  refreshModels: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  // Disabled-in-settings CLIs leave the picker entirely; the greyed-out
+  // state stays reserved for CLIs whose binary is not installed.
+  const cliOptions = useMemo(
+    () =>
+      engines.flatMap((e) => {
+        if (!e.enabled) return [];
+        return [
+          {
+            id: e.id,
+            label: t(`settings.engines.${e.id}`),
+            available: e.available,
+            disabled: !e.available,
+            disabledReason: t("chat.engineNotInstalled"),
+          },
+        ];
+      }),
+    [engines, t],
+  );
+  // Every CLI is switched off in settings: swap the picker for a placeholder
+  // that deep-links to the CLI config page.
+  const noEnabledEngines = engines.length > 0 && cliOptions.length === 0;
+  const handleModelChange = useCallback(
+    (engine: string, m: string) => void setModel(engine, m),
+    [setModel],
+  );
+  const handleEffortChange = useCallback(
+    (engine: string, level: EffortLevel) => void setEffort(engine, level),
+    [setEffort],
+  );
+
+  const addMenu = useMemo(
+    () => (
+      <AddMenu
+        disabled={!supportsImages}
+        disabledReason={t("chat.imagesUnsupported")}
+      />
+    ),
+    [supportsImages, t],
+  );
+  const cliMenu = useMemo(
+    () =>
+      noEnabledEngines ? (
+        <button
+          type="button"
+          onClick={() => navigate("/settings?page=cli:claude")}
+          className="flex cursor-pointer items-center rounded-md px-1.5 py-1 text-body-2-medium whitespace-nowrap text-text-tertiary transition-colors duration-150 ease hover:text-text-primary"
+        >
+          {t("chat.noEngineEnabled")}
+        </button>
+      ) : (
+        <CliMenu
+          options={cliOptions}
+          value={activeEngine}
+          onChange={setActiveEngine}
+          modelsByEngine={modelsByEngine}
+          models={displayModels}
+          onModelChange={handleModelChange}
+          efforts={displayEfforts}
+          onEffortChange={handleEffortChange}
+          ompServiceTier={ompServiceTier}
+          onOmpServiceTierChange={setOmpServiceTier}
+          onRefreshModels={refreshModels}
+        />
+      ),
+    [
+      noEnabledEngines,
+      navigate,
+      t,
+      cliOptions,
+      activeEngine,
+      setActiveEngine,
+      modelsByEngine,
+      displayModels,
+      handleModelChange,
+      displayEfforts,
+      handleEffortChange,
+      ompServiceTier,
+      setOmpServiceTier,
+      refreshModels,
+    ],
+  );
+  const permissionMenu = useMemo(
+    () => (
+      <PermissionMenu
+        value={effectivePermission(engines, activeEngine, permission)}
+        onChange={setPermission}
+        supported={engineInfo?.permissions}
+      />
+    ),
+    [engines, activeEngine, permission, setPermission, engineInfo],
+  );
+
+  return { addMenu, cliMenu, permissionMenu, noEnabledEngines };
+}
+
 /** Conversation column: timeline, message queue, composer, status bar. The
  * high-frequency session/draft subscriptions live here so streaming deltas
  * (one store write per animation frame) re-render only this subtree — never
@@ -74,7 +236,6 @@ export const ChatConversation = memo(function ChatConversation({
   composerInputRef: React.RefObject<ComposerInputHandle | null>;
 }) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const key = active
     ? sessionKey(active.engine, active.sessionId, active.workspacePath)
     : "";
@@ -173,12 +334,18 @@ export const ChatConversation = memo(function ChatConversation({
     active && active.engine === activeEngine ? active.model : undefined;
   const tabEffort =
     active && active.engine === activeEngine ? active.effort : undefined;
-  const displayModels =
-    tabModel !== undefined ? { ...models, [activeEngine]: tabModel } : models;
-  const displayEfforts =
-    tabEffort !== undefined
-      ? { ...efforts, [activeEngine]: tabEffort }
-      : efforts;
+  const displayModels = useMemo(
+    () =>
+      tabModel !== undefined ? { ...models, [activeEngine]: tabModel } : models,
+    [tabModel, models, activeEngine],
+  );
+  const displayEfforts = useMemo(
+    () =>
+      tabEffort !== undefined
+        ? { ...efforts, [activeEngine]: tabEffort }
+        : efforts,
+    [tabEffort, efforts, activeEngine],
+  );
 
   // The catalog's context window beats the 200k assumption when the
   // selected model reports one.
@@ -227,117 +394,34 @@ export const ChatConversation = memo(function ChatConversation({
     [key, setDraft],
   );
   const handleStop = useCallback(() => void interrupt(), [interrupt]);
-  // Disabled-in-settings CLIs leave the picker entirely; the greyed-out
-  // state stays reserved for CLIs whose binary is not installed.
-  const cliOptions = useMemo(
-    () =>
-      engines.flatMap((e) => {
-        if (!e.enabled) return [];
-        return [
-          {
-            id: e.id,
-            label: t(`settings.engines.${e.id}`),
-            available: e.available,
-            disabled: !e.available,
-            disabledReason: t("chat.engineNotInstalled"),
-          },
-        ];
-      }),
-    [engines, t],
-  );
-  // Every CLI is switched off in settings: swap the picker for a placeholder
-  // that deep-links to the CLI config page.
-  const noEnabledEngines = engines.length > 0 && cliOptions.length === 0;
-  const handleModelChange = useCallback(
-    (engine: string, m: string) => void setModel(engine, m),
-    [setModel],
-  );
-  const handleEffortChange = useCallback(
-    (engine: string, level: EffortLevel) => void setEffort(engine, level),
-    [setEffort],
-  );
-
-  const addMenu = useMemo(
-    () => (
-      <AddMenu
-        disabled={!supportsImages}
-        disabledReason={t("chat.imagesUnsupported")}
-      />
-    ),
-    [supportsImages, t],
-  );
-  const cliMenu = useMemo(
-    () =>
-      noEnabledEngines ? (
-        <button
-          type="button"
-          onClick={() => navigate("/settings?page=cli:claude")}
-          className="flex cursor-pointer items-center rounded-md px-1.5 py-1 text-body-2-medium whitespace-nowrap text-text-tertiary transition-colors duration-150 ease hover:text-text-primary"
-        >
-          {t("chat.noEngineEnabled")}
-        </button>
-      ) : (
-        <CliMenu
-          options={cliOptions}
-          value={activeEngine}
-          onChange={setActiveEngine}
-          modelsByEngine={modelsByEngine}
-          models={displayModels}
-          onModelChange={handleModelChange}
-          efforts={displayEfforts}
-          onEffortChange={handleEffortChange}
-          ompServiceTier={ompServiceTier}
-          onOmpServiceTierChange={setOmpServiceTier}
-          onRefreshModels={refreshModels}
-        />
-      ),
-    [
-      noEnabledEngines,
-      navigate,
-      t,
-      cliOptions,
+  const { addMenu, cliMenu, permissionMenu, noEnabledEngines } =
+    useConversationMenus({
+      engines,
+      engineInfo,
+      supportsImages,
       activeEngine,
-      setActiveEngine,
       modelsByEngine,
       displayModels,
-      handleModelChange,
       displayEfforts,
-      handleEffortChange,
       ompServiceTier,
+      permission,
+      setActiveEngine,
+      setPermission,
+      setModel,
+      setEffort,
       setOmpServiceTier,
       refreshModels,
-    ],
-  );
-  const permissionMenu = useMemo(
-    () => (
-      <PermissionMenu
-        value={effectivePermission(engines, activeEngine, permission)}
-        onChange={setPermission}
-        supported={engineInfo?.permissions}
-      />
-    ),
-    [engines, activeEngine, permission, setPermission, engineInfo],
-  );
+    });
 
   return (
     <>
       {active && hasSession ? (
         <>
           {sessionError && (
-            <div
-              role="alert"
-              className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-border-error-default bg-background-tertiary-error px-3 py-2 text-body-regular text-text-error-primary"
-            >
-              <span className="min-w-0 flex-1 break-all">{sessionError}</span>
-              <button
-                type="button"
-                aria-label={t("common.close")}
-                onClick={() => dismissSessionError(key)}
-                className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-background-tertiary-hover"
-              >
-                ×
-              </button>
-            </div>
+            <SessionErrorBanner
+              error={sessionError}
+              onDismiss={() => dismissSessionError(key)}
+            />
           )}
           <SessionTimeline
             sessionKey={key}

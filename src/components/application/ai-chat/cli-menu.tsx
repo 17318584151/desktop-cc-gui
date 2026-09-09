@@ -383,6 +383,121 @@ function FlyoutEffortSection({
   );
 }
 
+/** Case-insensitive label/id/description match; an empty query passes the
+ * catalog through untouched (identity, so memoized groups stay stable). */
+function filterModels(models: ModelOption[], normalizedQuery: string): ModelOption[] {
+  if (!normalizedQuery) return models;
+  return models.filter(
+    (m) =>
+      m.label.toLowerCase().includes(normalizedQuery) ||
+      m.id.toLowerCase().includes(normalizedQuery) ||
+      (m.description ?? "").toLowerCase().includes(normalizedQuery),
+  );
+}
+
+/** Header refresh button: re-probes provider configs and model catalogs,
+ * spinning until the probe settles. */
+function RefreshButton({ onRefresh }: { onRefresh: () => void | Promise<void> }) {
+  const { t } = useTranslation();
+  const [refreshing, setRefreshing] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={t("common.refresh")}
+      title={t("common.refresh")}
+      disabled={refreshing}
+      onClick={() => {
+        if (refreshing) return;
+        setRefreshing(true);
+        Promise.resolve(onRefresh()).finally(() => setRefreshing(false));
+      }}
+      className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary disabled:cursor-default"
+    >
+      <RefreshCw
+        className={cx("size-3.5", refreshing && "animate-spin")}
+        aria-hidden
+      />
+    </button>
+  );
+}
+
+/** Optional header actions: catalog refresh (flyout + dialog) and/or the
+ * dialog's dismiss button. Renders nothing when neither applies. */
+function PanelActions({
+  onRefresh,
+  onClose,
+}: {
+  onRefresh?: () => void | Promise<void>;
+  onClose?: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!onRefresh && !onClose) return null;
+  return (
+    <span className="mr-1 flex shrink-0 items-center">
+      {onRefresh && <RefreshButton onRefresh={onRefresh} />}
+      {onClose && (
+        <button
+          type="button"
+          aria-label={t("common.close")}
+          onClick={onClose}
+          className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
+        >
+          <X className="size-4" aria-hidden />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** The scrollable radio-group model list: provider-sectioned when layered,
+ * flat otherwise; an exhausted search shows the no-match hint. */
+function ModelGroupList({
+  groups,
+  empty,
+  selectedModelId,
+  engineId,
+  onPickModel,
+}: {
+  groups: ModelGroup[];
+  empty: boolean;
+  selectedModelId: string;
+  engineId: string;
+  onPickModel: (engine: string, id: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="flex max-h-[240px] w-full flex-col overflow-y-auto"
+      role="radiogroup"
+      aria-label={t("chat.modelPicker")}
+    >
+      {groups.map((group) => (
+        <div key={group.key || "__flat__"} className="flex w-full flex-col">
+          {group.key && (
+            <span className="sticky top-0 z-10 bg-background-primary-default px-2 pt-1.5 pb-0.5 text-body-2-medium text-text-tertiary">
+              {group.key}
+            </span>
+          )}
+          {group.rows.map((model) => (
+            <ModelRow
+              key={model.id || "__default__"}
+              option={model}
+              selected={model.id === selectedModelId}
+              engineId={engineId}
+              onPick={onPickModel}
+            />
+          ))}
+        </div>
+      ))}
+      {empty && (
+        <span className="p-2 text-body-medium text-text-tertiary">
+          {t("chat.noMatchingModels")}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /**
  * Engine model panel content: "{name} 引擎" header over a search field over
  * checkmark model rows over the effort slider. Shared by the desktop flyout
@@ -419,16 +534,8 @@ function EngineModelPanel({
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
-  const [refreshing, setRefreshing] = useState(false);
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredModels = normalizedQuery
-    ? models.filter(
-        (m) =>
-          m.label.toLowerCase().includes(normalizedQuery) ||
-          m.id.toLowerCase().includes(normalizedQuery) ||
-          (m.description ?? "").toLowerCase().includes(normalizedQuery),
-      )
-    : models;
+  const filteredModels = filterModels(models, normalizedQuery);
   // Provider sections layer the list when the engine's catalog mixes sources
   // (OMP serving several relays). Pinning the active row to the top would
   // tear it out of its section, so grouped lists keep the catalog order and
@@ -451,6 +558,7 @@ function EngineModelPanel({
           Number(a.rows.some((m) => m.id === selectedModelId)),
       )
     : null;
+  const ompFast = option.id === "omp" && supportsOmpFastMode(selectedModelId);
 
   return (
     <div className="flex w-full flex-col gap-1.5">
@@ -460,39 +568,7 @@ function EngineModelPanel({
             name: CLI_DISPLAY_NAMES[option.id] ?? option.label,
           })}
         </span>
-        {(onRefresh || onClose) && (
-          <span className="mr-1 flex shrink-0 items-center">
-            {onRefresh && (
-              <button
-                type="button"
-                aria-label={t("common.refresh")}
-                title={t("common.refresh")}
-                disabled={refreshing}
-                onClick={() => {
-                  if (refreshing) return;
-                  setRefreshing(true);
-                  Promise.resolve(onRefresh()).finally(() => setRefreshing(false));
-                }}
-                className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary disabled:cursor-default"
-              >
-                <RefreshCw
-                  className={cx("size-3.5", refreshing && "animate-spin")}
-                  aria-hidden
-                />
-              </button>
-            )}
-            {onClose && (
-              <button
-                type="button"
-                aria-label={t("common.close")}
-                onClick={onClose}
-                className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
-              >
-                <X className="size-4" aria-hidden />
-              </button>
-            )}
-          </span>
-        )}
+        <PanelActions onRefresh={onRefresh} onClose={onClose} />
       </div>
       <div className="relative mx-1 -mt-1.5 pb-1">
         <Search
@@ -507,40 +583,18 @@ function EngineModelPanel({
           className="h-8 w-full rounded-md border border-separator-border bg-background-secondary-default pr-2 pl-7 text-body-regular text-text-primary outline-none placeholder:text-text-tertiary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
         />
       </div>
-      <div
-        className="flex max-h-[240px] w-full flex-col overflow-y-auto"
-        role="radiogroup"
-        aria-label={t("chat.modelPicker")}
-      >
-        {(visibleGroups ?? [{ key: "", rows: orderedModels }]).map((group) => (
-          <div key={group.key || "__flat__"} className="flex w-full flex-col">
-            {group.key && (
-              <span className="sticky top-0 z-10 bg-background-primary-default px-2 pt-1.5 pb-0.5 text-body-2-medium text-text-tertiary">
-                {group.key}
-              </span>
-            )}
-            {group.rows.map((model) => (
-              <ModelRow
-                key={model.id || "__default__"}
-                option={model}
-                selected={model.id === selectedModelId}
-                engineId={option.id}
-                onPick={onPickModel}
-              />
-            ))}
-          </div>
-        ))}
-        {orderedModels.length === 0 && (
-          <span className="p-2 text-body-medium text-text-tertiary">
-            {t("chat.noMatchingModels")}
-          </span>
-        )}
-      </div>
+      <ModelGroupList
+        groups={visibleGroups ?? [{ key: "", rows: orderedModels }]}
+        empty={orderedModels.length === 0}
+        selectedModelId={selectedModelId}
+        engineId={option.id}
+        onPickModel={onPickModel}
+      />
 
       {/* Full-bleed divider, like the reference submenu. */}
-      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", option.id === "omp" && supportsOmpFastMode(selectedModelId) ? "mb-1" : "mb-3")} />
+      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", ompFast ? "mb-1" : "mb-3")} />
       <FlyoutEffortSection
-        header={option.id === "omp" && supportsOmpFastMode(selectedModelId) ? (
+        header={ompFast ? (
           <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange}>
             <span className="text-body-medium text-text-primary">{t(EFFORT_LABEL_KEYS[effort])}</span>
           </OmpSpeedSection>

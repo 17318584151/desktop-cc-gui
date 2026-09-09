@@ -198,7 +198,7 @@ function Pill({
       )}
       {icon}
       <span>{label}</span>
-      {count && <span className="tabular-nums text-text-tertiary">{count}</span>}
+      {count ? <span className="tabular-nums text-text-tertiary">{count}</span> : null}
       {stats}
     </button>
   );
@@ -316,10 +316,10 @@ function FileRows({
     <div data-testid="run-status-files">
       <div className="flex h-8 items-center gap-1.5 px-2.5 text-caption-1-medium text-text-secondary">
         <span>{t("chat.editedFiles", { count: files.length })}</span>
-        {total && <LineStats stat={total} />}
-        {live && (
+        {total ? <LineStats stat={total} /> : null}
+        {live ? (
           <span className="size-1.5 animate-pulse rounded-full bg-foreground-icon-secondary" />
-        )}
+        ) : null}
       </div>
       <ul className="flex flex-col gap-0.5 px-1 pb-1">
         {files.map((file) => {
@@ -341,6 +341,123 @@ function FileRows({
   );
 }
 
+/** Floating panel anchored above the toolbar so it overlays the message
+ * list instead of pushing it; collapses via grid-rows animation. */
+function RunStatusPanel({
+  section,
+  steps,
+  todos,
+  files,
+  perFile,
+  total,
+  live,
+}: {
+  section: SectionId | null;
+  steps: AgentTaskStep[];
+  todos: TodoItem[];
+  files: string[];
+  perFile: Map<string, FileStat>;
+  total: FileStat | null;
+  live: boolean;
+}) {
+  return (
+    <div
+      className={cx(
+        "absolute inset-x-0 bottom-full z-20 grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+        section ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0",
+      )}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div
+          role="tabpanel"
+          className="mb-1.5 max-h-[min(40vh,280px)] overflow-y-auto rounded-md border border-dashed border-border-button-default bg-background-primary-default shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+        >
+          {section === "subagent" && <SubagentRows steps={steps} />}
+          {section === "todo" && <TodoRows items={todos} />}
+          {section === "files" && (
+            <FileRows files={files} perFile={perFile} total={total} live={live} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The dashed pill row: one pill per data section, hidden entirely when the
+ * section has no data. Counts freeze after a turn completes. */
+function RunStatusPills({
+  section,
+  steps,
+  todos,
+  files,
+  stats,
+  onToggle,
+}: {
+  section: SectionId | null;
+  steps: AgentTaskStep[];
+  todos: TodoItem[];
+  files: string[];
+  stats: FileStat | null;
+  onToggle: (id: SectionId) => void;
+}) {
+  const { t } = useTranslation();
+  const completedCount = steps.filter((step) => step.state === "complete").length;
+  const anyRunning = completedCount < steps.length;
+  const todosDone = todos.filter((item) => item.status === "complete").length;
+  const todosRunning = todos.some((item) => item.status === "active");
+  return (
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="tablist">
+      {todos.length > 0 && (
+        <Pill
+          selected={section === "todo"}
+          running={todosRunning}
+          label={t("chat.todoPill")}
+          count={`${todosDone}/${todos.length}`}
+          icon={<ListChecksIcon />}
+          onClick={() => onToggle("todo")}
+        />
+      )}
+      {steps.length > 0 && (
+        <Pill
+          selected={section === "subagent"}
+          running={anyRunning}
+          label={t("chat.subagentPill")}
+          count={`${completedCount}/${steps.length}`}
+          icon={<BotIcon />}
+          onClick={() => onToggle("subagent")}
+        />
+      )}
+      {files.length > 0 && (
+        <Pill
+          selected={section === "files"}
+          label={t("chat.editedPill")}
+          title={t("chat.editedFiles", { count: files.length })}
+          icon={<PencilIcon />}
+          stats={stats ? <LineStats stat={stats} /> : undefined}
+          onClick={() => onToggle("files")}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Right-edge chrome toggle: hides/shows the whole pill row. */
+function ChromeToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const { t } = useTranslation();
+  const label = open ? t("chat.runStatusCollapse") : t("chat.runStatusExpand");
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={label}
+      title={label}
+      className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-[5px] border border-dashed border-border-button-default text-foreground-icon-tertiary transition-colors hover:bg-background-tertiary-default/60 hover:text-foreground-icon-secondary"
+    >
+      {open ? <PanelTopCloseIcon /> : <PanelTopIcon />}
+    </button>
+  );
+}
+
 export const RunStatusStrip = memo(function RunStatusStrip({
   sessionKey,
   engine,
@@ -350,7 +467,6 @@ export const RunStatusStrip = memo(function RunStatusStrip({
   engine: string;
   workspacePath: string;
 }) {
-  const { t } = useTranslation();
   const messages = useChatStore((s) =>
     sessionKey ? (s.bySession[sessionKey]?.messages ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
   );
@@ -378,20 +494,18 @@ export const RunStatusStrip = memo(function RunStatusStrip({
     [files, gitStatus, workspacePath],
   );
 
-  const completedCount = steps.filter((step) => step.state === "complete").length;
-  const anyRunning = completedCount < steps.length;
-  const todosDone = todos.filter((item) => item.status === "complete").length;
-  const todosRunning = todos.some((item) => item.status === "active");
-
   const [chromeOpen, setChromeOpen] = useState(readChromeOpen);
   const [section, setSection] = useState<SectionId | null>(null);
 
   // A section whose data vanished collapses itself.
-  useEffect(() => {
-    if (section === "subagent" && steps.length === 0) setSection(null);
-    if (section === "files" && files.length === 0) setSection(null);
-    if (section === "todo" && todos.length === 0) setSection(null);
-  }, [section, steps.length, files.length, todos.length]);
+  // Render-time adjustment (React re-renders before paint): an effect would
+  // flash the stale panel for a frame first.
+  const sectionData: Record<SectionId, number> = {
+    todo: todos.length,
+    subagent: steps.length,
+    files: files.length,
+  };
+  if (section && sectionData[section] === 0) setSection(null);
 
   // Esc collapses the open panel.
   useEffect(() => {
@@ -409,82 +523,36 @@ export const RunStatusStrip = memo(function RunStatusStrip({
     setSection((current) => (current === id ? null : id));
   const toggleChrome = () => {
     setSection(null);
-    setChromeOpen((open) => {
-      writeChromeOpen(!open);
-      return !open;
-    });
+    const next = !chromeOpen;
+    writeChromeOpen(next);
+    setChromeOpen(next);
   };
 
   return (
     <div className="relative" data-testid="run-status-strip">
-      {/* Floating panel: anchored above the toolbar so it overlays the
-          message list instead of pushing it. */}
-      <div
-        className={cx(
-          "absolute inset-x-0 bottom-full z-20 grid transition-[grid-template-rows,opacity] duration-200 ease-out",
-          section ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0",
-        )}
-      >
-        <div className="min-h-0 overflow-hidden">
-          <div
-            role="tabpanel"
-            className="mb-1.5 max-h-[min(40vh,280px)] overflow-y-auto rounded-md border border-dashed border-border-button-default bg-background-primary-default shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
-          >
-            {section === "subagent" && <SubagentRows steps={steps} />}
-            {section === "todo" && <TodoRows items={todos} />}
-            {section === "files" && (
-              <FileRows files={files} perFile={perFile} total={total} live={streaming} />
-            )}
-          </div>
-        </div>
-      </div>
-
+      <RunStatusPanel
+        section={section}
+        steps={steps}
+        todos={todos}
+        files={files}
+        perFile={perFile}
+        total={total}
+        live={streaming}
+      />
       <div className="flex min-h-7 items-center gap-1.5">
         {chromeOpen ? (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" role="tablist">
-            {todos.length > 0 && (
-              <Pill
-                selected={section === "todo"}
-                running={todosRunning}
-                label={t("chat.todoPill")}
-                count={`${todosDone}/${todos.length}`}
-                icon={<ListChecksIcon />}
-                onClick={() => toggleSection("todo")}
-              />
-            )}
-            {steps.length > 0 && (
-              <Pill
-                selected={section === "subagent"}
-                running={anyRunning}
-                label={t("chat.subagentPill")}
-                count={`${completedCount}/${steps.length}`}
-                icon={<BotIcon />}
-                onClick={() => toggleSection("subagent")}
-              />
-            )}
-            {files.length > 0 && (
-              <Pill
-                selected={section === "files"}
-                label={t("chat.editedPill")}
-                title={t("chat.editedFiles", { count: files.length })}
-                icon={<PencilIcon />}
-                stats={total ? <LineStats stat={total} /> : undefined}
-                onClick={() => toggleSection("files")}
-              />
-            )}
-          </div>
+          <RunStatusPills
+            section={section}
+            steps={steps}
+            todos={todos}
+            files={files}
+            stats={total}
+            onToggle={toggleSection}
+          />
         ) : (
           <div className="flex-1" />
         )}
-        <button
-          type="button"
-          onClick={toggleChrome}
-          aria-label={chromeOpen ? t("chat.runStatusCollapse") : t("chat.runStatusExpand")}
-          title={chromeOpen ? t("chat.runStatusCollapse") : t("chat.runStatusExpand")}
-          className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-[5px] border border-dashed border-border-button-default text-foreground-icon-tertiary transition-colors hover:bg-background-tertiary-default/60 hover:text-foreground-icon-secondary"
-        >
-          {chromeOpen ? <PanelTopCloseIcon /> : <PanelTopIcon />}
-        </button>
+        <ChromeToggle open={chromeOpen} onToggle={toggleChrome} />
       </div>
     </div>
   );
