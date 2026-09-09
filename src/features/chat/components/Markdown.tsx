@@ -1,7 +1,7 @@
 import { isValidElement, memo, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
+import { createCachedHighlighter } from "./cached-highlight";
 import { openExternal } from "@/lib/platform";
 import { useTranslation } from "react-i18next";
 import Copy from "lucide-react/dist/esm/icons/copy";
@@ -18,7 +18,6 @@ import {
 } from "@/lib/fileLinks";
 
 const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeHighlight];
 
 function openFileFromChat(rawPath: string, workspacePath: string) {
   const path = resolveFilePath(rawPath, workspacePath);
@@ -135,6 +134,11 @@ export default memo(function Markdown({
   workspacePath: string;
   streaming?: boolean;
 }) {
+  const cachedHighlight = useMemo(() => createCachedHighlighter(), []);
+  const rehypePlugins = useMemo(
+    () => [[cachedHighlight, { streaming }] as [typeof cachedHighlight, { streaming: boolean }]],
+    [cachedHighlight, streaming],
+  );
   // Stable components map: a new reference makes ReactMarkdown discard its
   // HAST tree and re-parse the whole document.
   const components = useMemo<Components>(
@@ -195,9 +199,7 @@ export default memo(function Markdown({
     <div className="prose-chat text-body-regular text-text-primary">
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
-        // Growing code blocks are highlighted once the segment settles.
-        // Markdown structure and copy controls remain available while streaming.
-        rehypePlugins={streaming ? undefined : REHYPE_PLUGINS}
+        rehypePlugins={rehypePlugins}
         components={components}
         urlTransform={(url) =>
           // file: is deliberately excluded: model output must not smuggle in
