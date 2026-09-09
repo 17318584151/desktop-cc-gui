@@ -137,3 +137,16 @@ test("observed OMP bursts avoid emptying the queue too early and bound per-frame
   assert.equal(reveal.read(0,text.length),text.length);
   assert.equal(c.pending(),0);
 });
+
+test("reused grapheme reader preserves exact boundaries while the cursor moves both ways", async () => {
+  const { createVisibleTextReader } = await import("../src/features/chat/components/stream-reveal.ts");
+  const text = "A👩‍💻e\u0301🇨🇳你好".repeat(30);
+  const boundaries = [0, ...Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), s => s.index + s.segment.length)];
+  const reader = createVisibleTextReader(text);
+  for (const count of [...Array.from({ length: text.length + 1 }, (_, i) => i)].reverse()) {
+    const end = boundaries.filter(n => n <= count).at(-1)!;
+    const start = boundaries.filter(n => n <= Math.max(0, end - 20)).at(-1)!;
+    assert.equal(reader.prefix(count), text.slice(0, end));
+    assert.equal(reader.window(count, 20), text.slice(start, end));
+  }
+});

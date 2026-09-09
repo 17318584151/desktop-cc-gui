@@ -116,24 +116,35 @@ const segmenter = typeof Intl.Segmenter === "function"
   ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
 /** Never show half an emoji, combining sequence, or surrogate pair. */
 export function visiblePrefix(text: string, count: number) {
-  if (count >= text.length) return text;
-  if (count <= 0) return "";
-  // Query just the boundary at the cursor instead of walking the entire
-  // growing paragraph on every animation frame.
-  const segments = segmenter?.segment(text);
-  // Older webviews can still display complete text without corrupting emoji.
-  if (!segments || typeof segments.containing !== "function") return text;
-  const segment = segments.containing(count);
-  return text.slice(0, segment?.index ?? text.length);
+  return createVisibleTextReader(text).prefix(count);
 }
 
 /** Window follows the revealed cursor, not the received tail, so a large
  * thinking chunk cannot hide all content while the cursor catches up. */
 export function visibleWindow(text: string, count: number, limit: number) {
-  const prefix = visiblePrefix(text, count);
-  if (prefix.length <= limit) return prefix;
-  const start = prefix.length - limit;
-  const segments = segmenter?.segment(prefix);
-  const boundary = segments?.containing?.(start)?.index ?? start;
-  return prefix.slice(boundary);
+  return createVisibleTextReader(text).window(count, limit);
+}
+
+/** One segmentation handle per text snapshot, shared by all reveal frames.
+ * In particular, long thinking text must not recreate both full-text and
+ * prefix segmentation handles on every frame. Boundaries still use the
+ * platform grapheme algorithm, including joined emoji and combining marks. */
+export function createVisibleTextReader(text: string) {
+  let segments: ReturnType<Intl.Segmenter["segment"]> | undefined;
+  const boundary = (count: number) => {
+    if (count >= text.length) return text.length;
+    if (count <= 0) return 0;
+    segments ??= segmenter?.segment(text);
+    return segments?.containing?.(count)?.index ?? text.length;
+  };
+  return {
+    prefix: (count: number) => text.slice(0, boundary(count)),
+    window(count: number, limit: number) {
+      const end = boundary(count);
+      if (end <= limit) return text.slice(0, end);
+      const start = boundary(end - limit);
+      // Without grapheme support, show complete text rather than split emoji.
+      return text.slice(start > end - limit ? 0 : start, end);
+    },
+  };
 }

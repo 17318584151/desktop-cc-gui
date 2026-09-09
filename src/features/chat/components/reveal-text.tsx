@@ -1,6 +1,6 @@
-import { memo, useCallback, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useReducedMotion } from "motion/react";
-import { StreamReveal, visiblePrefix, visibleWindow } from "./stream-reveal";
+import { StreamReveal, createVisibleTextReader } from "./stream-reveal";
 
 /** Only the text runs crossing the reveal cursor rerender each frame.
  * Markdown parsing, code highlighting and the timeline stay out of this loop.
@@ -14,7 +14,8 @@ export const RevealText = memo(function RevealText({ controller, start, children
   const subscribe = useCallback((notify: () => void) => controller.subscribe(start, children.length, notify), [controller, start, children.length]);
   const snapshot = useCallback(() => controller.read(start, children.length), [controller, start, children.length]);
   const count = useSyncExternalStore(subscribe, snapshot, () => children.length);
-  return <span>{windowSize ? visibleWindow(children, count, windowSize) : visiblePrefix(children, count)}</span>;
+  const reader = useMemo(() => createVisibleTextReader(children), [children]);
+  return <span>{windowSize ? reader.window(count, windowSize) : reader.prefix(count)}</span>;
 });
 
 /** Plain streaming text (thinking) shares the frame cursor without parsing
