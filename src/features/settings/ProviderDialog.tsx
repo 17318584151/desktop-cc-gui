@@ -313,6 +313,9 @@ function FetchModelsControl({
   );
 }
 
+const slotLabelKey = (slot: ClaudeModelSlot) =>
+  `settings.cli${slot.charAt(0).toUpperCase()}${slot.slice(1)}Model`;
+
 export function ProviderDialog({ engine, title, initial, onSubmit, onCancel }: ProviderDialogProps) {
   const { t } = useTranslation();
   const isClaude = engine === "claude";
@@ -555,9 +558,6 @@ export function ProviderDialog({ engine, title, initial, onSubmit, onCancel }: P
     }
     onSubmit(value);
   };
-
-  const slotLabelKey = (slot: ClaudeModelSlot) =>
-    `settings.cli${slot.charAt(0).toUpperCase()}${slot.slice(1)}Model`;
 
   return (
     <ModalShell

@@ -68,6 +68,9 @@ function GroupNameEditor({
           if (hint) setHint(null);
         }}
         onKeyDown={(e) => {
+          // Enter/Escape during IME composition (e.g. picking a Chinese
+          // candidate) belong to the IME — never submit or cancel.
+          if (e.nativeEvent.isComposing) return;
           if (e.key === "Enter") {
             e.preventDefault();
             commit();

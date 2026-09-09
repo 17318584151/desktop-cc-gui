@@ -53,14 +53,25 @@ export interface PluginHandle {
 const REMOTE_CSS = /@import|url\(\s*['"]?https?:/i;
 
 /** Shared stylesheet mount: tagged `<style data-plugin=id>` in <head>,
- *  disposer removes it. Remote references rejected (plan §8 gate rule). */
-function mountPluginCss(id: string, css: string): Disposer {
+ *  disposer removes it. Remote references rejected (plan §8 gate rule).
+ *
+ *  `layered` wraps the css in `@layer ccgui-plugins` — declared ahead of
+ *  Tailwind's theme/base/components/utilities in index.css — so host rules
+ *  win every specificity tie against bundle CSS. Without it, a bundle that
+ *  accidentally ships its own Tailwind build lands after the host
+ *  stylesheet, and its later, equal-specificity `.w-full`/`.hidden` defeat
+ *  host responsive variants like `md:w-[254px]` (the settings modal once
+ *  collapsed to a full-width nav rail with no content pane this way).
+ *  Theme-API CSS stays unlayered on purpose: token overrides must beat the
+ *  host's unlayered :root/.dark token definitions.
+ */
+function mountPluginCss(id: string, css: string, opts?: { layered?: boolean }): Disposer {
   if (REMOTE_CSS.test(css)) {
     throw new Error(`[plugins] "${id}" css references remote resources (@import/url http)`);
   }
   const style = document.createElement("style");
   style.dataset.plugin = id;
-  style.textContent = css;
+  style.textContent = opts?.layered ? `@layer ccgui-plugins {\n${css}\n}` : css;
   document.head.appendChild(style);
   return () => style.remove();
 }
@@ -73,7 +84,7 @@ function mountPluginCss(id: string, css: string): Disposer {
  * shipped artifact. The remote-reference rule still applies.
  */
 export function injectBundleCss(handle: PluginHandle, css: string): void {
-  handle.disposers.push(mountPluginCss(handle.manifest.id, css));
+  handle.disposers.push(mountPluginCss(handle.manifest.id, css, { layered: true }));
 }
 
 function tokenBlock(selector: string, tokens: Record<string, string> | undefined): string {

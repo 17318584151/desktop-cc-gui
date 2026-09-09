@@ -76,6 +76,9 @@ describe("createPluginContext", () => {
     const dispose = ctx.theme.injectCss(".composer { border-color: red; }");
     const node = document.head.querySelector('style[data-plugin="test-plugin"]');
     expect(node?.textContent).toContain("border-color: red");
+    // Theme-API CSS stays unlayered: token overrides must beat the host's
+    // unlayered :root/.dark token definitions.
+    expect(node?.textContent).not.toContain("@layer");
     dispose();
     expect(document.head.querySelector('style[data-plugin="test-plugin"]')).toBeNull();
   });
@@ -232,9 +235,11 @@ describe("createPluginContext", () => {
   it("injectBundleCss mounts bundle styles without the theme permission and rejects remote refs", () => {
     const handle = createPluginContext(manifest([]), fakeStorage(), { appVersion: "1.0.0" });
     injectBundleCss(handle, ".bundle { color: red; }");
-    expect(document.head.querySelector('style[data-plugin="test-plugin"]')?.textContent).toContain(
-      "color: red",
-    );
+    const css = document.head.querySelector('style[data-plugin="test-plugin"]')?.textContent ?? "";
+    expect(css).toContain("color: red");
+    // Bundle CSS is wrapped in the ccgui-plugins layer (declared first in
+    // index.css) so it can never outrank host utilities on specificity ties.
+    expect(css).toMatch(/^@layer ccgui-plugins \{/);
     expect(handle.disposers).toHaveLength(1);
     handle.disposers[0]();
     expect(document.head.querySelector('style[data-plugin="test-plugin"]')).toBeNull();

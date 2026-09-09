@@ -24,6 +24,22 @@ const PORT_MAX = 65535;
 /** Connection lifecycle, derived from the status snapshot + busy flags. */
 type HostState = "checking" | "starting" | "missing" | "connected" | "down";
 
+const DOT_CLASS: Record<HostState, string> = {
+  connected: "bg-notification-success-foreground",
+  down: "bg-text-error-primary",
+  checking: "bg-background-quaternary-default",
+  starting: "bg-background-quaternary-default",
+  missing: "bg-background-quaternary-default",
+};
+
+const onFieldKeyDown = (commit: () => void) => (e: KeyboardEvent) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    commit();
+    (e.target as HTMLElement).blur();
+  }
+};
+
 /**
  * DeepSeek Harness host section, embedded in the CLI 管理 dsh page after the
  * 引擎设置 card: CLI version/update, local host status (adopt or spawn on
@@ -172,14 +188,6 @@ export function DshHostSection() {
     void save({ dshPort: n }).then(() => void refreshStatus());
   }, [portDraft, port, save, refreshStatus]);
 
-  const onFieldKeyDown = (commit: () => void) => (e: KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commit();
-      (e.target as HTMLElement).blur();
-    }
-  };
-
   const chooseBin = useCallback(async () => {
     const path = await pickFile(t("settings.dshCustomPath"), []);
     if (path) void save({ dshBin: path });
@@ -192,13 +200,6 @@ export function DshHostSection() {
     missing: t("settings.dshNotInstalled"),
     connected: t("settings.dshHostConnected"),
     down: t("settings.dshHostDown"),
-  };
-  const dotClass: Record<HostState, string> = {
-    connected: "bg-notification-success-foreground",
-    down: "bg-text-error-primary",
-    checking: "bg-background-quaternary-default",
-    starting: "bg-background-quaternary-default",
-    missing: "bg-background-quaternary-default",
   };
 
   const facts: ReactNode[] = [];
@@ -304,7 +305,7 @@ export function DshHostSection() {
           className="flex w-full flex-col gap-3 rounded-2xl bg-background-secondary-default p-3"
         >
           <div className="flex items-center gap-2">
-            <span aria-hidden className={cx("size-2 shrink-0 rounded-full", dotClass[hostState])} />
+            <span aria-hidden className={cx("size-2 shrink-0 rounded-full", DOT_CLASS[hostState])} />
             <p className="text-body-medium text-text-primary">{statusTitle[hostState]}</p>
           </div>
           {hostState === "connected" && (
