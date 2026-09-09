@@ -275,7 +275,7 @@ export const FileDiffViewer = memo(function FileDiffViewer({
       <div className="max-h-72 overflow-auto py-1">
         {diffLines.length === 0 ? (
           <div className="px-3 py-2 text-text-tertiary italic">
-            {t("common.noData", "无修改内容")}
+            {t("chat.diffEmpty")}
           </div>
         ) : (
           diffLines.map((line, idx) => {
@@ -443,11 +443,11 @@ export const BashCommandViewer = memo(function BashCommandViewer({
               className="flex items-center gap-1 cursor-pointer hover:text-text-secondary transition-colors"
             >
               <CornerDownRight className="size-3" aria-hidden />
-              <span>{t("chat.toolResult", "执行结果")}</span>
+              <span>{t("chat.toolResult")}</span>
               {formattedResult.isError && (
                 <span className="flex items-center gap-0.5 text-red-600 dark:text-red-400 font-semibold">
                   <AlertCircle className="size-3" aria-hidden />
-                  {t("chat.toolFailed", "失败")}
+                  {t("chat.toolFailed")}
                 </span>
               )}
             </button>
@@ -501,7 +501,7 @@ export const GenericToolViewer = memo(function GenericToolViewer({
       {formattedArgs && (
         <div className="p-2">
           <div className="mb-1 text-caption-1-medium text-text-tertiary">
-            {t("chat.toolCallArgs", "参数")}
+            {t("chat.toolCallArgs")}
           </div>
           <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all text-text-secondary">
             {formattedArgs}
@@ -516,7 +516,7 @@ export const GenericToolViewer = memo(function GenericToolViewer({
             className="mb-1 flex items-center gap-1 text-caption-1-medium text-text-tertiary hover:text-text-secondary cursor-pointer"
           >
             <CornerDownRight className="size-3" aria-hidden />
-            <span>{t("chat.toolResult", "执行结果")}</span>
+            <span>{t("chat.toolResult")}</span>
           </button>
           {showResult && (
             <pre

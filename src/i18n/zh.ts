@@ -129,6 +129,7 @@ export const zh = {
     toolCallCollapse: "收起工具参数",
     toolResult: "执行结果",
     toolFailed: "失败",
+    diffEmpty: "无修改内容",
     copy: "复制",
     cliPicker: "选择 CLI",
     engineHeader: "{{name}} 引擎",

@@ -10,6 +10,9 @@ pub struct ClaudeEngine {
     /// Per-block partial JSON for tool_use inputs. Streamed as
     /// `input_json_delta` after a name-only `content_block_start`.
     pending_tool_json: Mutex<HashMap<u64, PendingTool>>,
+    /// tool_use id -> tool name, recorded at `content_block_start` so a
+    /// later `tool_result` (user message) can be attributed to its call.
+    tool_names: Mutex<HashMap<String, String>>,
 }
 
 struct PendingTool {
@@ -21,6 +24,7 @@ impl ClaudeEngine {
     pub fn new() -> Self {
         Self {
             pending_tool_json: Mutex::new(HashMap::new()),
+            tool_names: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -126,7 +130,9 @@ impl Engine for ClaudeEngine {
                     out.push(EngineEvent::Warn(format_api_retry(&value)));
                 }
             }
-            "stream_event" => parse_stream_event(&self.pending_tool_json, &value, out),
+            "stream_event" => {
+                parse_stream_event(&self.pending_tool_json, &self.tool_names, &value, out)
+            }
             "assistant" => {
                 // Full message snapshot; only used as session-id source when
                 // partial deltas are active (frontend renders the delta tail).
@@ -146,7 +152,10 @@ impl Engine for ClaudeEngine {
                         });
                     }
                 }
-                // Tool result output emitted in response to tool_use
+                // Tool result output emitted in response to tool_use. The
+                // tool name is resolved from the tool_use_id recorded at
+                // content_block_start, so the result patch lands on the
+                // matching row even when tool calls run in parallel.
                 if let Some(content) = value
                     .get("message")
                     .and_then(|m| m.get("content"))
@@ -154,10 +163,31 @@ impl Engine for ClaudeEngine {
                 {
                     for block in content {
                         if block.get("type").and_then(Value::as_str) == Some("tool_result") {
-                            let res = value
-                                .get("toolUseResult")
-                                .or_else(|| block.get("content"));
-                            out.push(super::tool_result_patch("", res));
+                            // Error blocks are surfaced as permission denials
+                            // above (or narrated by the model); denial-shaped
+                            // text without is_error stays silent for the same
+                            // reason. Keep both out of the timeline panel to
+                            // avoid double-reporting.
+                            if block
+                                .get("is_error")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                                || looks_like_permission_denial(&tool_result_block_text(block))
+                            {
+                                continue;
+                            }
+                            let res = value.get("toolUseResult").or_else(|| block.get("content"));
+                            let name = block
+                                .get("tool_use_id")
+                                .and_then(Value::as_str)
+                                .and_then(|id| {
+                                    self.tool_names
+                                        .lock()
+                                        .ok()
+                                        .and_then(|map| map.get(id).cloned())
+                                })
+                                .unwrap_or_default();
+                            out.push(super::tool_result_patch(name, res));
                         }
                     }
                 }
@@ -257,6 +287,21 @@ fn extract_absolute_path(text: &str) -> Option<String> {
     None
 }
 
+/// Text payload of a single tool_result block: plain string or joined text
+/// parts.
+fn tool_result_block_text(block: &Value) -> String {
+    match block.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter(|p| p.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|p| p.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
 /// Error texts of tool_result blocks in a "user" stream line. Content may be
 /// a plain string or an array of text blocks.
 fn tool_result_error_texts(value: &Value) -> Vec<String> {
@@ -275,16 +320,7 @@ fn tool_result_error_texts(value: &Value) -> Vec<String> {
         if !block.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
             continue;
         }
-        let text = match block.get("content") {
-            Some(Value::String(s)) => s.clone(),
-            Some(Value::Array(parts)) => parts
-                .iter()
-                .filter(|p| p.get("type").and_then(Value::as_str) == Some("text"))
-                .filter_map(|p| p.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            _ => String::new(),
-        };
+        let text = tool_result_block_text(block);
         let text = text.trim().chars().take(500).collect::<String>();
         if !text.is_empty() {
             out.push(text);
@@ -320,6 +356,7 @@ fn format_api_retry(value: &Value) -> String {
 /// Anthropic SSE wrapped events (requires --include-partial-messages).
 fn parse_stream_event(
     pending: &Mutex<HashMap<u64, PendingTool>>,
+    tool_names: &Mutex<HashMap<String, String>>,
     value: &Value,
     out: &mut Vec<EngineEvent>,
 ) {
@@ -330,7 +367,7 @@ fn parse_stream_event(
         Some("content_block_delta") => parse_content_block_delta(pending, event, out),
         // Tool calls surface at block start with `input: {}`; the real
         // arguments stream in as `input_json_delta` and flush on stop.
-        Some("content_block_start") => parse_content_block_start(pending, event, out),
+        Some("content_block_start") => parse_content_block_start(pending, tool_names, event, out),
         Some("content_block_stop") => parse_content_block_stop(pending, event, out),
         _ => {}
     }
@@ -382,6 +419,7 @@ fn parse_content_block_delta(
 
 fn parse_content_block_start(
     pending: &Mutex<HashMap<u64, PendingTool>>,
+    tool_names: &Mutex<HashMap<String, String>>,
     event: &Value,
     out: &mut Vec<EngineEvent>,
 ) {
@@ -397,6 +435,11 @@ fn parse_content_block_start(
         .unwrap_or("tool")
         .to_string();
     let input = block.get("input");
+    if let Some(id) = block.get("id").and_then(Value::as_str) {
+        if let Ok(mut map) = tool_names.lock() {
+            map.insert(id.to_string(), name.clone());
+        }
+    }
     if let Some(index) = event.get("index").and_then(Value::as_u64) {
         if let Ok(mut map) = pending.lock() {
             map.insert(
@@ -509,6 +552,59 @@ mod tests {
                 assert!(*patch);
             }
             _ => panic!("expected patched tool message"),
+        }
+    }
+
+    #[test]
+    fn tool_result_is_attributed_via_tool_use_id() {
+        let engine = ClaudeEngine::new();
+        let start = serde_json::json!({
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": { "type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {} }
+            }
+        })
+        .to_string();
+        let user = serde_json::json!({
+            "type": "user",
+            "message": {
+                "content": [
+                    { "type": "tool_result", "tool_use_id": "toolu_1", "content": "On branch main" }
+                ]
+            }
+        })
+        .to_string();
+        let mut out = Vec::new();
+        engine.parse_line(&start, &mut out);
+        out.clear();
+        engine.parse_line(&user, &mut out);
+        let patch = out
+            .iter()
+            .find(|e| {
+                matches!(
+                    e,
+                    EngineEvent::Message {
+                        patch: true,
+                        result: Some(_),
+                        ..
+                    }
+                )
+            })
+            .expect("expected a tool result patch");
+        match patch {
+            EngineEvent::Message {
+                text,
+                result,
+                patch,
+                ..
+            } => {
+                assert_eq!(text, "Bash");
+                assert_eq!(result, &Some(serde_json::json!("On branch main")));
+                assert!(*patch);
+            }
+            _ => unreachable!(),
         }
     }
 

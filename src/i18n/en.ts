@@ -133,6 +133,7 @@ export const en: Messages = {
     toolCallCollapse: "Collapse tool arguments",
     toolResult: "Output",
     toolFailed: "Failed",
+    diffEmpty: "No changes",
     copy: "Copy",
     cliPicker: "Select CLI",
     engineHeader: "{{name}} Engine",
