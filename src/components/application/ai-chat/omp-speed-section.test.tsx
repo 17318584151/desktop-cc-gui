@@ -19,15 +19,17 @@ it("toggles Fast on with an accessible lightning button", async () => {
   await act(async () => button.click());
   expect(save).toHaveBeenCalledWith("priority");
 });
-it("disables unsupported models without displaying remembered Fast as active", async () => {
+it("hides Fast for other models and restores the preference only on Codex", async () => {
   await act(async () => root.render(<OmpSpeedSection model="anthropic/claude" value="priority" onChange={vi.fn()} />));
-  expect(node.querySelector("button")!.disabled).toBe(true);
-  expect(node.querySelector("button")!.getAttribute("aria-pressed")).toBe("false");
-  for (const model of ["", "gpt-5.4", "custom/gpt-5.4", "openai/"]) expect(supportsOmpFastMode(model)).toBe(false);
-  expect(supportsOmpFastMode("openai/gpt-5.4")).toBe(true);
+  expect(node.querySelector("button")).toBeNull();
+  for (const model of ["", "gpt-5.4", "custom/gpt-5.4", "openai/", "openai/gpt-5.4", "openai-codex/"]) expect(supportsOmpFastMode(model)).toBe(false);
+  expect(supportsOmpFastMode("openai-codex/gpt-5.4")).toBe(true);
+  await act(async () => root.render(<OmpSpeedSection model="openai-codex/gpt-5.4" value="priority" onChange={vi.fn()} />));
+  expect(node.querySelector("button")!.getAttribute("aria-pressed")).toBe("true");
+
 });
 it("reports save failure and retains the previous selection", async () => {
-  await act(async () => root.render(<OmpSpeedSection model="openai/gpt-5.4" value="default" onChange={vi.fn().mockRejectedValue(new Error("disk"))} />));
+  await act(async () => root.render(<OmpSpeedSection model="openai-codex/gpt-5.4" value="default" onChange={vi.fn().mockRejectedValue(new Error("disk"))} />));
   await act(async () => node.querySelector("button")!.click());
   expect(node.querySelector("button")!.getAttribute("aria-pressed")).toBe("false");
   expect(node.querySelector('[role="alert"]')!.textContent).toBe("chat.ompSpeedSaveError");
@@ -35,7 +37,7 @@ it("reports save failure and retains the previous selection", async () => {
 it("saving blocks duplicate changes and supports explicit off and inheritance", async () => {
   let resolve!: () => void;
   const save = vi.fn(() => new Promise<void>(r => { resolve = r; }));
-  await act(async () => root.render(<OmpSpeedSection model="openai/gpt-5.4" value="priority" onChange={save} />));
+  await act(async () => root.render(<OmpSpeedSection model="openai-codex/gpt-5.4" value="priority" onChange={save} />));
   expect(node.querySelector("button")!.getAttribute("aria-pressed")).toBe("true");
   await act(async () => node.querySelector("button")!.click());
   expect(save).toHaveBeenCalledWith("default");

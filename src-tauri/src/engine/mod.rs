@@ -930,6 +930,8 @@ mod permission_tests {
             Some("google/gemini"),
             Some("gpt-5.4"),
             Some("openai/"),
+            Some("openai/gpt-5.4"),
+            Some("openai-codex/"),
             Some("custom/gpt-5.4"),
         ] {
             request.model = model.map(str::to_string);
@@ -937,7 +939,7 @@ mod permission_tests {
                 .iter()
                 .any(|a| a == "--service-tier"));
         }
-        request.model = Some("openai/gpt-5.4".into());
+        request.model = Some("openai-codex/gpt-5.4".into());
         assert!(!argv(&pi_family::pi(), &request)
             .iter()
             .any(|a| a == "--service-tier"));

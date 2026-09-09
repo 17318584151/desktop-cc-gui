@@ -537,9 +537,9 @@ function EngineModelPanel({
       </div>
 
       {/* Full-bleed divider, like the reference submenu. */}
-      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", option.id === "omp" ? "mb-1" : "mb-3")} />
+      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", option.id === "omp" && supportsOmpFastMode(selectedModelId) ? "mb-1" : "mb-3")} />
       <FlyoutEffortSection
-        header={option.id === "omp" ? (
+        header={option.id === "omp" && supportsOmpFastMode(selectedModelId) ? (
           <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange}>
             <span className="text-body-medium text-text-primary">{t(EFFORT_LABEL_KEYS[effort])}</span>
           </OmpSpeedSection>

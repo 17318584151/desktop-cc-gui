@@ -48,12 +48,11 @@ impl Engine for PiFamilyEngine {
             cmd.arg("--model");
             cmd.arg(model);
         }
-        // Only explicit OpenAI selectors opt into this per-app preference.
+        // Only explicit OpenAI-Codex selectors opt into this per-app preference.
         // Never leak it to pi, another provider or an unknown CLI default.
         if self.id == "omp"
             && req.model.as_deref().is_some_and(|m| {
-                m.strip_prefix("openai/")
-                    .or_else(|| m.strip_prefix("openai-codex/"))
+                m.strip_prefix("openai-codex/")
                     .is_some_and(|id| !id.is_empty())
             })
         {

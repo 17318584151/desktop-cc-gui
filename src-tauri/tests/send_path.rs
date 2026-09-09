@@ -340,10 +340,16 @@ echo '{"type":"agent_end"}'
     std::fs::create_dir_all(&workspace).unwrap();
     let (app, events) = build_app(&home);
     let mut settings = ccgui_next_lib::settings::AppSettings::default();
-    settings
-        .default_models
-        .insert("omp".into(), "openai-codex/gpt-5.4".into());
-    for tier in [Some("priority"), Some("default"), None] {
+    for (model, tier) in [
+        ("openai-codex/gpt-5.4", Some("priority")),
+        ("openai-codex/gpt-5.4", Some("default")),
+        ("openai-codex/gpt-5.4", None),
+        ("openai/gpt-5.4", Some("priority")),
+        ("anthropic/claude", Some("priority")),
+        ("google/gemini", Some("priority")),
+        ("openai-codex/gpt-5.4", Some("priority")),
+    ] {
+        settings.default_models.insert("omp".into(), model.into());
         settings.omp_openai_service_tier = tier.map(str::to_string);
         ccgui_next_lib::settings::update_app_settings(settings.clone()).unwrap();
         events.lock().unwrap().clear();
@@ -370,14 +376,17 @@ echo '{"type":"agent_end"}'
         }
         let text = std::fs::read_to_string(workspace.join("omp-args.txt")).unwrap();
         let args: Vec<_> = text.lines().collect();
-        assert!(args
-            .windows(2)
-            .any(|a| a == ["--model", "openai-codex/gpt-5.4"]));
+        assert!(args.windows(2).any(|a| a == ["--model", model]));
         let actual = args
             .iter()
             .position(|a| *a == "--service-tier")
             .map(|i| args[i + 1]);
-        assert_eq!(actual, tier);
+        let expected = if model.starts_with("openai-codex/") {
+            tier
+        } else {
+            None
+        };
+        assert_eq!(actual, expected, "model {model}");
         assert!(events
             .lock()
             .unwrap()

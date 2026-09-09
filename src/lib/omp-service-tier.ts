@@ -4,5 +4,5 @@ export function normalizeOmpServiceTier(value: unknown): OmpServiceTier {
   return value === "default" || value === "priority" ? value : null;
 }
 export function supportsOmpFastMode(model: string): boolean {
-  return /^(openai|openai-codex)\/.+/.test(model);
+  return /^openai-codex\/.+/.test(model);
 }

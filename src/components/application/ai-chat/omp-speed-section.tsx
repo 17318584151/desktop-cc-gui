@@ -15,6 +15,7 @@ export function OmpSpeedSection({ model, value, onChange, children }: {
   const [error, setError] = useState(false);
   const supported = supportsOmpFastMode(model);
   const enabled = supported && value === "priority";
+  if (!supported) return null;
   const change = async (tier: OmpServiceTier) => {
     if (saving || !supported) return;
     setSaving(true);

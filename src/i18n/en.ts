@@ -23,7 +23,7 @@ export const en: Messages = {
     ompSpeed: "Generation speed",
     ompSpeedInherit: "Use OMP setting",
     ompSpeedStandard: "Standard",
-    ompSpeedUnsupported: "Select an OpenAI/Codex model to configure Fast.",
+    ompSpeedUnsupported: "Select a Codex model to configure Fast.",
     ompSpeedSaveError: "Could not save. Speed setting is unchanged; please retry.",
 
     newChat: "New chat",
