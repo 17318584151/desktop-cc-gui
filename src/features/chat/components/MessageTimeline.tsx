@@ -7,10 +7,11 @@ import type { Message } from "@/lib/ipc";
 import type { SessionState } from "../store";
 import { parseUsage } from "../usage";
 import { AgentThinking } from "@/components/application/agent-thinking/agent-thinking";
-import { useThrottled } from "@/hooks/use-throttled";
+import { streamParseInterval, useThrottled } from "@/hooks/use-throttled";
 import { useCopied } from "@/hooks/use-copied";
 import { MessageImages } from "./MessageImages";
-import { MessageAnchorRail, type MessageAnchor } from "./MessageAnchorRail";
+import { MessageAnchorRail } from "./MessageAnchorRail";
+import { createAnchorRowsBuilder } from "./timeline-anchors";
 import { buildRows, collectToolKeys, rowKey, type TimelineRow } from "./timeline-rows";
 import { ProcessDisclosure } from "./ProcessDisclosure";
 import { useScrollFollow, useTailPin } from "./use-scroll-follow";
@@ -19,44 +20,6 @@ import { pluginIdFromRegistryKey, timelineRowRegistry, useRegistry } from "@ccgu
 import { PluginBoundary } from "@/features/plugins/boundary/PluginBoundary";
 import { useAnchorRailScroll } from "./use-anchor-rail-scroll";
 import { useLoadEarlier } from "./use-load-earlier";
-
-const ANCHOR_TITLE_MAX_LENGTH = 60;
-const ANCHOR_DESCRIPTION_MAX_LENGTH = 160;
-
-/** Bounded plain-text preview copy for one anchor: first line is the title,
- * the rest folds into a short description (reference: deriveAnchorPreviewCopy). */
-type AnchorRow = MessageAnchor & { rowIndex: number };
-
-function buildAnchorRows(rows: TimelineRow[]): AnchorRow[] {
-  const anchors: AnchorRow[] = [];
-  rows.forEach((row, rowIndex) => {
-    if (row.kind !== "msg" || row.message.role !== "user") return;
-    const normalizedLines = row.message.text
-      .split("\n")
-      .map((line) => line.trim().replace(/\s+/g, " "))
-      .filter(Boolean);
-    const firstLine = normalizedLines[0] ?? "";
-    const title =
-      firstLine.length > ANCHOR_TITLE_MAX_LENGTH
-        ? `${firstLine.slice(0, ANCHOR_TITLE_MAX_LENGTH)}…`
-        : firstLine;
-    const descriptionSource =
-      normalizedLines.length > 1
-        ? normalizedLines.slice(1).join(" ")
-        : firstLine.slice(ANCHOR_TITLE_MAX_LENGTH).trim();
-    const description =
-      descriptionSource.length > ANCHOR_DESCRIPTION_MAX_LENGTH
-        ? `${descriptionSource.slice(0, ANCHOR_DESCRIPTION_MAX_LENGTH)}…`
-        : descriptionSource;
-    anchors.push({
-      id: `u-${row.message.seq}`,
-      rowIndex,
-      title,
-      ...(description ? { description } : {}),
-    });
-  });
-  return anchors;
-}
 
 const TimelineRowView = memo(function TimelineRowView({
   row,
@@ -114,7 +77,11 @@ const TimelineRowView = memo(function TimelineRowView({
 const LazyMarkdown = lazy(() => import("./Markdown"));
 
 /** Markdown body; the react-markdown/highlight stack loads in a lazy chunk. */
-function Markdown({ text, workspacePath }: { text: string; workspacePath: string }) {
+function Markdown({ text, workspacePath, streaming }: {
+  text: string;
+  workspacePath: string;
+  streaming?: boolean;
+}) {
   return (
     <Suspense
       fallback={
@@ -123,7 +90,7 @@ function Markdown({ text, workspacePath }: { text: string; workspacePath: string
         </div>
       }
     >
-      <LazyMarkdown text={text} workspacePath={workspacePath} />
+      <LazyMarkdown text={text} workspacePath={workspacePath} streaming={streaming} />
     </Suspense>
   );
 }
@@ -208,7 +175,7 @@ const MessageRow = memo(function MessageRow({
   // flush scales linearly with reply length (~30ms at 32KB) and starves the
   // main thread, so the parse is throttled. Settled rows never change and
   // render as-is.
-  const text = useThrottled(message.text, message.live ? 120 : 0);
+  const text = useThrottled(message.text, message.live ? streamParseInterval(message.text.length) : 0);
   if (message.role === "user") {
     return (
       <div className="-mr-1.5 ml-auto flex w-fit max-w-[85%] flex-col rounded-xl bg-bubble-user px-3.5 py-2.5 text-left text-body-regular whitespace-pre-wrap break-words text-text-white">
@@ -221,7 +188,7 @@ const MessageRow = memo(function MessageRow({
   }
   return (
     <div className="group flex flex-col text-left">
-      <Markdown text={text} workspacePath={workspacePath} />
+      <Markdown text={text} workspacePath={workspacePath} streaming={message.live} />
       {turnFinal && (
         <div className="mt-1 flex items-center gap-2">
           <MessageActions text={message.text} />
@@ -248,7 +215,8 @@ export const MessageTimeline = memo(function MessageTimeline({
   const items = session.messages;
   const rows = useMemo(() => buildRows(items), [items]);
   // Anchor rail: one dash per user message (reference: messageAnchors).
-  const anchors = useMemo(() => buildAnchorRows(rows), [rows]);
+  const buildAnchorRows = useMemo(createAnchorRowsBuilder, []);
+  const anchors = useMemo(() => buildAnchorRows(rows), [buildAnchorRows, rows]);
   // Per-timeline, not a module singleton: ChatConversation remounts this
   // with key={sessionKey}, so a tab switch gets a fresh set. Prime from
   // the first snapshot that already has rows so history / tab-open does

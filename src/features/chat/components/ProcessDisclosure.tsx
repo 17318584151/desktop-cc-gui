@@ -6,8 +6,9 @@ import Brain from "lucide-react/dist/esm/icons/brain";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
 import { cx } from "@/utils/cx";
 import { SOFT_EASE } from "@/components/application/agent-log/agent-log-motion";
-import { StepRow, type TaskListChip, type TaskListStep } from "@/components/application/task-list/task-list";
+import { StepRow, type TaskListChip } from "@/components/application/task-list/task-list";
 import { getFileTreeIconSvg } from "@/features/files/fileIcons";
+import { SmoothThinkingText } from "./reveal-text";
 import { markToolKeys, toolEntranceKey, type ProcessItem } from "./timeline-rows";
 
 /** Classify a tool-call label (tool name or shell command) into a type chip. */
@@ -80,18 +81,29 @@ function groupProcessSections(items: ProcessItem[]): ProcessSection[] {
 
 /** Freeze LogRow's `reduce` on first paint so a later parent render cannot
  * flip it mid-entrance (initial only runs on mount). */
-function FrozenStepRow({
+const FrozenStepRow = memo(function FrozenStepRow({
   play,
-  step,
+  text,
+  path,
   first,
   last,
 }: {
   play: boolean;
-  step: TaskListStep;
+  text: string;
+  path: string | null;
   first: boolean;
   last: boolean;
 }) {
   const reduceRef = useRef(!play);
+  const { t } = useTranslation();
+  const fileChip = fileChipFor(path);
+  const step = {
+    label: text,
+    chips: [
+      ...(fileChip ? [fileChip] : []),
+      { label: t(`chat.${toolTypeKey(text)}`) },
+    ],
+  };
   return (
     <StepRow
       step={step}
@@ -101,7 +113,7 @@ function FrozenStepRow({
       reduce={reduceRef.current}
     />
   );
-}
+});
 
 /** Thinking body: brain header + left-railed gray content, mirroring the
  * reference chat UI. Plain pre-wrapped text — never markdown-reparsed per
@@ -124,7 +136,7 @@ function ThinkingSurface({
         </div>
       )}
       <div className="ml-2 whitespace-pre-wrap break-words border-l border-foreground-icon-quaternary pl-4 text-[12px] leading-[1.65] text-text-tertiary">
-        {live ? text.slice(-2000) : text}
+        {live ? <SmoothThinkingText text={text} /> : text}
       </div>
     </div>
   );
@@ -213,13 +225,8 @@ function ProcessDisclosureBody({
                 <FrozenStepRow
                   key={call.index}
                   play={play}
-                  step={{
-                    label: call.text,
-                    chips: [
-                      ...[fileChipFor(call.path)].filter((c): c is TaskListChip => c !== null),
-                      { label: t(`chat.${toolTypeKey(call.text)}`) },
-                    ],
-                  }}
+                  text={call.text}
+                  path={call.path}
                   first={j === 0}
                   last={j === section.calls.length - 1}
                 />

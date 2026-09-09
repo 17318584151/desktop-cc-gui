@@ -1,7 +1,11 @@
-import { isValidElement, memo, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { isValidElement, memo, useLayoutEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
+import { useReducedMotion } from "motion/react";
+import { StreamReveal } from "./stream-reveal";
+import { RevealText } from "./reveal-text";
+import { createRevealPlan } from "./reveal-plan";
+import { createCachedHighlighter } from "./cached-highlight";
 import { openExternal } from "@/lib/platform";
 import { useTranslation } from "react-i18next";
 import Copy from "lucide-react/dist/esm/icons/copy";
@@ -19,7 +23,6 @@ import {
 } from "@/lib/fileLinks";
 
 const REMARK_PLUGINS = [remarkGfm];
-const REHYPE_PLUGINS = [rehypeHighlight];
 /** ReactMarkdown's plugin-list prop type, derived here instead of importing
  * `PluggableList` from unified (a transitive dep we don't declare). */
 type PluginListProp = NonNullable<
@@ -135,14 +138,49 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 export default memo(function Markdown({
   text,
   workspacePath,
+  streaming = false,
 }: {
   text: string;
   workspacePath: string;
+  streaming?: boolean;
 }) {
+  const contributions = useRegistry(markdownRegistry);
+  // External rehype plugins may mutate highlighted nodes in place. Avoid
+  // sharing cached subtrees with that pipeline so mutations cannot accumulate.
+  const cachedHighlight = useMemo(() => createCachedHighlighter(undefined, {
+    entries: contributions.some(c => c.rehypePlugins?.length) ? 0 : 32,
+    characters: 256_000,
+  }), [contributions]);
+  // Historical rows need no reveal spans/subscriptions. Once a live row uses
+  // them, retain its DOM shape on settle so selection does not jump.
+  const [revealEnabled, setRevealEnabled] = useState(streaming);
+  if (streaming && !revealEnabled) setRevealEnabled(true);
+  // Show already-received text on mount (including virtualizer remounts);
+  // smooth only subsequent arrivals, never replay a paragraph from empty.
+  const controller = useMemo(() => new StreamReveal(false), []);
+  const plan = useMemo(createRevealPlan, [text, contributions]);
+  const reducedMotion = useReducedMotion();
+  useLayoutEffect(() => {
+    controller.update(plan.text, streaming && !reducedMotion && !document.hidden);
+  }, [controller, plan, streaming, reducedMotion]);
+  useLayoutEffect(() => {
+    const onVisibility = () => { if (document.hidden) controller.finish(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      controller.cancel();
+    };
+  }, [controller]);
   // Stable components map: a new reference makes ReactMarkdown discard its
   // HAST tree and re-parse the whole document.
   const hostComponents = useMemo<Components>(
     () => ({
+      span: ({ node, className, children }) => {
+        const start = node?.properties.dataStreamStart;
+        return typeof start === "number" && typeof children === "string"
+          ? <RevealText controller={controller} start={start}>{children}</RevealText>
+          : <span className={className}>{children}</span>;
+      },
       a: ({ href, children }) => {
         const url = href ?? "";
         if (isFileLinkUrl(url)) {
@@ -182,7 +220,7 @@ export default memo(function Markdown({
       code: ({ className, children }) => {
         // Block code (inside <pre>) carries the hljs class — leave it alone.
         if (className) return <code className={className}>{children}</code>;
-        const value = String(children ?? "").trim();
+        const value = extractText(children).trim();
         if (!value || !isLinkableFilePath(value)) return <code>{children}</code>;
         return (
           <FileLink href={toFileLink(value)} path={value} workspacePath={workspacePath}>
@@ -192,14 +230,13 @@ export default memo(function Markdown({
       },
       pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
     }),
-    [workspacePath],
+    [workspacePath, controller],
   );
   // Plugin pipeline contributions (plan §4.2 #5): host defaults first, then
   // each plugin's in registration order. Plugin halves arrive as `unknown[]`
   // — blob bundles can't share the host's unified/react-markdown type
   // identities — so the merged lists are asserted back to ReactMarkdown's
   // prop type once, here at the boundary.
-  const contributions = useRegistry(markdownRegistry);
   const remarkPlugins = useMemo(
     () =>
       [
@@ -211,10 +248,11 @@ export default memo(function Markdown({
   const rehypePlugins = useMemo(
     () =>
       [
-        ...REHYPE_PLUGINS,
+        [cachedHighlight, { streaming }],
         ...contributions.flatMap((c) => c.rehypePlugins ?? []),
+        ...(revealEnabled ? [plan.plugin] : []),
       ] as PluginListProp,
-    [contributions],
+    [contributions, cachedHighlight, streaming, revealEnabled, plan],
   );
   // Later wins: plugin component overrides may intentionally shadow host
   // keys, and later registrations shadow earlier ones.
