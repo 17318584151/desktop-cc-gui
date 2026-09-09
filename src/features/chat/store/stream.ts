@@ -89,21 +89,20 @@ export function applyStreamParts(
     const role = part.kind === "thinking" ? "thinking" : "assistant";
     const last = out[out.length - 1];
     if (last?.live && last.role === role) {
-      out = [...out.slice(0, -1), { ...last, text: last.text + part.text }];
+      if (out === messages) out = messages.slice();
+      out[out.length - 1] = { ...last, text: last.text + part.text };
       continue;
     }
     const seq = out.length ? out[out.length - 1].seq + 1 : 1;
-    out = [
-      ...out,
-      {
-        seq,
-        role,
-        text: part.text,
-        ts: new Date().toISOString(),
-        live: true,
-        ...(role === "assistant" ? { model } : {}),
-      },
-    ];
+    if (out === messages) out = messages.slice();
+    out.push({
+      seq,
+      role,
+      text: part.text,
+      ts: new Date().toISOString(),
+      live: true,
+      ...(role === "assistant" ? { model } : {}),
+    });
   }
   return out;
 }

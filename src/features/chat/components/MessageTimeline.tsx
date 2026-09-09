@@ -98,7 +98,11 @@ const TimelineRowView = memo(function TimelineRowView({
 const LazyMarkdown = lazy(() => import("./Markdown"));
 
 /** Markdown body; the react-markdown/highlight stack loads in a lazy chunk. */
-function Markdown({ text, workspacePath }: { text: string; workspacePath: string }) {
+function Markdown({ text, workspacePath, streaming }: {
+  text: string;
+  workspacePath: string;
+  streaming?: boolean;
+}) {
   return (
     <Suspense
       fallback={
@@ -107,7 +111,7 @@ function Markdown({ text, workspacePath }: { text: string; workspacePath: string
         </div>
       }
     >
-      <LazyMarkdown text={text} workspacePath={workspacePath} />
+      <LazyMarkdown text={text} workspacePath={workspacePath} streaming={streaming} />
     </Suspense>
   );
 }
@@ -205,7 +209,7 @@ const MessageRow = memo(function MessageRow({
   }
   return (
     <div className="group flex flex-col text-left">
-      <Markdown text={text} workspacePath={workspacePath} />
+      <Markdown text={text} workspacePath={workspacePath} streaming={message.live} />
       {turnFinal && (
         <div className="mt-1 flex items-center gap-2">
           <MessageActions text={message.text} />

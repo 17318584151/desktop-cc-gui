@@ -129,9 +129,11 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 export default memo(function Markdown({
   text,
   workspacePath,
+  streaming = false,
 }: {
   text: string;
   workspacePath: string;
+  streaming?: boolean;
 }) {
   // Stable components map: a new reference makes ReactMarkdown discard its
   // HAST tree and re-parse the whole document.
@@ -193,7 +195,9 @@ export default memo(function Markdown({
     <div className="prose-chat text-body-regular text-text-primary">
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
+        // Growing code blocks are highlighted once the segment settles.
+        // Markdown structure and copy controls remain available while streaming.
+        rehypePlugins={streaming ? undefined : REHYPE_PLUGINS}
         components={components}
         urlTransform={(url) =>
           // file: is deliberately excluded: model output must not smuggle in
