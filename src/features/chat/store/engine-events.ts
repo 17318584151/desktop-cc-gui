@@ -83,24 +83,65 @@ export function upsertSessionMetaInto(
   });
 }
 
-function onDelta(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  bufferStreamPart(key, "delta", event.data as string, deps.get().models[event.engine] || null);
+/** Effective model for event-stamped rows: the owning tab's per-tab override
+ * wins over the engine's global default, mirroring sendPrompt. */
+function stampedModel(
+  deps: EngineEventDeps,
+  engine: string,
+  key: string,
+): string | null {
+  const s = deps.get();
+  const tab = s.openTabs.find(
+    (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+  );
+  return (tab?.model ?? s.models[engine]) || null;
+}
+
+function onDelta(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  bufferStreamPart(
+    key,
+    "delta",
+    event.data as string,
+    stampedModel(deps, event.engine, key),
+  );
   scheduleDeltaFlush(deps.set);
 }
 
-function onThinking(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  bufferStreamPart(key, "thinking", event.data as string, deps.get().models[event.engine] || null);
+function onThinking(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  bufferStreamPart(
+    key,
+    "thinking",
+    event.data as string,
+    stampedModel(deps, event.engine, key),
+  );
   scheduleDeltaFlush(deps.set);
 }
 
-function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
-  const data = event.data as { role: string; text: string; path?: string | null; todos?: TodosPayload };
+function onMessage(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  const data = event.data as {
+    role: string;
+    text: string;
+    path?: string | null;
+    todos?: TodosPayload;
+  };
   if (data.role === "tool") {
     appendToolMessage(
       deps.set,
       key,
       data.text,
-      deps.get().models[event.engine] || null,
+      stampedModel(deps, event.engine, key),
       data.path ?? null,
       data.todos ?? null,
     );
@@ -124,7 +165,7 @@ function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps
               role: "assistant",
               text: data.text,
               ts: new Date().toISOString(),
-              model: deps.get().models[event.engine] || null,
+              model: stampedModel(deps, event.engine, key),
               seq,
             },
           ],
@@ -134,15 +175,22 @@ function onMessage(event: EngineEventPayload, key: string, deps: EngineEventDeps
   });
 }
 
-function onSession(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
+function onSession(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
   const nativeId = event.data as string;
   // Resolve the workspace from the tab that owns this key — not from the
   // active tab. A first message sent on a background tab must not adopt the
   // foreground tab's workspace (the session would be orphaned there).
   const tab = deps
     .get()
-    .openTabs.find((t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key);
-  const workspacePath = tab?.workspacePath ?? deps.get().active?.workspacePath ?? "";
+    .openTabs.find(
+      (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+    );
+  const workspacePath =
+    tab?.workspacePath ?? deps.get().active?.workspacePath ?? "";
   const newKey = sessionKey(event.engine, nativeId, workspacePath);
   runRouting.set(event.runId, newKey);
   // Unflushed stream chunks sit under the pre-migration key; move them too.
@@ -207,11 +255,19 @@ function onSession(event: EngineEventPayload, key: string, deps: EngineEventDeps
   );
 }
 
-function onUsage(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
+function onUsage(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
   patchSession(deps.set, key, { usage: event.data });
 }
 
-function onError(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
+function onError(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
   // Fold unflushed chunks into rows and settle them: the turn stops here,
   // and the scheduled flush must not write them in after the fact.
   const pending = drainPending(key);
@@ -219,7 +275,11 @@ function onError(event: EngineEventPayload, key: string, deps: EngineEventDeps) 
     const cur = s.bySession[key] ?? EMPTY_SESSION;
     const messages = settleLiveRows(
       pending
-        ? applyStreamParts(cur.messages, pending.parts, pending.model ?? (deps.get().models[event.engine] || null))
+        ? applyStreamParts(
+            cur.messages,
+            pending.parts,
+            pending.model ?? (deps.get().models[event.engine] || null),
+          )
         : cur.messages,
     );
     return {
@@ -260,7 +320,11 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   deps.set((s) => {
     const cur = s.bySession[key] ?? EMPTY_SESSION;
     let messages = pending
-      ? applyStreamParts(cur.messages, pending.parts, pending.model ?? (deps.get().models[event.engine] || null))
+      ? applyStreamParts(
+          cur.messages,
+          pending.parts,
+          pending.model ?? (deps.get().models[event.engine] || null),
+        )
       : cur.messages;
     messages = settleLiveRows(messages);
     // Stamp usage onto the turn's last assistant message, mirroring how
@@ -306,7 +370,10 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
 
 /** Resolve an event's session key (run routing, then session-id match) and
  * dispatch to the per-kind handler. */
-export function handleEngineEvents(events: EngineEventPayload[], deps: EngineEventDeps) {
+export function handleEngineEvents(
+  events: EngineEventPayload[],
+  deps: EngineEventDeps,
+) {
   for (const event of events) {
     const state = deps.get();
     let key = runRouting.get(event.runId);

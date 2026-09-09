@@ -5,11 +5,18 @@ import { useShallow } from "zustand/react/shallow";
 import type { ComposerInputHandle } from "@/components/application/ai-chat/ai-chat-composer";
 import { mentionToken } from "@/components/application/ai-chat/file-tags";
 import { AddMenu } from "@/components/application/ai-chat/add-menu";
+import { PermissionMenu } from "@/components/application/ai-chat/permission-menu";
 import {
-  PermissionMenu,
-} from "@/components/application/ai-chat/permission-menu";
-import { CliMenu, type EffortLevel } from "@/components/application/ai-chat/cli-menu";
-import { effectivePermission, useChatStore, sessionKey, type ActiveSession, type QueuedMessage } from "../store";
+  CliMenu,
+  type EffortLevel,
+} from "@/components/application/ai-chat/cli-menu";
+import {
+  effectivePermission,
+  useChatStore,
+  sessionKey,
+  type ActiveSession,
+  type QueuedMessage,
+} from "../store";
 import { recordPrompt } from "../prompt-history";
 import { MessageTimeline } from "./MessageTimeline";
 import { ConversationFooter } from "./ConversationFooter";
@@ -68,16 +75,26 @@ export const ChatConversation = memo(function ChatConversation({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const key = active ? sessionKey(active.engine, active.sessionId, active.workspacePath) : "";
+  const key = active
+    ? sessionKey(active.engine, active.sessionId, active.workspacePath)
+    : "";
   // Key-scoped, LOW-frequency slices only: streaming flips at turn start/end,
   // queue/error/usage change on discrete actions. The per-flush messages
   // array is subscribed inside SessionTimeline so stream deltas re-render
   // only that subtree — never the composer, queue bar, or status bar here.
-  const streaming = useChatStore((s) => (key ? (s.bySession[key]?.streaming ?? false) : false));
-  const sessionError = useChatStore((s) => (key ? (s.bySession[key]?.error ?? null) : null));
+  const streaming = useChatStore((s) =>
+    key ? (s.bySession[key]?.streaming ?? false) : false,
+  );
+  const sessionError = useChatStore((s) =>
+    key ? (s.bySession[key]?.error ?? null) : null,
+  );
   const dismissSessionError = useChatStore((s) => s.dismissSessionError);
-  const queue = useChatStore((s) => (key ? (s.bySession[key]?.queue ?? EMPTY_QUEUE) : EMPTY_QUEUE));
-  const sessionUsage = useChatStore((s) => (key ? s.bySession[key]?.usage : undefined));
+  const queue = useChatStore((s) =>
+    key ? (s.bySession[key]?.queue ?? EMPTY_QUEUE) : EMPTY_QUEUE,
+  );
+  const sessionUsage = useChatStore((s) =>
+    key ? s.bySession[key]?.usage : undefined,
+  );
   const hasSession = useChatStore((s) => key in s.bySession);
   const draft = useChatStore((s) => s.drafts[key] ?? "");
   const sendShortcut = useChatStore((s) => s.sendShortcut);
@@ -122,26 +139,61 @@ export const ChatConversation = memo(function ChatConversation({
       interrupt: s.interrupt,
     })),
   );
-  const { branch, branches, branchError, handleBranchSelect, dismissBranchError } = useBranchSwitcher(active);
+  const {
+    branch,
+    branches,
+    branchError,
+    handleBranchSelect,
+    dismissBranchError,
+  } = useBranchSwitcher(active);
   // Permission mode lives in the store (persisted) and flows into every
   // send; engines that cannot honor the selected mode fall back to their
   // first supported one, which is what the chip displays.
   const permission = useChatStore((s) => s.permission);
   const setPermission = useChatStore((s) => s.setPermission);
-  const { images, previews, imageError, removeImage, clearImages, pasteImages, dismissImageError } =
-    useComposerImages();
-  const { catalogs, modelsByEngine, refresh: refreshModels } = useEngineModels(engines, models, pinModels);
+  const {
+    images,
+    previews,
+    imageError,
+    removeImage,
+    clearImages,
+    pasteImages,
+    dismissImageError,
+  } = useComposerImages();
+  const {
+    catalogs,
+    modelsByEngine,
+    refresh: refreshModels,
+  } = useEngineModels(engines, models, pinModels);
+
+  // Per-tab model/effort overrides win over the engine's global defaults, so
+  // the picker follows each session across tab switches (multi-CLI tabs keep
+  // their own selection).
+  const tabModel =
+    active && active.engine === activeEngine ? active.model : undefined;
+  const tabEffort =
+    active && active.engine === activeEngine ? active.effort : undefined;
+  const displayModels =
+    tabModel !== undefined ? { ...models, [activeEngine]: tabModel } : models;
+  const displayEfforts =
+    tabEffort !== undefined
+      ? { ...efforts, [activeEngine]: tabEffort }
+      : efforts;
 
   // The catalog's context window beats the 200k assumption when the
   // selected model reports one.
   const contextMax =
-    (catalogs[activeEngine]?.models ?? []).find((m) => m.id === models[activeEngine])
-      ?.contextWindow || CONTEXT_WINDOW_TOKENS;
+    (catalogs[activeEngine]?.models ?? []).find(
+      (m) => m.id === displayModels[activeEngine],
+    )?.contextWindow || CONTEXT_WINDOW_TOKENS;
 
   const engineInfo = engines.find((e) => e.id === activeEngine);
   const supportsImages = engineInfo?.supportsImages ?? false;
 
-  const handleLoadEarlier = useCallback(() => void loadEarlier(), [loadEarlier]);
+  const handleLoadEarlier = useCallback(
+    () => void loadEarlier(),
+    [loadEarlier],
+  );
 
   const submit = useCallback(
     (value: string) => {
@@ -170,7 +222,10 @@ export const ChatConversation = memo(function ChatConversation({
     input.insertText(`${mentionToken(pendingMention.path)} `);
   }, [pendingMention, clearPendingMention, composerInputRef]);
 
-  const handleDraftChange = useCallback((v: string) => setDraft(key, v), [key, setDraft]);
+  const handleDraftChange = useCallback(
+    (v: string) => setDraft(key, v),
+    [key, setDraft],
+  );
   const handleStop = useCallback(() => void interrupt(), [interrupt]);
   // Disabled-in-settings CLIs leave the picker entirely; the greyed-out
   // state stays reserved for CLIs whose binary is not installed.
@@ -227,9 +282,9 @@ export const ChatConversation = memo(function ChatConversation({
           value={activeEngine}
           onChange={setActiveEngine}
           modelsByEngine={modelsByEngine}
-          models={models}
+          models={displayModels}
           onModelChange={handleModelChange}
-          efforts={efforts}
+          efforts={displayEfforts}
           onEffortChange={handleEffortChange}
           ompServiceTier={ompServiceTier}
           onOmpServiceTierChange={setOmpServiceTier}
@@ -244,9 +299,9 @@ export const ChatConversation = memo(function ChatConversation({
       activeEngine,
       setActiveEngine,
       modelsByEngine,
-      models,
+      displayModels,
       handleModelChange,
-      efforts,
+      displayEfforts,
       handleEffortChange,
       ompServiceTier,
       setOmpServiceTier,
@@ -291,7 +346,9 @@ export const ChatConversation = memo(function ChatConversation({
           />
         </>
       ) : (
-        <EmptyState className="text-body-medium">{t("chat.selectSession")}</EmptyState>
+        <EmptyState className="text-body-medium">
+          {t("chat.selectSession")}
+        </EmptyState>
       )}
 
       <ConversationFooter
