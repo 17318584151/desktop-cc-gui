@@ -10,6 +10,7 @@ const FLUSH_BYTES: usize = 64 * 1024;
 pub const ENGINE_EVENT_NAME: &str = "engine://event";
 pub const SESSIONS_CHANGED_EVENT: &str = "sessions://changed";
 pub const SCAN_PROGRESS_EVENT: &str = "scan://progress";
+pub const INSTALL_PROGRESS_EVENT: &str = "plugin://install-progress";
 
 /// History-scan progress for the status bar; `finished` marks the last event
 /// of a scan run.
@@ -18,6 +19,16 @@ pub const SCAN_PROGRESS_EVENT: &str = "scan://progress";
 pub struct ScanProgress {
     pub done: usize,
     pub total: usize,
+    pub finished: bool,
+}
+
+/// Local plugin-install copy progress for the manager UI; `finished` marks
+/// the last event of an install run. done/total are bytes.
+#[derive(serde::Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallProgress {
+    pub done: u64,
+    pub total: u64,
     pub finished: bool,
 }
 
@@ -163,6 +174,12 @@ impl EventSink {
     pub fn emit_scan_progress(&self, progress: ScanProgress) {
         if let Ok(json) = serde_json::to_string(&progress) {
             self.emitter.emit_json(SCAN_PROGRESS_EVENT, &json);
+        }
+    }
+    /// Non-batched immediate emit; the install copy self-throttles.
+    pub fn emit_install_progress(&self, progress: InstallProgress) {
+        if let Ok(json) = serde_json::to_string(&progress) {
+            self.emitter.emit_json(INSTALL_PROGRESS_EVENT, &json);
         }
     }
 }

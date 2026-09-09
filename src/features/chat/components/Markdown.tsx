@@ -1,4 +1,4 @@
-import { isValidElement, memo, useMemo, useState, type ReactNode } from "react";
+import { isValidElement, memo, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import Copy from "lucide-react/dist/esm/icons/copy";
 import Check from "lucide-react/dist/esm/icons/check";
 import { useFilesStore } from "@/features/files/store";
+import { markdownRegistry, useRegistry } from "@ccgui/plugin-sdk";
 import { useCopied } from "@/hooks/use-copied";
 import { FileLinkContextMenu } from "./FileLinkContextMenu";
 import {
@@ -19,6 +20,11 @@ import {
 
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeHighlight];
+/** ReactMarkdown's plugin-list prop type, derived here instead of importing
+ * `PluggableList` from unified (a transitive dep we don't declare). */
+type PluginListProp = NonNullable<
+  ComponentProps<typeof ReactMarkdown>["remarkPlugins"]
+>;
 
 function openFileFromChat(rawPath: string, workspacePath: string) {
   const path = resolveFilePath(rawPath, workspacePath);
@@ -135,7 +141,7 @@ export default memo(function Markdown({
 }) {
   // Stable components map: a new reference makes ReactMarkdown discard its
   // HAST tree and re-parse the whole document.
-  const components = useMemo<Components>(
+  const hostComponents = useMemo<Components>(
     () => ({
       a: ({ href, children }) => {
         const url = href ?? "";
@@ -188,12 +194,43 @@ export default memo(function Markdown({
     }),
     [workspacePath],
   );
+  // Plugin pipeline contributions (plan §4.2 #5): host defaults first, then
+  // each plugin's in registration order. Plugin halves arrive as `unknown[]`
+  // — blob bundles can't share the host's unified/react-markdown type
+  // identities — so the merged lists are asserted back to ReactMarkdown's
+  // prop type once, here at the boundary.
+  const contributions = useRegistry(markdownRegistry);
+  const remarkPlugins = useMemo(
+    () =>
+      [
+        ...REMARK_PLUGINS,
+        ...contributions.flatMap((c) => c.remarkPlugins ?? []),
+      ] as PluginListProp,
+    [contributions],
+  );
+  const rehypePlugins = useMemo(
+    () =>
+      [
+        ...REHYPE_PLUGINS,
+        ...contributions.flatMap((c) => c.rehypePlugins ?? []),
+      ] as PluginListProp,
+    [contributions],
+  );
+  // Later wins: plugin component overrides may intentionally shadow host
+  // keys, and later registrations shadow earlier ones.
+  const components = useMemo<Components>(() => {
+    let merged = hostComponents;
+    for (const contrib of contributions) {
+      if (contrib.components) merged = { ...merged, ...contrib.components };
+    }
+    return merged;
+  }, [hostComponents, contributions]);
 
   return (
     <div className="prose-chat text-body-regular text-text-primary">
       <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         components={components}
         urlTransform={(url) =>
           // file: is deliberately excluded: model output must not smuggle in

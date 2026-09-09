@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Composer,
@@ -13,6 +13,8 @@ import { useChatStore } from "../store";
 import { ImageLightbox } from "./MessageImages";
 import { AgentTasksPanel } from "./AgentTasksPanel";
 import { sessionKey } from "../store";
+import { ComposerSlotExtras } from "@/features/plugins/boundary/composer-slot-extras";
+import { COMPOSER_DRAFT_TOPIC, pluginBus } from "@/features/plugins/runtime/events";
 import { USAGE_PART_LABEL_KEYS, usageBreakdown } from "./usage-breakdown";
 
 /** Path → trailing name (folder or file) for status-bar and chip labels.
@@ -124,6 +126,13 @@ export function ConversationFooter({
     [visibleWorkspaces, startNewChat],
   );
 
+  // The draft prop is the store's per-session value, so watching it covers
+  // every change source at once: typing, submit-clear, and session switches
+  // all re-emit with the latest text (empty string included).
+  useEffect(() => {
+    pluginBus.emit(COMPOSER_DRAFT_TOPIC, { text: draft });
+  }, [draft]);
+
   return (
     <>
       <div
@@ -222,9 +231,9 @@ export function ConversationFooter({
           streaming={streaming}
           disabled={!active || noEnabledEngines || (!draft.trim() && images.length === 0)}
           inputRef={composerInputRef}
-          addMenu={addMenu}
-          cliMenu={cliMenu}
-          permissionMenu={permissionMenu}
+          addMenu={<>{addMenu}<ComposerSlotExtras slot="addMenu" /></>}
+          cliMenu={<>{cliMenu}<ComposerSlotExtras slot="cliMenu" /></>}
+          permissionMenu={<>{permissionMenu}<ComposerSlotExtras slot="permissionMenu" /></>}
           onPasteImages={supportsImages ? onPasteImages : undefined}
           workspacePath={active?.workspacePath}
         />

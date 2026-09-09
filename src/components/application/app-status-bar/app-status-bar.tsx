@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getAppVersion, isWeb, setWebviewZoom } from "@/lib/platform";
 import Activity from "lucide-react/dist/esm/icons/activity";
@@ -10,6 +10,8 @@ import { listenScanProgress, type ScanProgress } from "@/lib/events";
 import { readStoredNumber, writeStored } from "@/lib/storage";
 import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { cx } from "@/utils/cx";
+import { compareByOrder, pluginIdFromRegistryKey, statusBarRegistry, useRegistry } from "@ccgui/plugin-sdk";
+import { PluginBoundary } from "@/features/plugins/boundary/PluginBoundary";
 
 const ZOOM_KEY = "ccgui-next.zoom:v1";
 const ZOOM_MIN = 50;
@@ -31,13 +33,22 @@ function formatMb(bytes: number): number {
   return Math.round(bytes / (1024 * 1024));
 }
 
-/** App-wide bottom chrome: performance, zoom, history-sync status, version. */
+/**
+ * App-wide bottom chrome: performance, zoom, history-sync status, version.
+ *
+ * The builtin items stay hand-wired here and are intentionally NOT migrated
+ * into statusBarRegistry: they are deeply coupled to ipc/listen hooks, so
+ * registration would buy little. The registry is the plugin extension point
+ * (plan §4.2 #8): entries registered via ctx.ui.registerStatusBarItem render
+ * after the sync status, before the version, each inside a PluginBoundary.
+ */
 export function AppStatusBar() {
   const { t } = useTranslation();
   const [metrics, setMetrics] = useState<AppMetrics | null>(null);
   const [zoomPct, setZoomPct] = useState(readZoomPct);
   const [sync, setSync] = useState<ScanProgress | null>(null);
   const [version, setVersion] = useState<string | null>(null);
+  const pluginItems = useRegistry(statusBarRegistry);
 
   // Re-apply the persisted zoom on startup; Tauri does not restore it.
   useEffect(() => applyZoom(readZoomPct()), []);
@@ -171,6 +182,28 @@ export function AppStatusBar() {
             </span>
           </>
         )}
+        {/* Plugin status-bar chips (plan §4.2 #8), placed right-aligned after
+         *  the sync status and before the version. Each chip renders in its
+         *  own PluginBoundary so a render crash unmounts only that chip; the
+         *  plugin owns the chip's look — the host provides placement and the
+         *  row gap only. */}
+        {[...pluginItems]
+          // compareByOrder: undefined order sorts last, ties break by id.
+          .sort(compareByOrder)
+          .map((def) => {
+            // Non-plugin ids (host/test registrations) pass through as their
+            // own boundary id.
+            const pluginId = pluginIdFromRegistryKey(def.id);
+            const Chip = def.component;
+            return (
+              <Fragment key={def.id}>
+                <span className="text-text-disabled">·</span>
+                <PluginBoundary pluginId={pluginId}>
+                  <Chip />
+                </PluginBoundary>
+              </Fragment>
+            );
+          })}
         {version && (
           <>
             <span className="text-text-disabled">·</span>

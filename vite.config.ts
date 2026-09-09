@@ -15,6 +15,11 @@ export default defineConfig(() => ({
   server: {
     port: 1420,
     strictPort: true,
+    fs: {
+      // Sibling plugin repos (e.g. ../ccgui-plugin/usage-stats) are served in
+      // dev so external plugins can be exercised without installing.
+      allow: [".."],
+    },
     watch: {
       ignored: ["**/src-tauri/**"],
     },

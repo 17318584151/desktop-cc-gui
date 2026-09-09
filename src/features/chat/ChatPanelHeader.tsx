@@ -1,7 +1,5 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
-import FolderSymlink from "lucide-react/dist/esm/icons/folder-symlink";
-import GitBranch from "lucide-react/dist/esm/icons/git-branch";
 import Check from "lucide-react/dist/esm/icons/check";
 import PanelRightClose from "lucide-react/dist/esm/icons/panel-right-close";
 import PanelRightOpen from "lucide-react/dist/esm/icons/panel-right-open";
@@ -11,6 +9,7 @@ import { HeaderOpenActions } from "@/features/open-app/HeaderOpenActions";
 import { useFilesStore } from "@/features/files/store";
 import { cx } from "@/utils/cx";
 import { PANEL_TOGGLE_CLASSES } from "./panel-toggle-classes";
+import { resolveActivePanelTab, useSortedPanelTabs } from "./panel-tabs";
 
 /** Tab-strip actions slot: the open-in-app cluster plus the side panel's
  * titlebar header (files/changes pills and collapse toggles). */
@@ -25,8 +24,8 @@ export function ChatPanelHeader({
   dragging,
 }: {
   workspacePath: string;
-  panelTab: "files" | "changes";
-  onPanelTabChange: (tab: "files" | "changes") => void;
+  panelTab: string;
+  onPanelTabChange: (tab: string) => void;
   panelCollapsed: boolean;
   onTogglePanelCollapsed: () => void;
   panelWidth: number;
@@ -35,6 +34,12 @@ export function ChatPanelHeader({
 }) {
   const { t } = useTranslation();
   const treeRefreshing = useFilesStore((s) => s.refreshing);
+  // Builtin tabs (files/changes) register at module scope in ./panel-tabs;
+  // plugin tabs arrive via ctx.ui.registerPanelTab (plan §4.2 #4).
+  const panelTabs = useSortedPanelTabs();
+  // Persisted tab may point at an unloaded plugin tab; fall back to the
+  // first tab (read-side only, see resolveActivePanelTab).
+  const activeTab = resolveActivePanelTab(panelTabs, panelTab);
   // Success flash: when a refresh finishes, swap the icon to a green check
   // for a beat (same pattern as the copy buttons' "copied" state).
   const [refreshed, setRefreshed] = useState(false);
@@ -75,22 +80,18 @@ export function ChatPanelHeader({
               style={{ width: panelWidth }}
             >
               <PillTabList>
-                <PillTab
-                  icon={FolderSymlink}
-                  isSelected={panelTab === "files"}
-                  onSelect={() => onPanelTabChange("files")}
-                >
-                  {t("files.tab")}
-                </PillTab>
-                <PillTab
-                  icon={GitBranch}
-                  isSelected={panelTab === "changes"}
-                  onSelect={() => onPanelTabChange("changes")}
-                >
-                  {t("git.changes")}
-                </PillTab>
+                {panelTabs.map((tab) => (
+                  <PillTab
+                    key={tab.id}
+                    icon={tab.icon}
+                    isSelected={activeTab === tab.id}
+                    onSelect={() => onPanelTabChange(tab.id)}
+                  >
+                    {tab.label()}
+                  </PillTab>
+                ))}
               </PillTabList>
-              {panelTab === "files" && (
+              {activeTab === "files" && (
                 <button
                   type="button"
                   title={t("common.refresh")}

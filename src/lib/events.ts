@@ -31,6 +31,19 @@ export interface ScanProgress {
 export function listenScanProgress(cb: (p: ScanProgress) => void): Promise<UnlistenFn> {
   return listen<ScanProgress>("scan://progress", (e) => cb(e.payload));
 }
+export interface PluginInstallProgress {
+  done: number;
+  total: number;
+  /** True on the last event of an install run. */
+  finished: boolean;
+}
+
+/** Plugin-install copy progress, throttled by the backend (~50 updates per run). */
+export function listenPluginInstallProgress(
+  cb: (p: PluginInstallProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<PluginInstallProgress>("plugin://install-progress", (e) => cb(e.payload));
+}
 export interface TerminalOutputPayload {
   id: string;
   data: string;
