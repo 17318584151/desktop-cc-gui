@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { StreamReveal, visiblePrefix, visibleWindow, type RevealClock } from "../src/features/chat/components/stream-reveal.ts";
 function clock() {
   let now = 0, id = 0;
@@ -18,21 +19,25 @@ function clock() {
     for (const [id, timer] of [...timers]) if (timer.time <= now) { timers.delete(id); timer.callback(); }
   }};
 }
-test("one burst becomes multiple monotonic frames and catches up within 80ms", () => {
+test("one burst becomes multiple monotonic frames and catches up within 240ms", () => {
   const c=clock(), reveal=new StreamReveal(true,c.api);
   reveal.update("x".repeat(100), true);
   const sizes=[];
-  for(let i=0;i<5;i++){c.advance(16); sizes.push(reveal.read(0,100));}
-  assert.deepEqual(sizes,[20,40,60,80,100]);
+  for(let i=0;i<15;i++){c.advance(16); sizes.push(reveal.read(0,100));}
+  assert.ok(sizes[0] > 0 && sizes[0] < 20);
+  assert.ok(sizes.every((value,i) => i===0 || value>=sizes[i-1]));
+  assert.equal(sizes.at(-1),100);
   assert.equal(c.pending(),0);
 });
 test("continuous arrivals do not reset visible text or delay earlier content", () => {
   const c=clock(), reveal=new StreamReveal(true,c.api);
   reveal.update("x".repeat(100),true); c.advance(32);
-  assert.equal(reveal.read(0,100),40);
+  const before=reveal.read(0,100);
+  assert.ok(before>0 && before<100);
   reveal.update("x".repeat(200),true); c.advance(32);
-  assert.ok(reveal.read(0,200)>=100);
-  c.advance(48); assert.equal(reveal.read(0,200),200);
+  assert.ok(reveal.read(0,200)>before);
+  for(let i=0;i<13;i++)c.advance(16);
+  assert.equal(reveal.read(0,200),200);
 });
 test("finish, hidden/reduced-motion, replacement and truncation reveal exact content immediately", () => {
   const c=clock(), reveal=new StreamReveal(true,c.api);
@@ -55,8 +60,10 @@ test("completed text runs are not notified on subsequent reveal frames", () => {
   const c=clock(), reveal=new StreamReveal(true,c.api); let first=0,last=0;
   reveal.subscribe(0,10,()=>first++); const off=reveal.subscribe(10,90,()=>last++);
   reveal.update("x".repeat(100),true);
-  for(let i=0;i<5;i++)c.advance(16);
-  assert.equal(first,1); assert.equal(last,5); off();
+  while(reveal.read(0,100)<10)c.advance(16);
+  const settledCalls=first;
+  for(let i=0;i<15;i++)c.advance(16);
+  assert.equal(first,settledCalls); assert.ok(last>first); off();
 });
 test("no intermediate prefix splits CJK, emoji, flags or combining characters", () => {
   for(const text of ["你好世界","A🙂B","👩‍💻完成","🇨🇳🇸🇬","e\u0301clair"]){
@@ -95,5 +102,38 @@ test("virtualized remount shows received text immediately and smooths only new a
   assert.equal(c.pending(),0);
   reveal.update(received+"y".repeat(100),true);
   c.advance(16);
-  assert.equal(reveal.read(0,3100),3020);
+  assert.ok(reveal.read(0,3100)>3000 && reveal.read(0,3100)<3100);
+});
+
+
+test("repeated identical snapshots do not postpone the reveal deadline", () => {
+  const c=clock(), reveal=new StreamReveal(true,c.api);
+  const text="x".repeat(100);
+  reveal.update(text,true);
+  for(let i=0;i<15;i++){c.advance(16);reveal.update(text,true);}
+  assert.equal(reveal.read(0,100),100);
+  assert.equal(c.pending(),0);
+});
+
+test("observed OMP bursts avoid emptying the queue too early and bound per-frame jumps", () => {
+  const {batches}=JSON.parse(readFileSync(new URL("./fixtures/omp-arrival-cadence.json",import.meta.url),"utf8")) as {batches:[number,number][]};
+  const c=clock(), reveal=new StreamReveal(false,c.api);
+  let text="",index=0,emptyFrames=0,maxStep=0,previous=0;
+  for(let now=0;now<batches[batches.length-1][0]+500;now+=1000/60){
+    while(index<batches.length && batches[index][0]<=now){
+      text+="x".repeat(batches[index++][1]);reveal.update(text,true);
+    }
+    c.advance(1000/60);
+    const visible=reveal.read(0,text.length);
+    if(index>1){
+      maxStep=Math.max(maxStep,visible-previous);
+      if(visible===text.length && index<batches.length)emptyFrames++;
+    }
+    previous=visible;
+  }
+  // Fixed 80ms pacing on this trace had ~303 empty frames and jumps of 8.
+  assert.ok(emptyFrames<180, `empty frames: ${emptyFrames}`);
+  assert.ok(maxStep<=4, `largest jump: ${maxStep}`);
+  assert.equal(reveal.read(0,text.length),text.length);
+  assert.equal(c.pending(),0);
 });
