@@ -13,6 +13,11 @@ export const zh = {
     copied: "已复制",
   },
   chat: {
+    ompFastToggle: "Fast 模式",
+    ompFastEnable: "开启 Fast",
+    ompFastDisable: "关闭 Fast",
+    ompSpeedReset: "恢复 OMP 速度设置",
+
     ompSpeed: "生成速度",
     ompSpeedInherit: "跟随 OMP 设置",
     ompSpeedStandard: "标准",

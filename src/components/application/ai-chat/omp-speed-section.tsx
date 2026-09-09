@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { normalizeOmpServiceTier, supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
+import Zap from "lucide-react/dist/esm/icons/zap";
+import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw";
+import { supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
 
-export function OmpSpeedSection({ model, value, onChange }: {
+export function OmpSpeedSection({ model, value, onChange, children }: {
   model: string;
+  children?: ReactNode;
   value: OmpServiceTier;
   onChange: (tier: OmpServiceTier) => Promise<void>;
 }) {
@@ -11,29 +14,41 @@ export function OmpSpeedSection({ model, value, onChange }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
   const supported = supportsOmpFastMode(model);
-  return <div className="border-t border-border-secondary px-3 py-2">
-    <label className="flex items-center justify-between gap-2 text-body-2-medium text-text-primary">
-      {t("chat.ompSpeed")}
-      <select
-        aria-label={t("chat.ompSpeed")}
-        value={supported ? value ?? "inherit" : "inherit"}
+  const enabled = supported && value === "priority";
+  const change = async (tier: OmpServiceTier) => {
+    if (saving || !supported) return;
+    setSaving(true);
+    setError(false);
+    try { await onChange(tier); }
+    catch { setError(true); }
+    finally { setSaving(false); }
+  };
+  const buttonClass = "flex size-9 shrink-0 items-center justify-center rounded-xl transition-colors disabled:cursor-default disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2";
+  return <div className="px-2 pb-2">
+    <div className="flex items-start justify-between gap-2">
+      <button
+        type="button"
+        aria-label={t("chat.ompFastToggle")}
+        aria-pressed={enabled}
+        title={!supported ? t("chat.ompSpeedUnsupported") : value === null ? t("chat.ompSpeedInherit") : t(enabled ? "chat.ompFastDisable" : "chat.ompFastEnable")}
         disabled={!supported || saving}
-        className="min-w-0 rounded-md border border-border-secondary bg-background-primary px-2 py-1 text-text-primary disabled:opacity-50"
-        onChange={async event => {
-          const tier = normalizeOmpServiceTier(event.target.value);
-          setSaving(true);
-          setError(false);
-          try { await onChange(tier); }
-          catch { setError(true); }
-          finally { setSaving(false); }
-        }}
+        className={`${buttonClass} ${enabled ? "bg-background-tertiary-hover text-text-primary" : "bg-background-secondary-default text-text-tertiary hover:text-text-primary"}`}
+        onClick={() => void change(enabled ? "default" : "priority")}
       >
-        <option value="inherit">{t("chat.ompSpeedInherit")}</option>
-        <option value="default">{t("chat.ompSpeedStandard")}</option>
-        <option value="priority">Fast</option>
-      </select>
-    </label>
-    {!supported && <p className="mt-1 text-body-2-regular text-text-tertiary">{t("chat.ompSpeedUnsupported")}</p>}
+        <Zap className="size-5" fill={enabled ? "currentColor" : "none"} aria-hidden />
+      </button>
+      <div className="flex min-w-0 flex-1 flex-col items-center gap-1 pt-1 text-center">{children}</div>
+      <button
+        type="button"
+        aria-label={t("chat.ompSpeedReset")}
+        title={t("chat.ompSpeedReset")}
+        disabled={!supported || saving || value === null}
+        className={`${buttonClass} text-text-tertiary hover:bg-background-secondary-default hover:text-text-primary`}
+        onClick={() => void change(null)}
+      >
+        <RotateCcw className="size-5" aria-hidden />
+      </button>
+    </div>
     {error && <p role="alert" className="mt-1 text-body-2-regular text-text-primary">{t("chat.ompSpeedSaveError")}</p>}
   </div>;
 }

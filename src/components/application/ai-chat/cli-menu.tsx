@@ -2,7 +2,7 @@ import { OmpSpeedSection } from "./omp-speed-section";
 import { supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import Check from "lucide-react/dist/esm/icons/check";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
@@ -345,14 +345,16 @@ function groupModelsByProvider(models: ModelOption[]): ModelGroup[] {
 function FlyoutEffortSection({
   effort,
   onChange,
+  header,
 }: {
   effort: EffortLevel;
   onChange: (level: EffortLevel) => void;
+  header?: ReactNode;
 }) {
   const { t } = useTranslation();
   return (
     <div className="flex w-full flex-col">
-      <span className="pl-2 text-body-medium text-text-secondary">
+      {header ?? <span className="pl-2 text-body-medium text-text-secondary">
         {t("chat.effort")}{" "}
         {/* Keyed on the value so each change remounts and blurs in. */}
         <m.span
@@ -364,7 +366,7 @@ function FlyoutEffortSection({
         >
           {t(EFFORT_LABEL_KEYS[effort])}
         </m.span>
-      </span>
+      </span>}
       <div className="flex w-full items-center justify-between px-2 pt-2 pb-[3px]">
         <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
           {t("chat.effortFaster")}
@@ -536,8 +538,15 @@ function EngineModelPanel({
 
       {/* Full-bleed divider, like the reference submenu. */}
       <div aria-hidden className="-mx-1 mt-[7px] mb-3 h-px bg-border-button-default" />
-      {option.id === "omp" && <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange} />}
       <FlyoutEffortSection
+        header={option.id === "omp" ? (
+          <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange}>
+            <span className="text-body-medium text-text-primary">{t(EFFORT_LABEL_KEYS[effort])}</span>
+            <span className="max-w-full truncate text-body-2-regular text-text-tertiary" title={models.find(model => model.id === selectedModelId)?.label ?? selectedModelId}>
+              {models.find(model => model.id === selectedModelId)?.label || selectedModelId || t("chat.ompSpeedInherit")}
+            </span>
+          </OmpSpeedSection>
+        ) : undefined}
         effort={effort}
         onChange={(level) => onEffortChange(option.id, level)}
       />

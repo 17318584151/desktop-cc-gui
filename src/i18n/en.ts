@@ -15,6 +15,11 @@ export const en: Messages = {
     copied: "Copied",
   },
   chat: {
+    ompFastToggle: "Fast mode",
+    ompFastEnable: "Enable Fast",
+    ompFastDisable: "Disable Fast",
+    ompSpeedReset: "Reset to OMP speed setting",
+
     ompSpeed: "Generation speed",
     ompSpeedInherit: "Use OMP setting",
     ompSpeedStandard: "Standard",
