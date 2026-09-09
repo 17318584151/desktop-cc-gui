@@ -17,7 +17,7 @@ export interface ToolPayloadViewerProps {
 }
 
 /** Check if the tool is an edit/diff operation. */
-export function isEditTool(name: string): boolean {
+function isEditTool(name: string): boolean {
   const lower = name.toLowerCase();
   return (
     lower.includes("edit") ||
@@ -28,7 +28,7 @@ export function isEditTool(name: string): boolean {
 }
 
 /** Check if the tool is a bash/terminal command. */
-export function isBashTool(name: string): boolean {
+function isBashTool(name: string): boolean {
   const lower = name.toLowerCase();
   return (
     lower === "bash" ||

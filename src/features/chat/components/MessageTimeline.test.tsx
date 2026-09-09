@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration } from "./MessageTimeline";
+import { formatDuration } from "./format-duration";
 
 describe("formatDuration", () => {
   it("returns null for null, undefined, 0, or negative values", () => {

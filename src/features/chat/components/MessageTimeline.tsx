@@ -14,6 +14,7 @@ import { GrantCard } from "./GrantCard";
 import { MessageAnchorRail } from "./MessageAnchorRail";
 import { createAnchorRowsBuilder } from "./timeline-anchors";
 import { buildRows, collectToolKeys, rowKey, type TimelineRow } from "./timeline-rows";
+import { formatDuration } from "./format-duration";
 import { ProcessDisclosure } from "./ProcessDisclosure";
 import { useScrollFollow, useTailPin } from "./use-scroll-follow";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
@@ -122,19 +123,6 @@ function formatUsage(usage: unknown): string | null {
   if (u.input) parts.push(`↑${fmt(u.input)}`);
   if (u.output) parts.push(`↓${fmt(u.output)}`);
   return parts.join(" ");
-}
-
-/** Format turn duration: "12.3s", "2m12s", "1h23m". */
-export function formatDuration(ms: number | null | undefined): string | null {
-  if (ms == null || !Number.isFinite(ms) || ms <= 0) return null;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const remSec = Math.floor(s % 60);
-  if (m < 60) return `${m}m${remSec ? `${remSec}s` : ""}`;
-  const h = Math.floor(m / 60);
-  const remMin = Math.floor(m % 60);
-  return `${h}h${remMin ? `${remMin}m` : ""}`;
 }
 
 /** Passive per-message facts, revealed on message hover: time · duration · token usage · model · effort. */
