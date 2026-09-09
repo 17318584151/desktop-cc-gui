@@ -63,6 +63,7 @@ pub struct BuiltCommand {
     pub preassigned_session_id: Option<String>,
 }
 
+#[derive(Debug)]
 pub enum EngineEvent {
     /// Streaming text delta (append).
     Delta(String),
@@ -362,7 +363,25 @@ pub(crate) fn engine_home(env_key: Option<&str>, default_dir: &str) -> PathBuf {
             return PathBuf::from(value);
         }
     }
-    dirs::home_dir().unwrap_or_default().join(default_dir)
+    fallback_home().join(default_dir)
+}
+
+/// Home dir for the default engine path. Production uses `dirs` (Known
+/// Folder API on Windows); tests steer the fallback through HOME /
+/// USERPROFILE env instead, because `dirs` ignores env on Windows and would
+/// scan the real profile.
+fn fallback_home() -> PathBuf {
+    #[cfg(test)]
+    {
+        if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+            return PathBuf::from(home);
+        }
+        #[cfg(windows)]
+        if let Some(profile) = std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()) {
+            return PathBuf::from(profile);
+        }
+    }
+    dirs::home_dir().unwrap_or_default()
 }
 
 /// A leading '-' would parse as a flag (pi also treats '@' as a file
@@ -444,42 +463,51 @@ impl ProcessRegistry {
         }
     }
 
-    pub fn kill(&self, key: &str) -> bool {
-        let entry = match self.0.lock() {
-            Ok(map) => map
-                .get(key)
-                .map(|e| (e.pid, Arc::clone(&e.child), Arc::clone(&e.killed))),
-            Err(_) => None,
-        };
-        // Fallback: the frontend may cancel by run id after the entry was
-        // rekeyed to the native session id.
-        let entry = entry.or_else(|| {
-            self.0.lock().ok().and_then(|map| {
-                map.values()
-                    .find(|e| e.run_id == key)
-                    .map(|e| (e.pid, Arc::clone(&e.child), Arc::clone(&e.killed)))
-            })
-        });
-        let Some((pid, child, killed)) = entry else {
-            return false;
-        };
+    /// Kill one entry (pid-reuse guarded). Returns false when the child was
+    /// already reaped — nothing left to signal.
+    fn kill_entry(pid: u32, child: &Arc<TokioMutex<tokio::process::Child>>, killed: &Arc<std::sync::atomic::AtomicBool>) -> bool {
         killed.store(true, std::sync::atomic::Ordering::SeqCst);
         if let Ok(mut guard) = child.try_lock() {
             // Pid-reuse guard: a reaped child's pid may already belong to
             // someone else — never signal a group we no longer own.
             match guard.try_wait() {
-                Ok(Some(_)) => {}
+                Ok(Some(_)) => false,
                 _ => {
                     kill_process_group(pid);
                     let _ = guard.start_kill();
+                    true
                 }
             }
         } else {
             // The runner holds the lock only while reaping post-EOF; that
             // window is tiny and the kill flag already settles the turn.
             kill_process_group(pid);
+            true
         }
-        true
+    }
+
+    /// Kill **every** entry matching `key`: the map key (native session id or
+    /// run id) and the recorded run id both match. One session resumed into
+    /// several parallel runs must all die on a single stop, or the survivors
+    /// keep streaming and fight the next run over the session file.
+    pub fn kill(&self, key: &str) -> bool {
+        let entries: Vec<(u32, Arc<TokioMutex<tokio::process::Child>>, Arc<std::sync::atomic::AtomicBool>)> =
+            match self.0.lock() {
+                Ok(map) => map
+                    .iter()
+                    .filter(|(k, e)| *k == key || e.run_id == key)
+                    .map(|(_, e)| (e.pid, Arc::clone(&e.child), Arc::clone(&e.killed)))
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+        // No Iterator::any here: it short-circuits on the first true, which
+        // would leave every later parallel run alive — the exact bug this
+        // aggregate kill exists to fix.
+        let mut killed_any = false;
+        for (pid, child, killed) in &entries {
+            killed_any |= Self::kill_entry(*pid, child, killed);
+        }
+        killed_any
     }
 
     pub fn kill_all(&self) {
@@ -888,6 +916,14 @@ impl RunContext {
                     "error",
                     Value::String(error),
                 );
+                // The turn failed terminally: the frontend settles (send
+                // button back to idle) on this event, so a still-running
+                // CLI process would keep burning tokens invisibly while the
+                // UI claims the session ended. Kill the process tree now —
+                // the killed flag makes the runner's EOF path a no-op
+                // (saw_error already settled the turn) and the registry
+                // entry drains as usual.
+                self.registry.kill(&self.run_id);
             }
             EngineEvent::Warn(error) => {
                 // Not terminal: no saw_error — EOF settle still decides the
@@ -965,18 +1001,34 @@ async fn run_reader(stdout: ChildStdout, ctx: RunContext) {
     for path in &ctx.cleanup_files {
         let _ = std::fs::remove_file(path);
     }
+    // Drain this run's registry entries: under the native session id after
+    // rekey, and under the run id when the session id never arrived.
     if let Some(key) = state.native_session_id.clone() {
         ctx.registry.remove_if_pid(&key, ctx.pid);
     }
     ctx.registry.remove_if_pid(&ctx.run_id, ctx.pid);
+    // omp writes some failures (upstream 403/5xx, quota exhaustion) to
+    // stderr and then exits — sometimes cleanly, after a normal turn_end.
+    // A non-empty stderr on a failed exit must reach the user even when a
+    // done/error event already settled the turn; dropping it hides exactly
+    // the errors the user cannot otherwise see.
+    let stderr_tail = ctx
+        .stderr_buf
+        .lock()
+        .map(|g| redact_secrets(g.trim()))
+        .unwrap_or_default();
+    let failed = status.map(|s| !s.success()).unwrap_or(true);
+    if failed && !state.saw_error && !stderr_tail.is_empty() {
+        state.push(
+            &ctx.sink,
+            &ctx.run_id,
+            &ctx.engine_id,
+            "warn",
+            Value::String(format!("engine stderr: {stderr_tail}")),
+        );
+    }
 
     if !state.saw_done && !state.saw_error {
-        let stderr_tail = ctx
-            .stderr_buf
-            .lock()
-            .map(|g| g.trim().to_string())
-            .unwrap_or_default();
-        let failed = status.map(|s| !s.success()).unwrap_or(true);
         let killed = ctx.killed.load(std::sync::atomic::Ordering::SeqCst);
         if killed {
             // User-initiated stop: commit whatever streamed so far as a
@@ -997,7 +1049,7 @@ async fn run_reader(stdout: ChildStdout, ctx: RunContext) {
                     .unwrap_or_else(|| "unknown".to_string())
             );
             if !stderr_tail.is_empty() {
-                message.push_str(&format!(": {}", redact_secrets(&stderr_tail)));
+                message.push_str(&format!(": {stderr_tail}"));
             }
             state.push(
                 &ctx.sink,

@@ -73,12 +73,16 @@ const pendingStreams = new Map<string, PendingStream>();
 let rafScheduled = false;
 let fallbackScheduled = false;
 
-/** Fold stream parts into the message list in place: a part grows the last
- * row when it is the same role and still live, otherwise it starts a new
- * live row. The streaming message therefore *is* the final message — no
- * buffer→commit transition for content to hide behind, no replay of text
- * the user already watched arrive. Row order stays chronological, matching
- * what history parsing produces. */
+/** Fold stream parts into the message list in place. omp interleaves the
+ *  thinking and text channels within ONE assistant message (GLM emits
+ *  reasoning deltas between text deltas), so each channel must grow a
+ *  single row: appending to the last live row OF THAT ROLE — skipping the
+ *  other channel's live row — instead of the last row overall. Text
+ *  therefore stays one continuous markdown document (a mid-message split
+ *  leaves `**`/backticks unclosed and renders literally) and thinking folds
+ *  into one process section. A settled row ends its segment: tool starts
+ *  and turn boundaries settle rows, so post-tool text correctly starts a
+ *  fresh row. */
 export function applyStreamParts(
   messages: Message[],
   parts: StreamPart[],
@@ -89,10 +93,23 @@ export function applyStreamParts(
   for (const part of parts) {
     if (!part.text) continue;
     const role = part.kind === "thinking" ? "thinking" : "assistant";
-    const last = out[out.length - 1];
-    if (last?.live && last.role === role) {
+    // Scan back over live rows (the other channel) to this channel's row;
+    // stop at the first settled row — everything before it is history.
+    let target = -1;
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (out[i].live) {
+        if (out[i].role === role) {
+          target = i;
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    if (target >= 0) {
       if (out === messages) out = messages.slice();
-      out[out.length - 1] = { ...last, text: last.text + part.text };
+      const last = out[target];
+      out[target] = { ...last, text: last.text + part.text };
       continue;
     }
     const seq = out.length ? out[out.length - 1].seq + 1 : 1;
