@@ -986,7 +986,14 @@ impl RunContext {
                 // the killed flag makes the runner's EOF path a no-op
                 // (saw_error already settled the turn) and the registry
                 // entry drains as usual.
-                self.registry.kill(&self.run_id);
+                //
+                // Off the reader thread: the kill blocks on the Windows tree
+                // walk, and stalling this task would also stall the stdout
+                // drain it owns. saw_error already settled the turn, so
+                // nothing here depends on the kill completing first.
+                let registry = Arc::clone(&self.registry);
+                let run_id = self.run_id.clone();
+                tokio::task::spawn_blocking(move || registry.kill(&run_id));
             }
             EngineEvent::Warn(error) => {
                 // Not terminal: no saw_error — EOF settle still decides the
@@ -1267,9 +1274,18 @@ pub async fn send_message(
     })
 }
 
+/// Async + spawn_blocking: the kill waits for the Windows tree walk to
+/// finish (see `kill_process_group`), and a synchronous command would hold
+/// that wait on the UI thread — the app would visibly hitch on every Stop.
 #[tauri::command]
-pub fn interrupt_session(state: tauri::State<'_, crate::AppState>, session_id: String) -> bool {
-    state.processes.kill(&session_id)
+pub async fn interrupt_session(
+    state: tauri::State<'_, crate::AppState>,
+    session_id: String,
+) -> Result<bool, String> {
+    let registry = Arc::clone(&state.processes);
+    tauri::async_runtime::spawn_blocking(move || registry.kill(&session_id))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
