@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Puzzle from "lucide-react/dist/esm/icons/puzzle";
@@ -10,6 +10,7 @@ import { pluginIdFromRegistryKey, settingsRegistry, useRegistry } from "@ccgui/p
 import { PluginBoundary } from "@/features/plugins/boundary/PluginBoundary";
 import { ENGINE_IDS, type EngineId } from "./providers";
 import { CliHeaderActions } from "./CliHeaderActions";
+import { readStoredJson, writeStored } from "@/lib/storage";
 // Side-effect import: registers all builtin sections into settingsRegistry.
 import "./sections";
 
@@ -22,6 +23,24 @@ const GROUP_META: Record<string, { labelKey: string; order: number }> = {
   cli: { labelKey: "settings.cliManage", order: 1 },
 };
 const KNOWN_GROUP_COUNT = Object.keys(GROUP_META).length;
+/** localStorage key for the user's CLI 管理 rail order (section keys). */
+const CLI_NAV_ORDER_KEY = "ccgui-next.settingsCliNavOrder:v1";
+
+const readCliNavOrder = (): string[] =>
+  readStoredJson(CLI_NAV_ORDER_KEY, (value) =>
+    Array.isArray(value) && value.every((k) => typeof k === "string")
+      ? (value as string[])
+      : null,
+  ) ?? [];
+
+/** Items in the user's stored order; keys absent from the stored list (new
+ *  engines) keep their registry order at the end — Array.sort is stable. */
+const orderByStoredKeys = <T extends { key: string }>(items: T[], keys: string[]): T[] => {
+  const rank = new Map(keys.map((key, index) => [key, index]));
+  return [...items].sort(
+    (a, b) => (rank.get(a.key) ?? keys.length) - (rank.get(b.key) ?? keys.length),
+  );
+};
 
 /** Unknown page params fall back to General. */
 const renderPage = (key: string) => {
@@ -64,11 +83,23 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sections = useRegistry(settingsRegistry);
+  const [cliNavOrder, setCliNavOrder] = useState<string[]>(readCliNavOrder);
+  /** CLI 管理 rail keys in display order (user order wins over registry order). */
+  const orderedCliKeys = useMemo(() => {
+    const keys = sections
+      .filter((def) => def.group === "cli")
+      .sort((a, b) => a.order - b.order)
+      .map((def) => def.key);
+    return orderByStoredKeys(
+      keys.map((key) => ({ key })),
+      cliNavOrder,
+    ).map((entry) => entry.key);
+  }, [sections, cliNavOrder]);
   // Legacy links land on a CLI 管理 page: ?page=cliConfig → first CLI,
   // ?page=dsh → the DSH engine page (its host section merged there).
   const rawPage = searchParams.get("page") ?? "general";
   const pageParam =
-    rawPage === "cliConfig" ? `cli:${ENGINE_IDS[0]}` : rawPage === "dsh" ? "cli:dsh" : rawPage;
+    rawPage === "cliConfig" ? (orderedCliKeys[0] ?? "general") : rawPage === "dsh" ? "cli:dsh" : rawPage;
 
   const groups = useMemo<SettingsNavGroup[]>(() => {
     const sorted = [...sections].sort((a, b) => a.order - b.order);
@@ -88,12 +119,23 @@ export default function SettingsPage() {
         return {
           label: meta ? t(meta.labelKey) : group,
           order: meta?.order ?? KNOWN_GROUP_COUNT + index,
-          items,
+          items: group === "cli" ? orderByStoredKeys(items, orderedCliKeys) : items,
+          // The CLI 管理 rail is drag-sortable; the order persists across
+          // sessions (localStorage) and new engines append at the end.
+          ...(group === "cli"
+            ? {
+                onReorderItems: (orderedKeys: string[]) => {
+                  setCliNavOrder(orderedKeys);
+                  writeStored(CLI_NAV_ORDER_KEY, JSON.stringify(orderedKeys));
+                },
+                dragHandleLabel: t("settings.cliDrag"),
+              }
+            : {}),
         };
       })
       .sort((a, b) => a.order - b.order);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sections, t, i18n.language]);
+  }, [sections, t, i18n.language, cliNavOrder, orderedCliKeys]);
 
   const titles = useMemo(() => {
     const map: Record<string, string> = {};

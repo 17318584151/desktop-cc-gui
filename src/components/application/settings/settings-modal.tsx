@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
 import X from "lucide-react/dist/esm/icons/x";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
+import {
+  WorkspaceSortableList,
+  type RepoDragChrome,
+} from "@/components/application/ai-chat/workspace-sortable-list";
 import { cx } from "@/utils/cx";
 
 /**
@@ -45,6 +49,12 @@ export interface SettingsNavItem {
 export interface SettingsNavGroup {
   /** Muted group heading; omit for an unlabeled group. */
   label?: string;
+  /** When set, the group's items render as a drag-sortable list (the item
+   *  icon becomes the grip, md+ vertical rail only) and a drop reports the
+   *  new key order. */
+  onReorderItems?: (orderedKeys: string[]) => void;
+  /** aria-label/title for the drag grip; required with onReorderItems. */
+  dragHandleLabel?: string;
   items: SettingsNavItem[];
 }
 
@@ -63,6 +73,124 @@ export interface SettingsModalProps {
   /** Optional per-page action cluster rendered next to the title (e.g. the
    *  CLI 管理 docs/version/update controls). */
   renderHeaderActions?: (key: string) => ReactNode;
+}
+
+/** Plain rail row: icon + label in one select button (unchanged recipe). */
+function NavButton({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: SettingsNavItem;
+  selected: boolean;
+  onSelect: (key: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={selected ? "page" : undefined}
+      onClick={() => onSelect(item.key)}
+      className={cx(
+        "flex w-auto shrink-0 cursor-pointer items-center gap-1.5 rounded-2lg p-1.5 text-left md:w-full md:gap-2 md:p-2",
+        "outline-none transition-colors duration-150 ease focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+        selected ? "bg-background-secondary-hover" : "hover:bg-background-secondary-hover/60",
+      )}
+    >
+      <item.icon
+        className="size-4 shrink-0 text-foreground-icon-secondary md:size-5"
+        aria-hidden
+      />
+      <span
+        className={cx(
+          "truncate text-body-medium",
+          selected ? "text-text-primary" : "text-text-secondary",
+        )}
+      >
+        {item.label}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Drag-sortable rail group (WorkspaceSortableList, same grip pattern as the
+ * CLI channel rows): the item icon is the grip. Two sibling buttons — a
+ * nested grip inside the select button would be invalid HTML. The grip only
+ * exists on the md+ vertical rail; the horizontal mobile rail keeps a
+ * static icon because the reorder axis is vertical.
+ */
+function SortableNavItems({
+  group,
+  page,
+  onSelect,
+}: {
+  group: SettingsNavGroup;
+  page: string;
+  onSelect: (key: string) => void;
+}) {
+  const sortableItems = useMemo(
+    () => group.items.map((item) => ({ id: item.key, item })),
+    [group.items],
+  );
+  return (
+    <WorkspaceSortableList
+      items={sortableItems}
+      onReorder={(orderedKeys) => group.onReorderItems?.(orderedKeys)}
+      className="flex w-full flex-row gap-1 md:flex-col"
+      renderItem={({ item }, drag: RepoDragChrome | null) => {
+        const selected = item.key === page;
+        if (!drag?.dragHandleProps) {
+          return <NavButton item={item} selected={selected} onSelect={onSelect} />;
+        }
+        return (
+          <div
+            className={cx(
+              "flex w-full items-center gap-1.5 rounded-2lg p-1.5 transition-colors duration-150 ease md:gap-2 md:p-2",
+              selected
+                ? "bg-background-secondary-hover"
+                : "hover:bg-background-secondary-hover/60",
+            )}
+          >
+            <button
+              type="button"
+              aria-label={group.dragHandleLabel}
+              title={group.dragHandleLabel}
+              {...drag.dragHandleProps}
+              onClick={(event) => event.stopPropagation()}
+              className={cx(
+                "hidden shrink-0 cursor-grab touch-none md:flex",
+                "outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+              )}
+            >
+              <item.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-current={selected ? "page" : undefined}
+              onClick={() => onSelect(item.key)}
+              className={cx(
+                "flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-2lg text-left md:gap-2",
+                "outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+              )}
+            >
+              <item.icon
+                className="size-4 shrink-0 text-foreground-icon-secondary md:hidden"
+                aria-hidden
+              />
+              <span
+                className={cx(
+                  "truncate text-body-medium",
+                  selected ? "text-text-primary" : "text-text-secondary",
+                )}
+              >
+                {item.label}
+              </span>
+            </button>
+          </div>
+        );
+      }}
+    />
+  );
 }
 
 export function SettingsModal({
@@ -145,42 +273,30 @@ export function SettingsModal({
                 {group.label && (
                   <span className="hidden pl-2 text-body-medium text-text-secondary md:block">{group.label}</span>
                 )}
-                <div className="flex w-full flex-row gap-1 md:flex-col">
-                  {group.items.map((item) => {
-                    const selected = item.key === page;
-                    return (
-                      <button
+                {group.onReorderItems ? (
+                  <SortableNavItems
+                    group={group}
+                    page={page}
+                    onSelect={(key) => {
+                      setPage(key);
+                      setContentScrolled(false);
+                    }}
+                  />
+                ) : (
+                  <div className="flex w-full flex-row gap-1 md:flex-col">
+                    {group.items.map((item) => (
+                      <NavButton
                         key={item.key}
-                        type="button"
-                        aria-current={selected ? "page" : undefined}
-                        onClick={() => {
-                          setPage(item.key);
+                        item={item}
+                        selected={item.key === page}
+                        onSelect={(key) => {
+                          setPage(key);
                           setContentScrolled(false);
                         }}
-                        className={cx(
-                          "flex w-auto shrink-0 cursor-pointer items-center gap-1.5 rounded-2lg p-1.5 text-left md:w-full md:gap-2 md:p-2",
-                          "outline-none transition-colors duration-150 ease focus-visible:ring-2 focus-visible:ring-border-focus-ring",
-                          selected
-                            ? "bg-background-secondary-hover"
-                            : "hover:bg-background-secondary-hover/60",
-                        )}
-                      >
-                        <item.icon
-                          className="size-4 shrink-0 text-foreground-icon-secondary md:size-5"
-                          aria-hidden
-                        />
-                        <span
-                          className={cx(
-                            "truncate text-body-medium",
-                            selected ? "text-text-primary" : "text-text-secondary",
-                          )}
-                        >
-                          {item.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </nav>
