@@ -184,7 +184,10 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     // dirPath itself may be the workspace root repository (the 截图 case:
     // `open-reverselab main M1 ?12` on the tree's top row), so query it
     // alongside its child directories.
-    const paths = [dirPath, ...entries.filter((e) => e.isDir).map((e) => joinPath(dirPath, e.name))];
+    const paths = [dirPath];
+    for (const entry of entries) {
+      if (entry.isDir) paths.push(joinPath(dirPath, entry.name));
+    }
     try {
       const summaries = await ipc.gitRepositorySummaries(paths);
       // Non-repos are dropped: a stale entry must not survive a refresh.
@@ -199,9 +202,10 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   loadFileColors: async (dirPath, entries) => {
     // Ask about files AND folders: the backend aggregates directory colors
     // from everything beneath them, so parents light up without expanding.
-    const files = entries
-      .filter((entry) => !entry.name.startsWith("."))
-      .map((entry) => entry.name);
+    const files: string[] = [];
+    for (const entry of entries) {
+      if (!entry.name.startsWith(".")) files.push(entry.name);
+    }
     if (files.length === 0) return;
     try {
       const colors = await ipc.gitFileColors(dirPath, files);

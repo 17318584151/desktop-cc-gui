@@ -217,41 +217,64 @@ function ThinkingSurface({
   );
 }
 
-/** Expanded-state machine: automation opens a row while its thinking is
+type ExpansionProps = { auto: boolean; live: boolean; thinking: boolean };
+
+/** Pure transition table for the expanded-state machine: given the previous
+ *  and current prop snapshot plus the user's override flag, decide the next
+ *  expanded/overridden pair. Automation opens a row while its thinking is
  *  streaming and folds it the moment that thinking settles (the user asked
  *  for exactly that rhythm); a superseded or turn-settled row folds too,
  *  until the user's own click takes over. */
+function expansionTransition(
+  prev: ExpansionProps,
+  next: ExpansionProps,
+  expanded: boolean,
+  overridden: boolean,
+): { expanded: boolean; overridden: boolean } {
+  if (next.auto && !prev.auto) {
+    // Became the latest row: open it and hand control back to automation.
+    return { expanded: true, overridden: false };
+  }
+  if (next.thinking && !prev.thinking && !overridden) {
+    // Thinking resumed inside this row (extended thinking between tool
+    // calls): show it again unless the user folded the row on purpose.
+    return { expanded: true, overridden };
+  }
+  if (!next.thinking && prev.thinking && !overridden) {
+    // The thinking settled: fold immediately — expanded-on-demand shows
+    // the full text afterwards. A deliberate user click wins: it keeps
+    // its chosen state and stays sticky across thinking resume cycles.
+    return { expanded: false, overridden };
+  }
+  if (!next.auto && !next.live) {
+    const superseded = prev.auto;
+    const turnJustSettled = prev.live;
+    if ((superseded || turnJustSettled) && !overridden) {
+      return { expanded: false, overridden };
+    }
+  }
+  return { expanded, overridden };
+}
+
+/** Expanded-state hook: holds the expanded flag and the user's override,
+ *  delegating every prop-change decision to `expansionTransition`. */
 function useProcessExpansion(autoExpand: boolean, turnLive: boolean, hasLiveThinking: boolean) {
   const [expanded, setExpanded] = useState(autoExpand);
   // Once the user clicks the header, their choice wins over the auto
-  // expand/collapse driven by streaming state below.
+  // expand/collapse driven by streaming state.
   const [overridden, setOverridden] = useState(false);
   // React-blessed adjust-during-render: previous prop values live in state,
   // so a prop change settles in the same commit that observed it — no
   // one-frame paint of the stale expanded value.
   const [prev, setPrev] = useState({ auto: autoExpand, live: turnLive, thinking: hasLiveThinking });
-  if (prev.auto !== autoExpand || prev.live !== turnLive || prev.thinking !== hasLiveThinking) {
-    setPrev({ auto: autoExpand, live: turnLive, thinking: hasLiveThinking });
-    if (autoExpand && !prev.auto) {
-      // Became the latest row: open it and hand control back to automation.
-      setOverridden(false);
-      setExpanded(true);
-    } else if (hasLiveThinking && !prev.thinking && !overridden) {
-      // Thinking resumed inside this row (extended thinking between tool
-      // calls): show it again unless the user folded the row on purpose.
-      setExpanded(true);
-    } else if (!hasLiveThinking && prev.thinking && !overridden) {
-      // The thinking settled: fold immediately — expanded-on-demand shows
-      // the full text afterwards. A deliberate user click wins: it keeps
-      // its chosen state and stays sticky across thinking resume cycles.
-      setExpanded(false);
-    } else if (!autoExpand && !turnLive) {
-      const superseded = prev.auto;
-      const turnJustSettled = prev.live;
-      if ((superseded || turnJustSettled) && !overridden) {
-        setExpanded(false);
-      }
-    }
+  const next = { auto: autoExpand, live: turnLive, thinking: hasLiveThinking };
+  if (prev.auto !== next.auto || prev.live !== next.live || prev.thinking !== next.thinking) {
+    setPrev(next);
+    const settled = expansionTransition(prev, next, expanded, overridden);
+    // Setting state to its current value bails out without a re-render, so
+    // the no-op transitions are free.
+    setOverridden(settled.overridden);
+    setExpanded(settled.expanded);
   }
   const toggleExpanded = () => {
     setOverridden(true);
