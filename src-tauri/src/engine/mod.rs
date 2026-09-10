@@ -407,7 +407,10 @@ pub(crate) fn push_session_id(value: &Value, key: &str, out: &mut Vec<EngineEven
 // ==================== Process registry ====================
 
 /// Live engine child processes keyed by session key (native session id once
-/// known, otherwise the run id). Drop kills everything synchronously.
+/// known, otherwise the run id). Drop kills everything synchronously. Clone
+/// is a refcount bump: the registry keys the same child under BOTH keys
+/// after `rekey` so either route can interrupt it.
+#[derive(Clone)]
 pub struct ChildEntry {
     pub child: Arc<TokioMutex<Child>>,
     pub pid: u32,
@@ -436,8 +439,13 @@ impl ProcessRegistry {
         self.0.lock().map(|map| map.len()).unwrap_or(0)
     }
 
-    /// Move an entry to the native-session key once known. A colliding target
-    /// key belongs to another live run — keep both instead of overwriting.
+    /// Copy the entry to the native-session key once known. The run_id key
+    /// STAYS: the frontend interrupts by session id and by run id (a resume
+    /// whose session-id announcement never arrives leaves run id as the only
+    /// route), and a moving rekey closed exactly that path — the user hit
+    /// Stop, the by-run-id lookup found nothing, and the CLI kept streaming.
+    /// `kill` de-duplicates by pid: hitting both keys kills the tree once.
+    /// A colliding target key belongs to another live run — never overwrite.
     fn rekey(&self, from: &str, to: String) {
         if from == to {
             return;
@@ -446,7 +454,7 @@ impl ProcessRegistry {
             if map.contains_key(&to) {
                 return;
             }
-            if let Some(entry) = map.remove(from) {
+            if let Some(entry) = map.get(from).cloned() {
                 map.insert(to, entry);
             }
         }
@@ -491,7 +499,7 @@ impl ProcessRegistry {
     /// several parallel runs must all die on a single stop, or the survivors
     /// keep streaming and fight the next run over the session file.
     pub fn kill(&self, key: &str) -> bool {
-        let entries: Vec<(u32, Arc<TokioMutex<tokio::process::Child>>, Arc<std::sync::atomic::AtomicBool>)> =
+        let mut entries: Vec<(u32, Arc<TokioMutex<tokio::process::Child>>, Arc<std::sync::atomic::AtomicBool>)> =
             match self.0.lock() {
                 Ok(map) => map
                     .iter()
@@ -500,6 +508,11 @@ impl ProcessRegistry {
                     .collect(),
                 Err(_) => Vec::new(),
             };
+        // The registry keys one child under BOTH its session id and run id
+        // (rekey copies): de-duplicate by pid so one stop fires one
+        // taskkill, not one per key.
+        entries.sort_by_key(|(pid, _, _)| *pid);
+        entries.dedup_by_key(|(pid, _, _)| *pid);
         // No Iterator::any here: it short-circuits on the first true, which
         // would leave every later parallel run alive — the exact bug this
         // aggregate kill exists to fix.
@@ -513,10 +526,15 @@ impl ProcessRegistry {
     pub fn kill_all(&self) {
         // Blocking lock on the teardown path: skipping children because the
         // lock was briefly contended would leak engine processes.
-        let entries: Vec<ChildEntry> = match self.0.lock() {
+        let mut entries: Vec<ChildEntry> = match self.0.lock() {
             Ok(mut map) => map.drain().map(|(_, e)| e).collect(),
             Err(poisoned) => poisoned.into_inner().drain().map(|(_, e)| e).collect(),
         };
+        // rekey keys one child under BOTH its session id and run id:
+        // de-duplicate by pid or the sweep signals the same process group
+        // twice (a second, doomed taskkill on Windows).
+        entries.sort_by_key(|e| e.pid);
+        entries.dedup_by_key(|e| e.pid);
         for entry in entries {
             kill_process_group(entry.pid);
             if let Ok(mut guard) = entry.child.try_lock() {
@@ -531,7 +549,11 @@ impl Drop for ProcessRegistry {
         // &mut self makes locking unnecessary; poisoning must not skip the
         // kill sweep either (a panicked run leaves live children).
         let map = self.0.get_mut().unwrap_or_else(|e| e.into_inner());
-        for (_, entry) in map.drain() {
+        let mut entries: Vec<ChildEntry> = map.drain().map(|(_, e)| e).collect();
+        // Same double-keying as kill_all: signal each process group once.
+        entries.sort_by_key(|e| e.pid);
+        entries.dedup_by_key(|e| e.pid);
+        for entry in entries {
             kill_process_group(entry.pid);
             if let Ok(mut guard) = entry.child.try_lock() {
                 let _ = guard.start_kill();
@@ -782,6 +804,11 @@ struct TurnState {
     native_session_id: Option<String>,
     saw_done: bool,
     saw_error: bool,
+    // NOTE: TurnState lives for the whole process (one run_reader per
+    // spawn), so once saw_error is set every later Done in this process
+    // is suppressed. That is correct for the current one-process-per-turn
+    // engines (omp --print, codex exec); a future multi-turn-per-process
+    // engine must reset this per turn instead.
     saw_any_output: bool,
 }
 
@@ -952,6 +979,13 @@ impl RunContext {
                 );
             }
             EngineEvent::Done { session_id, usage } => {
+                // A Done after a terminal Error must never reach the UI: it
+                // clears the error banner and flips a failed turn back to
+                // "success" in the footer. Engines can emit both in one
+                // flush (omp: turn_end error, then agent_end done).
+                if state.saw_error {
+                    return;
+                }
                 state.saw_done = true;
                 if let Some(id) = session_id {
                     self.adopt_session_id(state, &id, false);
@@ -1430,6 +1464,59 @@ mod permission_tests {
     }
 }
 
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    /// rekey must COPY (not move) so both the session-id and run-id keys
+    /// route an interrupt to the same process. A resume whose
+    /// thread.started never arrives leaves run id as the only route — a
+    /// moving rekey leaked the child (user pressed Stop, nothing died).
+    #[tokio::test]
+    async fn rekey_keeps_both_keys_and_kill_routes_by_either() {
+        let mut child = tokio::process::Command::new(if cfg!(windows) {
+            "cmd"
+        } else {
+            "sh"
+        })
+        .args(if cfg!(windows) { ["/c", "ping -n 30 127.0.0.1"] } else { ["-c", "sleep 30"] })
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn sleep child");
+        let pid = child.id().unwrap_or(0);
+        let entry = ChildEntry {
+            child: Arc::new(TokioMutex::new(child)),
+            pid,
+            run_id: "run-1".to_string(),
+            killed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let registry = ProcessRegistry::default();
+        registry.insert("run-1".to_string(), entry);
+
+        // Simulate the engine adopting the native session id mid-run.
+        registry.rekey("run-1", "session-9".to_string());
+
+        // Both keys route to the same pid; killing by the RUN id (the
+        // fallback route when the session announcement never arrived) must
+        // still find it, and the session key must survive the by-run-id
+        // kill so a second stop also lands (idempotent, pid-deduped).
+        assert!(registry.kill("run-1"));
+        // kill does not drain: both keys still map to the (now dying)
+        // child, so a second stop via the session id still lands on the
+        // same entry. Its boolean result is racy (the child may already be
+        // reaped, in which case kill_entry reports false on a SUCCESSFUL
+        // interrupt), so assert the routing — not the return value.
+        assert_eq!(registry.len(), 2);
+        let _ = registry.kill("session-9");
+
+        // The registry drains the entry from both keys on exit.
+        registry.remove_if_pid("session-9", pid);
+        registry.remove_if_pid("run-1", pid);
+        assert_eq!(registry.len(), 0);
+    }
+}
 #[cfg(test)]
 mod tool_args_tests {
     use super::*;
