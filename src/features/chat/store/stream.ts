@@ -22,6 +22,8 @@ export interface SessionState {
    * indicator's elapsed timer so it survives the indicator's unmount/remount
    * cycle (idle ↔ growing) instead of restarting from 0 every pause. */
   turnStartedAt: number | null;
+  activeModel?: string | null;
+  activeEffort?: string | null;
   usage: unknown;
   error: string | null;
   /** Messages typed while a turn streams; sent FIFO when the turn ends. */
@@ -37,6 +39,8 @@ export const EMPTY_SESSION: SessionState = {
   loading: false,
   streaming: false,
   turnStartedAt: null,
+  activeModel: null,
+  activeEffort: null,
   usage: null,
   error: null,
   queue: [],
@@ -147,6 +151,13 @@ export function bufferStreamPart(
   if (last?.kind === kind) last.text += text;
   else pending.parts.push({ kind, text });
   pendingStreams.set(key, pending);
+}
+
+export function updatePendingStreamModel(key: string, model: string) {
+  const pending = pendingStreams.get(key);
+  if (pending) {
+    pending.model = model;
+  }
 }
 
 /** Pull one session's unflushed stream chunks out of the pending map. Any

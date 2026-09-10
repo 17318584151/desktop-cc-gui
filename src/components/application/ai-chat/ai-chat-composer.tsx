@@ -423,6 +423,11 @@ export function StatusBar({
   usagePct,
   contextMax,
   contextSegments,
+  onCompactContext,
+  onRefreshUsage,
+  compacting,
+  refreshing,
+  canCompact,
 }: {
   branch?: string;
   /** Local branches for the switcher; empty until the first load. */
@@ -438,6 +443,11 @@ export function StatusBar({
   contextMax?: number;
   /** Token buckets for the breakdown card; empty until usage is reported. */
   contextSegments?: ContextSegment[];
+  onCompactContext?: () => void;
+  onRefreshUsage?: () => void;
+  compacting?: boolean;
+  refreshing?: boolean;
+  canCompact?: boolean;
 }) {
   const { t } = useTranslation();
   // `isNonModal` popovers don't dismiss on outside press (react-aria couples
@@ -460,6 +470,12 @@ export function StatusBar({
       freeSpace: t("chat.freeSpace"),
       planUsageLimits: t("chat.planUsageLimits"),
       managePlan: t("chat.managePlan"),
+      compactContext: t("chat.compactContext"),
+      compactContextTooltip: t("chat.compactContextTooltip"),
+      compacting: t("chat.compacting"),
+      refreshUsage: t("chat.refreshUsage"),
+      refreshUsageTooltip: t("chat.refreshUsageTooltip"),
+      refreshing: t("chat.refreshing"),
     }),
     [t],
   );
@@ -521,6 +537,11 @@ export function StatusBar({
                 plan={EMPTY_PLAN}
                 limits={EMPTY_LIMITS}
                 text={limitsText}
+                onCompact={onCompactContext}
+                onRefresh={onRefreshUsage}
+                compacting={compacting}
+                refreshing={refreshing}
+                canCompact={canCompact}
               />
             </AriaDialog>
           </AriaPopover>

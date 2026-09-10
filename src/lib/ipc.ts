@@ -23,6 +23,7 @@ export interface SessionMeta {
 export type TodoStatus = "pending" | "active" | "complete" | "blocked" | "dropped";
 
 export interface TodoItem {
+  id?: string | null;
   content: string;
   status: TodoStatus;
 }

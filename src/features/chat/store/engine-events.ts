@@ -14,6 +14,7 @@ import {
   scheduleDeltaFlush,
   setStreamingFlag,
   settleLiveRows,
+  updatePendingStreamModel,
 } from "./stream";
 import type { ChatStore } from "../store";
 
@@ -33,6 +34,8 @@ export interface EngineEventDeps {
   markUnseenIfBackground: (key: string) => void;
   /** Insert/bump a freshly created session in the sidebar list cache. */
   upsertSessionMeta: (meta: SessionMeta) => void;
+  /** Re-fetch the latest token usage from session history for the given session key. */
+  refreshSessionUsage?: (key: string) => Promise<void>;
 }
 
 /** Collapse whitespace and cap a prompt for use as a session title. */
@@ -83,32 +86,66 @@ export function upsertSessionMetaInto(
   });
 }
 
-/** Effective model for event-stamped rows: the owning tab's per-tab override
- * wins over the engine's global default, mirroring sendPrompt. */
+/** Effective model for event-stamped rows: the session's activeModel wins,
+ * followed by the owning tab's per-tab override, then engine default. */
 function stampedModel(
   deps: EngineEventDeps,
   engine: string,
   key: string,
 ): string | null {
   const s = deps.get();
+  const sessionActive = s.bySession[key]?.activeModel;
+  if (sessionActive) return sessionActive;
   const tab = s.openTabs.find(
     (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
   );
   return (tab?.model ?? s.models[engine]) || null;
 }
 
-/** Effective reasoning effort for event-stamped rows: the owning tab's per-tab override
- * wins over the engine's global default, mirroring sendPrompt. */
+/** Effective reasoning effort for event-stamped rows: the session's activeEffort wins,
+ * followed by the owning tab's per-tab override, then engine default. */
 function stampedEffort(
   deps: EngineEventDeps,
   engine: string,
   key: string,
 ): string | null {
   const s = deps.get();
+  const sessionActive = s.bySession[key]?.activeEffort;
+  if (sessionActive) return sessionActive;
   const tab = s.openTabs.find(
     (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
   );
   return (tab?.effort ?? s.efforts[engine]) || null;
+}
+
+function onModel(
+  event: EngineEventPayload,
+  key: string,
+  deps: EngineEventDeps,
+) {
+  const model = typeof event.data === "string" ? event.data.trim() : "";
+  if (!model) return;
+  updatePendingStreamModel(key, model);
+  deps.set((s) => {
+    const cur = s.bySession[key];
+    if (!cur) return {};
+    let messages = cur.messages;
+    if (messages.some((m) => m.role === "assistant" && m.live)) {
+      messages = messages.map((m) =>
+        m.role === "assistant" && m.live ? { ...m, model } : m,
+      );
+    }
+    return {
+      bySession: {
+        ...s.bySession,
+        [key]: {
+          ...cur,
+          activeModel: model,
+          messages,
+        },
+      },
+    };
+  });
 }
 
 function onDelta(
@@ -505,7 +542,17 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   deps.markUnseenIfBackground(key);
   // An interrupted turn settles here too: keep the queue parked — the user
   // stopped the session, the next message is theirs to send.
-  if (!prev.interrupted) deps.drainQueue(key);
+  if (!prev.interrupted) {
+    deps.drainQueue(key);
+    // If this turn was a /compact command, refresh latest token usage from session history
+    // once the engine settles the session file on disk.
+    const lastUser = [...prev.messages].reverse().find((m) => m.role === "user");
+    if (lastUser?.text.trim().startsWith("/compact")) {
+      setTimeout(() => {
+        deps.refreshSessionUsage?.(key)?.catch(() => {});
+      }, 400);
+    }
+  }
 }
 
 /** Resolve an event's session key (run routing, then session-id match) and
@@ -556,6 +603,9 @@ export function handleEngineEvents(
         break;
       case "done":
         onDone(event, key, deps);
+        break;
+      case "model":
+        onModel(event, key, deps);
         break;
     }
   }

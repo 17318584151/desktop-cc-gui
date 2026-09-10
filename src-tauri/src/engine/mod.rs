@@ -109,11 +109,15 @@ pub enum EngineEvent {
         session_id: Option<String>,
         usage: Option<Value>,
     },
+    /// Actual model ID emitted by the engine or resolved at launch.
+    Model(String),
 }
 
 /// One todo entry carried to the frontend.
 #[derive(Debug, Clone, Serialize)]
 pub struct TodoItem {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub content: String,
     pub status: String,
 }
@@ -147,14 +151,31 @@ pub(crate) fn parse_tool_args_value(value: &Value) -> Option<Value> {
     }
 }
 
+/// Check if a tool name is a dedicated task/todo management tool.
+#[allow(dead_code)]
+pub(crate) fn is_todo_tool(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    lower == "todowrite"
+        || lower == "todo_write"
+        || lower == "todo"
+        || lower == "todos"
+        || lower == "taskcreate"
+        || lower == "task_create"
+        || lower == "taskupdate"
+        || lower == "task_update"
+        || lower == "task"
+}
+
 /// Tool-call start: name plus parsed args (path / todos derived from args).
 pub(crate) fn tool_call_message(name: impl Into<String>, args: Option<&Value>) -> EngineEvent {
+    let name = name.into();
     let args = args.and_then(parse_tool_args_value);
+    let todos = args.as_ref().and_then(parse_todo_args);
     EngineEvent::Message {
         role: "tool".to_string(),
-        text: name.into(),
+        text: name,
         path: args.as_ref().and_then(tool_path_arg),
-        todos: args.as_ref().and_then(parse_todo_args),
+        todos,
         args,
         result: None,
         patch: false,
@@ -228,7 +249,18 @@ pub(crate) fn tool_path_arg(args: &Value) -> Option<String> {
 /// protocol (`op` + task/list, mostly patches). None when the args carry
 /// no todo data.
 pub(crate) fn parse_todo_args(args: &Value) -> Option<TodosPayload> {
+    // Normal tools (e.g. Bash, Edit, Read, Write) carry command or file_path;
+    // their description must NEVER be mistaken for a Todo item.
+    if args.get("command").is_some()
+        || args.get("file_path").is_some()
+        || args.get("filePath").is_some()
+        || args.get("pattern").is_some()
+    {
+        return None;
+    }
+
     let pending_item = |content: &str| TodoItem {
+        id: None,
         content: content.to_string(),
         status: "pending".to_string(),
     };
@@ -251,7 +283,7 @@ pub(crate) fn parse_todo_args(args: &Value) -> Option<TodosPayload> {
         let items = todos
             .iter()
             .filter_map(|entry| {
-                let content = ["content", "text", "title", "task"]
+                let content = ["content", "text", "title", "task", "subject"]
                     .iter()
                     .filter_map(|key| entry.get(key).and_then(Value::as_str))
                     .map(|s| s.trim())
@@ -262,7 +294,13 @@ pub(crate) fn parse_todo_args(args: &Value) -> Option<TodosPayload> {
                     "blocked" => "blocked",
                     _ => "pending",
                 };
+                let id = entry
+                    .get("id")
+                    .or_else(|| entry.get("taskId"))
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string());
                 Some(TodoItem {
+                    id,
                     content: content.to_string(),
                     status: status.to_string(),
                 })
@@ -273,6 +311,62 @@ pub(crate) fn parse_todo_args(args: &Value) -> Option<TodosPayload> {
             replace: true,
         });
     }
+
+    // TaskCreate tool call support: MUST have explicit `subject` (never fallback to tool description)
+    if let Some(subject) = args
+        .get("subject")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if args.get("taskId").is_none() && args.get("op").is_none() {
+            let status = match args.get("status").and_then(Value::as_str).unwrap_or("") {
+                "in_progress" | "running" | "active" => "active",
+                "completed" | "complete" | "done" => "complete",
+                "blocked" => "blocked",
+                _ => "pending",
+            };
+            return Some(TodosPayload {
+                items: vec![TodoItem {
+                    id: None,
+                    content: subject.to_string(),
+                    status: status.to_string(),
+                }],
+                replace: false,
+            });
+        }
+    }
+
+    // TaskUpdate tool call support: MUST have `taskId`
+    if let Some(task_id) = args
+        .get("taskId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let content = args
+            .get("subject")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("");
+        let status = match args.get("status").and_then(Value::as_str).unwrap_or("") {
+            "in_progress" | "running" | "active" => "active",
+            "completed" | "complete" | "done" => "complete",
+            "blocked" => "blocked",
+            "deleted" => "dropped",
+            _ => "pending",
+        };
+        return Some(TodosPayload {
+            items: vec![TodoItem {
+                id: Some(task_id.to_string()),
+                content: content.to_string(),
+                status: status.to_string(),
+            }],
+            replace: false,
+        });
+    }
+
     let op = args.get("op").and_then(Value::as_str)?;
     match op {
         "init" => Some(TodosPayload {
@@ -300,6 +394,7 @@ pub(crate) fn parse_todo_args(args: &Value) -> Option<TodosPayload> {
             };
             Some(TodosPayload {
                 items: vec![TodoItem {
+                    id: None,
                     content: task.to_string(),
                     status: status.to_string(),
                 }],
@@ -889,6 +984,7 @@ struct RunContext {
     pid: u32,
     /// Session id fixed before spawn (grok `-s`); seeds TurnState.
     preassigned_session_id: Option<String>,
+    initial_model: Option<String>,
     child: Arc<TokioMutex<Child>>,
     killed: Arc<std::sync::atomic::AtomicBool>,
     cleanup_files: Vec<PathBuf>,
@@ -1021,6 +1117,15 @@ impl RunContext {
                     serde_json::json!({ "tool": tool, "path": path, "message": message }),
                 );
             }
+            EngineEvent::Model(model) => {
+                state.push(
+                    &self.sink,
+                    &self.run_id,
+                    &self.engine_id,
+                    "model",
+                    Value::String(model),
+                );
+            }
             EngineEvent::Done { session_id, usage } => {
                 // A Done after a terminal Error must never reach the UI: it
                 // clears the error banner and flips a failed turn back to
@@ -1049,6 +1154,9 @@ impl RunContext {
 /// registry cleanup, temp-file cleanup, and the terminal done/error event.
 async fn run_reader(stdout: ChildStdout, ctx: RunContext) {
     let mut state = TurnState::new(ctx.preassigned_session_id.clone());
+    if let Some(model) = ctx.initial_model.clone() {
+        ctx.dispatch_event(&mut state, EngineEvent::Model(model));
+    }
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
     loop {
@@ -1253,6 +1361,17 @@ pub async fn send_message(
     }
 
     let stderr_buf = spawn_stderr_capture(stderr);
+    let initial_model = if engine == "claude" {
+        launch
+            .req
+            .model
+            .as_deref()
+            .map(models::resolve_claude_launch_model)
+            .or_else(|| Some(models::resolve_claude_launch_model("default")))
+            .filter(|m| !m.is_empty())
+    } else {
+        launch.req.model.clone()
+    };
     let ctx = RunContext {
         sink: Arc::clone(&state.sink),
         registry: Arc::clone(&state.processes),
@@ -1261,6 +1380,7 @@ pub async fn send_message(
         run_id: run_id.clone(),
         pid,
         preassigned_session_id: launch.built.preassigned_session_id.clone(),
+        initial_model,
         child,
         killed,
         cleanup_files: launch.built.cleanup_files,

@@ -228,4 +228,121 @@ describe("RunStatusStrip", () => {
     ]);
     expect(folded).toEqual([{ content: "c", status: "complete" }]);
   });
+
+  it("extracts subagent type and description with breathing light indicator", async () => {
+    const subagentTurn: Message[] = [
+      msg(1, "user", "run architecture analysis"),
+      {
+        seq: 2,
+        role: "tool",
+        text: "Agent",
+        ts: null,
+        args: {
+          subagent_type: "architect",
+          description: "分析系统设计与模块划分",
+        },
+      },
+    ];
+
+    seed(subagentTurn, true);
+    await renderStrip();
+
+    expect(pill("子代理").textContent).toContain("0/1");
+    // In running state, breathing light animation is rendered
+    expect(container.querySelector(".animate-ping")).not.toBeNull();
+
+    await click(pill("子代理"));
+    const panel = container.querySelector("[data-testid='run-status-subagents']")?.textContent;
+    expect(panel).toContain("architect");
+    expect(panel).toContain("分析系统设计与模块划分");
+    expect(panel).toContain("运行中");
+  });
+
+  it("keeps subagents from earlier turns visible in completed state", async () => {
+    const multiTurn: Message[] = [
+      msg(1, "user", "turn 1: run subagent"),
+      {
+        seq: 2,
+        role: "tool",
+        text: "Agent",
+        ts: null,
+        args: {
+          subagent_type: "code-reviewer",
+          description: "检查代码安全漏洞",
+        },
+      },
+      msg(3, "assistant", "turn 1 finished"),
+      msg(4, "user", "turn 2: ordinary message"),
+      msg(5, "assistant", "no subagents here"),
+    ];
+
+    seed(multiTurn, false);
+    await renderStrip();
+
+    // The subagent pill survives cross-turn in completed state
+    expect(pill("子代理").textContent).toContain("1/1");
+    expect(container.querySelector(".animate-ping")).toBeNull();
+
+    await click(pill("子代理"));
+    const panel = container.querySelector("[data-testid='run-status-subagents']")?.textContent;
+    expect(panel).toContain("code-reviewer");
+    expect(panel).toContain("检查代码安全漏洞");
+    expect(panel).toContain("已完成");
+  });
+
+  it("correctly maps TaskCreate and subsequent TaskUpdate by taskId to complete status", async () => {
+    const taskTurn: Message[] = [
+      msg(1, "user", "create and complete task"),
+      {
+        seq: 2,
+        role: "tool",
+        text: "TaskCreate",
+        ts: null,
+        args: {
+          subject: "在输入框上方模块增加子代理任务信息与呼吸灯",
+        },
+        result: "Task #13 created successfully",
+        todos: {
+          replace: false,
+          items: [
+            {
+              id: "13",
+              content: "在输入框上方模块增加子代理任务信息与呼吸灯",
+              status: "pending",
+            },
+          ],
+        },
+      },
+      {
+        seq: 3,
+        role: "tool",
+        text: "TaskUpdate",
+        ts: null,
+        args: {
+          taskId: "13",
+          status: "completed",
+        },
+        todos: {
+          replace: false,
+          items: [
+            {
+              id: "13",
+              content: "",
+              status: "complete",
+            },
+          ],
+        },
+      },
+    ];
+
+    seed(taskTurn, false);
+    await renderStrip();
+
+    expect(pill("任务").textContent).toContain("1/1");
+    await click(pill("任务"));
+    const panel = container.querySelector("[data-testid='run-status-todos']")?.textContent;
+    expect(panel).toContain("在输入框上方模块增加子代理任务信息与呼吸灯");
+    expect(panel).toContain("已完成");
+    expect(panel).not.toContain("待处理");
+  });
 });

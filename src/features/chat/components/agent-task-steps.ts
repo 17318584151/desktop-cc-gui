@@ -7,27 +7,93 @@ export interface AgentTaskStep {
   key: string;
   label: string;
   state: AgentTaskStepState;
+  /** Subagent type / role, e.g. "code-reviewer", "planner" */
+  subagentType?: string;
+  /** Detailed description or prompt preview */
+  detail?: string;
 }
 
 /**
  * Live subagent/task detection from the message stream.
  *
  * Engine events carry tool calls as `role: "tool"` rows whose text is the
- * tool label (engine-dependent: Claude "Task", pi-family "task · intent",
- * Codex/Grok spawn_* names, Kimi agent swarm). There is no dedicated
- * subagent event kind, so the panel derives its steps from these labels —
- * matching the reference project's cross-engine spawn-tool matcher.
+ * tool label (engine-dependent: Claude "Task" / "Agent" / "Workflow",
+ * pi-family "task · intent", Codex/Grok spawn_* names, Kimi agent swarm).
  */
 export function isSubagentToolLabel(text: string): boolean {
+  if (!text) return false;
   // pi-family labels are "name · intent" — match on the tool name head.
   const head = text.split("·")[0].trim().toLowerCase();
   const first = head.split(/[\s/\\]+/)[0].replace(/-/g, "_");
   if (first === "task" || first === "agent" || first === "subagent") return true;
   if (first === "spawn" || first === "spawn_agent" || first === "spawn_subagent") return true;
+  if (first === "workflow" || first === "run_workflow" || first === "pipeline") return true;
+  if (first === "dispatch" || first === "dispatch_agent" || first === "delegate") return true;
   if (/^subagent\s*\d+/.test(head)) return true;
   if (head.includes("spawn agent") || head.includes("spawn subagent")) return true;
   if (head.includes("agent swarm") || head.includes("agent_swarm")) return true;
+  if (head.includes("workflow") || head.includes("subagent")) return true;
   return false;
+}
+
+/** Extract descriptive label, role type, and detail from tool call payload. */
+export function extractSubagentTaskInfo(message: Message): {
+  label: string;
+  subagentType?: string;
+  detail?: string;
+} {
+  const args = (message.args && typeof message.args === "object" ? message.args : {}) as Record<string, unknown>;
+
+  const subagentType =
+    typeof args.subagent_type === "string" && args.subagent_type.trim()
+      ? args.subagent_type.trim()
+      : typeof args.type === "string" && args.type.trim()
+        ? args.type.trim()
+        : undefined;
+
+  const descCandidates = [
+    args.description,
+    args.subject,
+    args.activeForm,
+    args.title,
+    args.task,
+    args.prompt,
+  ];
+  let description: string | undefined;
+  for (const c of descCandidates) {
+    if (typeof c === "string" && c.trim()) {
+      description = c.trim();
+      break;
+    }
+  }
+
+  const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : undefined;
+
+  let label = message.text;
+  if (message.text.includes("·")) {
+    label = message.text;
+  } else if (description) {
+    if (subagentType) {
+      label = `[${subagentType}] ${description}`;
+    } else if (name) {
+      label = `[${name}] ${description}`;
+    } else {
+      label = description;
+    }
+  } else if (subagentType) {
+    label = name ? `[${subagentType}] ${name}` : `[${subagentType}] ${message.text}`;
+  } else if (name) {
+    label = `[${name}] ${message.text}`;
+  }
+
+  let detail: string | undefined;
+  if (typeof args.prompt === "string" && args.prompt.trim() && args.prompt.trim() !== description) {
+    detail = args.prompt.trim();
+  } else if (typeof args.description === "string" && args.description.trim() && args.description.trim() !== description) {
+    detail = args.description.trim();
+  }
+
+  return { label, subagentType, detail };
 }
 
 /** Edit-class tool labels (write/edit/patch families) — the file
@@ -58,17 +124,9 @@ function currentTurnStart(messages: Message[]): number {
 }
 
 /**
- * Fold the current turn's subagent tool rows into panel steps.
- *
- * Completion is deliberately conservative — the stream carries tool-call
- * STARTS only (no outputs, no task notifications), so a spawn stays active
- * until its result provably came back:
- * - a later assistant/thinking row means the model received the result and
- *   moved on (covers non-blocking spawn + hub-wait flows: the wait tool row
- *   itself must NOT settle the spawn);
- * - Claude's Task is blocking, so for claude ANY later row settles it;
- * - the turn ending settles everything.
- * Spawns never settle on unrelated tool rows — that was the flash bug.
+ * Fold subagent tool rows across the session into panel steps.
+ * Steps in prior turns are settled/complete; current-turn steps stay active
+ * while streaming until tool result returns or subsequent assistant response arrives.
  */
 export function deriveAgentTaskSteps(
   messages: Message[],
@@ -78,27 +136,39 @@ export function deriveAgentTaskSteps(
   const turnStart = currentTurnStart(messages);
   const blockingSpawn = engine === "claude";
   const steps: AgentTaskStep[] = [];
-  for (let i = turnStart; i < messages.length; i++) {
+
+  for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (message.role !== "tool" || !isSubagentToolLabel(message.text)) continue;
-    let settled = !streaming;
+
+    const isCurrentTurn = i >= turnStart;
+    let settled = !isCurrentTurn || !streaming;
+
     if (!settled) {
-      for (let j = i + 1; j < messages.length; j++) {
-        const later = messages[j];
-        if (later.role === "assistant" || later.role === "thinking") {
-          settled = true;
-          break;
-        }
-        if (blockingSpawn) {
-          settled = true;
-          break;
+      if (message.result !== undefined && message.result !== null) {
+        settled = true;
+      } else {
+        for (let j = i + 1; j < messages.length; j++) {
+          const later = messages[j];
+          if (later.role === "assistant" || later.role === "thinking") {
+            settled = true;
+            break;
+          }
+          if (blockingSpawn) {
+            settled = true;
+            break;
+          }
         }
       }
     }
+
+    const info = extractSubagentTaskInfo(message);
     steps.push({
       key: String(message.seq),
-      label: message.text,
+      label: info.label,
       state: settled ? "complete" : "active",
+      subagentType: info.subagentType,
+      detail: info.detail,
     });
   }
   return steps;
@@ -132,11 +202,30 @@ export function deriveEditedFiles(messages: Message[]): string[] {
  * Fold todo tool payloads across the whole loaded session into the current
  * list. Two wire semantics: `replace` snapshots swap the list outright
  * (TodoWrite-style full rewrites, init/clear ops); otherwise the payload is
- * a patch matched by content (start/done/block/unblock), and "dropped"
+ * a patch matched by id or content (start/done/block/unblock), and "dropped"
  * removes the item. Session-scoped like the edited-files pill.
  */
 export function deriveTodoList(messages: Message[]): TodoItem[] {
   let items: TodoItem[] = [];
+
+  // Map taskId -> original task subject for Claude Code TaskCreate/TaskUpdate tracking
+  const taskIdToContent = new Map<string, string>();
+  for (const message of messages) {
+    if (message.role === "tool") {
+      const toolName = message.text.toLowerCase();
+      if (toolName.includes("taskcreate") || toolName.includes("task_create")) {
+        const args = (message.args && typeof message.args === "object" ? message.args : {}) as Record<string, unknown>;
+        const subject = typeof args.subject === "string" ? args.subject.trim() : "";
+        if (subject && typeof message.result === "string") {
+          const match = message.result.match(/Task\s*#?(\w+)/i);
+          if (match) {
+            taskIdToContent.set(match[1], subject);
+          }
+        }
+      }
+    }
+  }
+
   for (const message of messages) {
     const payload = message.todos;
     if (!payload) continue;
@@ -145,13 +234,32 @@ export function deriveTodoList(messages: Message[]): TodoItem[] {
       continue;
     }
     for (const patch of payload.items) {
-      const idx = items.findIndex((item) => item.content === patch.content);
+      let idx = -1;
+      if (patch.id) {
+        idx = items.findIndex((item) => item.id === patch.id);
+        if (idx < 0 && taskIdToContent.has(patch.id)) {
+          const mappedContent = taskIdToContent.get(patch.id);
+          idx = items.findIndex((item) => item.content === mappedContent);
+        }
+      }
+      if (idx < 0 && patch.content) {
+        idx = items.findIndex((item) => item.content === patch.content);
+      }
+
       if (patch.status === "dropped") {
         if (idx >= 0) items = items.filter((_, j) => j !== idx);
         continue;
       }
-      if (idx >= 0) items[idx] = patch;
-      else items = [...items, patch];
+      if (idx >= 0) {
+        const existing = items[idx];
+        items[idx] = {
+          ...existing,
+          ...patch,
+          content: patch.content ? patch.content : existing.content,
+        };
+      } else if (patch.content) {
+        items = [...items, patch];
+      }
     }
   }
   return items;

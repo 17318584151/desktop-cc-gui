@@ -151,3 +151,115 @@ describe("stop during an in-flight send", () => {
     expect(vi.mocked(ipc.interruptSession)).toHaveBeenCalledWith("run-9");
   });
 });
+
+describe("compactContext and refreshSessionUsage", () => {
+  beforeEach(resetStore);
+
+  it("refreshSessionUsage updates session usage from session history", async () => {
+    const tab = { engine: "claude", sessionId: "sess-compact", workspacePath: WS };
+    const key = "claude/sess-compact";
+    useChatStore.setState({
+      activeEngine: "claude",
+      openTabs: [tab],
+      active: tab,
+      bySession: {
+        [key]: {
+          messages: [],
+          queue: [],
+          error: null,
+          streaming: false,
+          turnStartedAt: null,
+          usage: null,
+          interrupted: false,
+          activeModel: null,
+          activeEffort: null,
+          nextBefore: null,
+          loading: false,
+        },
+      },
+    });
+
+    const mockUsage = { inputTokens: 1200, outputTokens: 300, totalTokens: 1500 };
+    vi.mocked(ipc.loadSessionPage).mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 1,
+          role: "assistant",
+          text: "hello",
+          ts: "2026-09-10T12:00:00Z",
+          usage: mockUsage,
+        },
+      ] as any,
+      nextBefore: null,
+    });
+
+    await useChatStore.getState().refreshSessionUsage(key);
+
+    expect(ipc.loadSessionPage).toHaveBeenCalledWith("claude", "sess-compact", 100);
+    expect(useChatStore.getState().bySession[key]?.usage).toEqual(mockUsage);
+  });
+
+  it("compactContext sends /compact and invokes refreshSessionUsage after compaction finishes", async () => {
+    const tab = { engine: "claude", sessionId: "sess-compact", workspacePath: WS };
+    const key = "claude/sess-compact";
+    useChatStore.setState({
+      activeEngine: "claude",
+      openTabs: [tab],
+      active: tab,
+      bySession: {
+        [key]: {
+          messages: [],
+          queue: [],
+          error: null,
+          streaming: false,
+          turnStartedAt: null,
+          usage: { inputTokens: 50000, outputTokens: 5000 },
+          interrupted: false,
+          activeModel: null,
+          activeEffort: null,
+          nextBefore: null,
+          loading: false,
+        },
+      },
+      streamingByKey: {},
+    });
+
+    const newUsage = { inputTokens: 10000, outputTokens: 1000 };
+    vi.mocked(ipc.loadSessionPage).mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 2,
+          role: "assistant",
+          text: "compacted",
+          ts: "2026-09-10T12:00:00Z",
+          usage: newUsage,
+        },
+      ] as any,
+      nextBefore: null,
+    });
+
+    const compactPromise = useChatStore.getState().compactContext(key);
+
+    // Verify /compact message was sent
+    expect(ipc.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "/compact" }),
+    );
+
+    // Simulate completion by clearing streamingByKey
+    useChatStore.setState({
+      streamingByKey: {},
+      bySession: {
+        ...useChatStore.getState().bySession,
+        [key]: {
+          ...useChatStore.getState().bySession[key]!,
+          streaming: false,
+        },
+      },
+    });
+
+    await compactPromise;
+
+    expect(ipc.loadSessionPage).toHaveBeenCalledWith("claude", "sess-compact", 100);
+    expect(useChatStore.getState().bySession[key]?.usage).toEqual(newUsage);
+  });
+});
