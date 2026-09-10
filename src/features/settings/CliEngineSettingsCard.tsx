@@ -235,10 +235,13 @@ function BinPathDialog({
 
   const commit = async (value: string | null) => {
     setSaving(true);
-    const failed = await save({ [field]: value });
-    setSaving(false);
-    if (failed) setError(failed);
-    else onClose();
+    try {
+      const failed = await save({ [field]: value });
+      if (failed) setError(failed);
+      else onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -358,18 +361,21 @@ function CustomModelsDialog({
 
   const commit = async () => {
     setSaving(true);
-    const latest = await ipc.getAppSettings().catch(() => null);
-    const failed = await save({
-      customModels: { ...(latest?.customModels ?? {}), [engine]: draft },
-    });
-    setSaving(false);
-    if (failed) {
-      setError(failed);
-      return;
+    try {
+      const latest = await ipc.getAppSettings().catch(() => null);
+      const failed = await save({
+        customModels: { ...(latest?.customModels ?? {}), [engine]: draft },
+      });
+      if (failed) {
+        setError(failed);
+        return;
+      }
+      // The chat model picker merges customModels on this event.
+      notifyCliConfigChanged();
+      onClose();
+    } finally {
+      setSaving(false);
     }
-    // The chat model picker merges customModels on this event.
-    notifyCliConfigChanged();
-    onClose();
   };
 
   return (
@@ -416,7 +422,7 @@ function CustomModelsDialog({
                 setError("");
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   add();
                 }

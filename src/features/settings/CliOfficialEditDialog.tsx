@@ -38,14 +38,21 @@ export function CliOfficialEditDialog({ cli }: { cli: CliConfigState }) {
   const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState("");
 
+  // Adjust state during render (React's recommended pattern): a changed edit
+  // target — dialog reopened or another engine picked — restarts from fresh
+  // panes without the stale flash a reset effect would paint after commit.
+  const editTarget = officialEditing ? engine : null;
+  const [prevEditTarget, setPrevEditTarget] = useState(editTarget);
+  if (editTarget !== prevEditTarget) {
+    setPrevEditTarget(editTarget);
+    setFiles(null);
+    setDrafts({});
+    setLoadError("");
+    setSaveError("");
+  }
+
   useEffect(() => {
-    if (!officialEditing) {
-      setFiles(null);
-      setDrafts({});
-      setLoadError("");
-      setSaveError("");
-      return;
-    }
+    if (!officialEditing) return;
     let cancelled = false;
     ipc
       .officialConfigRead(engine)

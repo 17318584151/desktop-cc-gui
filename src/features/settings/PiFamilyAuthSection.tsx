@@ -18,7 +18,7 @@
  * After every write `notifyCliConfigChanged()` re-probes the chat model
  * catalogs — the CLIs filter available models by stored credentials.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { ConfirmDialog } from "@/components/dialogs";
@@ -203,19 +203,18 @@ export function PiFamilyAuthSection({
   }, [modelsEditorOpen, modelsConfig]);
 
   // The 官方配置 row's 编辑 entry bumps this signal to open the models
-  // editor. The consumed-signal ref keeps modelsConfig refreshes from
-  // re-firing it while the signal value stays set.
-  const consumedSignal = useRef(openCustomEditorSignal ?? 0);
-  useEffect(() => {
-    const signal = openCustomEditorSignal ?? 0;
-    if (signal === consumedSignal.current) return;
-    consumedSignal.current = signal;
+  // editor. Adjusting state during render (React's recommended pattern,
+  // comparing against the previous signal) fires exactly once per bump —
+  // modelsConfig refreshes can't re-fire it while the signal stays set.
+  const openSignal = openCustomEditorSignal ?? 0;
+  const [prevOpenSignal, setPrevOpenSignal] = useState(openSignal);
+  if (openSignal !== prevOpenSignal) {
+    setPrevOpenSignal(openSignal);
     const existing = modelsConfig?.text ?? "";
     setModelsDraft(existing.trim() ? existing : (modelsConfig?.template ?? ""));
     setModelsError(null);
     setModelsEditorOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openCustomEditorSignal]);
+  }
 
   const handleModelsSave = useCallback(async () => {
     setModelsSaving(true);
