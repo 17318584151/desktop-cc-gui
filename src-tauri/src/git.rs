@@ -119,6 +119,9 @@ pub fn file_tree_colors(
 ) -> HashMap<String, &'static str> {
     let listed = Path::new(path);
     let mut out: HashMap<String, &'static str> = HashMap::new();
+    // O(1) membership for the two hot loops below (status entries × files).
+    let file_set: std::collections::HashSet<&str> =
+        files.iter().map(String::as_str).collect();
 
     let mut prefix = String::new();
     if let Ok(repo) = Repository::discover(listed) {
@@ -168,7 +171,7 @@ pub fn file_tree_colors(
                 };
                 // Direct hits at this level (files, or the collapsed
                 // untracked dir itself)…
-                if files.iter().any(|f| f == rel_file) {
+                if file_set.contains(rel_file) {
                     out.insert(rel_file.to_string(), color);
                 }
                 // …and parent propagation: a folder inherits the state of
@@ -181,7 +184,7 @@ pub fn file_tree_colors(
                         break;
                     }
                     let key = parent.to_string_lossy().into_owned();
-                    if files.iter().any(|f| f == &key) {
+                    if file_set.contains(key.as_str()) {
                         let next = match out.get(&key).copied() {
                             Some("modified") => "modified",
                             _ => color,
@@ -202,7 +205,7 @@ pub fn file_tree_colors(
     // dirty state: the branch badge already carries that.
     for name in files {
         let dir = listed.join(name);
-        if dir.join(".git").exists() && exact_repository_summary(&dir).is_some() {
+        if open_exact_repo(&dir).is_some() {
             out.insert(name.clone(), "repository");
         }
     }

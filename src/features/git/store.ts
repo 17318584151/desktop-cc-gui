@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ipc, type BranchInfo, type GitStatus } from "@/lib/ipc";
 import { errorText } from "@/lib/errors";
+import { useFilesStore } from "@/features/files/store";
 
 const TTL_MS = 30_000;
 
@@ -73,6 +74,12 @@ export const useGitStore = create<GitStore>((set, get) => {
       }));
       get()
         .refresh(workspacePath, true)
+        .catch(() => undefined);
+      // The file tree's git badges/colors are stale after any mutation
+      // (commit/stage/checkout); refreshTree re-walks every loaded level.
+      useFilesStore
+        .getState()
+        .refreshTree()
         .catch(() => undefined);
     }
   };

@@ -229,6 +229,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       const entries = await ipc.listDir(path);
       set((s) => ({ children: { ...s.children, [path]: entries } }));
       void get().loadRepositories(path, entries);
+      void get().loadFileColors(path, entries);
     } catch {
       // Keep stale listing on refresh failure; the user can retry by toggling.
     }
