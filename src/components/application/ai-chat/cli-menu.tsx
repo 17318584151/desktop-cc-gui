@@ -39,7 +39,7 @@ import { EFFORT_LEVELS } from "./effort-levels";
  *   (search field over a "Models" radio group over the effort slider,
  *   Board UI node 4035:6925). */
 
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 /** CLI picker panel: shadcn-style menu (reference: desktop-cc-gui's
  *  ModelSelect) — 8px radius, 4px padding, hairline separators between rows,
@@ -68,6 +68,7 @@ const EFFORT_LABEL_KEYS: Record<EffortLevel, string> = {
   high: "chat.effortHigh",
   xhigh: "chat.effortXhigh",
   max: "chat.effortMax",
+  ultra: "chat.effortUltra",
 };
 
 /** Fresh random impulse per tick each time the engine ignites: blown left by
@@ -125,7 +126,7 @@ function EffortTicks({
 }
 
 /**
- * Effort slider (Board UI Figma node 4037:4885, five stops here): 27px
+ * Effort slider (Board UI Figma node 4037:4885, six stops here): 27px
  * neutral track with a tick per stop, a light fill up to the 21×27 bordered
  * thumb. Built on react-aria's Slider for drag + keyboard support.
  *
@@ -502,8 +503,8 @@ function ModelGroupList({
  * Engine model panel content: "{name} 引擎" header over a search field over
  * checkmark model rows over the effort slider. Shared by the desktop flyout
  * (EngineFlyout) and the mobile second-level dialog; `onClose` adds a
- * dismiss button to the header, which only the dialog passes. Picking a
- * model dismisses the whole menu (handled by the parent via `onPickModel`).
+ * dismiss button to the header, which only the dialog passes. Model picks
+ * stay in-panel so Fast / effort can follow without reopening.
  */
 function EngineModelPanel({
   option,
@@ -516,6 +517,8 @@ function EngineModelPanel({
   onEffortChange,
   ompServiceTier,
   onOmpServiceTierChange,
+  codexServiceTier,
+  onCodexServiceTierChange,
   onRefresh,
   onClose,
 }: {
@@ -529,6 +532,8 @@ function EngineModelPanel({
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
   onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
+  codexServiceTier: OmpServiceTier;
+  onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs without an app restart. */
   onRefresh?: () => void | Promise<void>;
   onClose?: () => void;
@@ -559,6 +564,10 @@ function EngineModelPanel({
       )
     : null;
   const ompFast = option.id === "omp" && supportsOmpFastMode(selectedModelId);
+  const codexFast = option.id === "codex";
+  const showFast = ompFast || codexFast;
+  const fastTier = codexFast ? codexServiceTier : ompServiceTier;
+  const onFastChange = codexFast ? onCodexServiceTierChange : onOmpServiceTierChange;
 
   return (
     <div className="flex w-full flex-col gap-1.5">
@@ -592,10 +601,15 @@ function EngineModelPanel({
       />
 
       {/* Full-bleed divider, like the reference submenu. */}
-      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", ompFast ? "mb-1" : "mb-3")} />
+      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", showFast ? "mb-1" : "mb-3")} />
       <FlyoutEffortSection
-        header={ompFast ? (
-          <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange}>
+        header={showFast ? (
+          <OmpSpeedSection
+            model={selectedModelId}
+            supported={codexFast || undefined}
+            value={fastTier}
+            onChange={onFastChange}
+          >
             <span className="text-body-medium text-text-primary">{t(EFFORT_LABEL_KEYS[effort])}</span>
           </OmpSpeedSection>
         ) : undefined}
@@ -630,7 +644,9 @@ function CliMenuTrigger({
   model,
   effort,
   ompServiceTier,
+  codexServiceTier,
   modelId,
+  isOpen,
 }: {
   triggerRef: Ref<HTMLButtonElement>;
   engine: string;
@@ -640,13 +656,33 @@ function CliMenuTrigger({
   model: ModelOption | undefined;
   effort: EffortLevel;
   ompServiceTier: OmpServiceTier;
+  codexServiceTier: OmpServiceTier;
   modelId: string;
+  /** While open, lock the trigger's min-width so model picks don't shrink it
+   *  and nudge the top-end popover. */
+  isOpen: boolean;
 }) {
   const { t } = useTranslation();
+  const showFast =
+    (engine === "omp" && supportsOmpFastMode(modelId) && ompServiceTier === "priority") ||
+    (engine === "codex" && codexServiceTier === "priority");
+  // Snapshot width on open; clear on close. Shorter model labels then can't
+  // shrink the trigger mid-session and slide the popover.
+  const [lockedMinWidth, setLockedMinWidth] = useState<number | undefined>();
+  useEffect(() => {
+    if (!isOpen) {
+      setLockedMinWidth(undefined);
+      return;
+    }
+    const node =
+      triggerRef && typeof triggerRef !== "function" ? triggerRef.current : null;
+    if (node) setLockedMinWidth(node.offsetWidth);
+  }, [isOpen, triggerRef]);
   return (
     <AriaButton
       ref={triggerRef}
       aria-label={`${engineName}${model ? ` / ${model.label}` : ""} · ${t(EFFORT_LABEL_KEYS[effort])}`}
+      style={lockedMinWidth ? { minWidth: lockedMinWidth } : undefined}
       className="group flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
     >
       <EngineIcon engine={engine} size={16} className="shrink-0 text-foreground-icon-secondary" />
@@ -671,9 +707,9 @@ function CliMenuTrigger({
             </span>
           ))}
         </span>
-        {engine === "omp" && supportsOmpFastMode(modelId) && (
-          <span aria-hidden={ompServiceTier !== "priority"} className={cx("w-7 shrink-0 text-center text-text-primary", ompServiceTier !== "priority" && "invisible")}>Fast</span>
-        )}
+        {(engine === "omp" && supportsOmpFastMode(modelId)) || engine === "codex" ? (
+          <span aria-hidden={!showFast} className={cx("w-7 shrink-0 text-center text-text-primary", !showFast && "invisible")}>Fast</span>
+        ) : null}
       </span>
     </AriaButton>
   );
@@ -699,6 +735,8 @@ function EngineMenuBody({
   onEffortChange,
   ompServiceTier,
   onOmpServiceTierChange,
+  codexServiceTier,
+  onCodexServiceTierChange,
   onRefreshModels,
   onFlyoutEnter,
   onFlyoutLeave,
@@ -719,6 +757,8 @@ function EngineMenuBody({
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
   onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
+  codexServiceTier: OmpServiceTier;
+  onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   onRefreshModels?: () => void | Promise<void>;
   onFlyoutEnter: () => void;
   onFlyoutLeave: () => void;
@@ -765,6 +805,8 @@ function EngineMenuBody({
             onEffortChange={onEffortChange}
             ompServiceTier={ompServiceTier}
             onOmpServiceTierChange={onOmpServiceTierChange}
+            codexServiceTier={codexServiceTier}
+            onCodexServiceTierChange={onCodexServiceTierChange}
             onRefresh={onRefreshModels}
           />
         )}
@@ -786,6 +828,8 @@ function EngineModelDialog({
   onEffortChange,
   ompServiceTier,
   onOmpServiceTierChange,
+  codexServiceTier,
+  onCodexServiceTierChange,
   onRefreshModels,
   onClose,
 }: {
@@ -800,6 +844,8 @@ function EngineModelDialog({
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
   onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
+  codexServiceTier: OmpServiceTier;
+  onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   onRefreshModels?: () => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -818,8 +864,10 @@ function EngineModelDialog({
         effort={efforts[option.id] ?? "medium"}
         onPickModel={onPickModel}
         onEffortChange={onEffortChange}
-            ompServiceTier={ompServiceTier}
-            onOmpServiceTierChange={onOmpServiceTierChange}
+        ompServiceTier={ompServiceTier}
+        onOmpServiceTierChange={onOmpServiceTierChange}
+        codexServiceTier={codexServiceTier}
+        onCodexServiceTierChange={onCodexServiceTierChange}
         onRefresh={onRefreshModels}
         onClose={onClose}
       />
@@ -833,7 +881,7 @@ function EngineModelDialog({
  * "{CLI} / {model} · {effort}" — hairline-separated engine rows where
  * only the active engine carries a status dot, and a per-engine flyout.
  * Picking a model in another engine's flyout switches to that engine (when
- * installed), matching the reference picker's behavior.
+ * installed) and keeps the panel open for Fast / effort.
  */
 export function CliMenu({
   options,
@@ -846,6 +894,8 @@ export function CliMenu({
   onEffortChange,
   ompServiceTier,
   onOmpServiceTierChange,
+  codexServiceTier,
+  onCodexServiceTierChange,
   onRefreshModels,
 }: {
   options: MenuOption[];
@@ -861,6 +911,8 @@ export function CliMenu({
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
   onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
+  codexServiceTier: OmpServiceTier;
+  onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs (flyout refresh button). */
   onRefreshModels?: () => void | Promise<void>;
 }) {
@@ -909,16 +961,14 @@ export function CliMenu({
 
   const dialogOption = options.find((o) => o.id === dialogEngine);
 
-  // Picking a model is the decision the flyout exists for, so it dismisses
-  // the whole menu; a model picked on another installed engine also switches
-  // the active engine to it.
+  // Keep the menu open after a model pick so Fast / effort can be adjusted in
+  // the same panel (Codex desktop behavior). A model on another installed
+  // engine still switches the active CLI; the flyout stays on that engine.
   const pickModel = (engine: string, id: string) => {
     onModelChange(engine, id);
     const target = options.find((o) => o.id === engine);
     if (engine !== value && target && !target.disabled) onChange(engine);
-    close();
-    setOpenEngine(null);
-    setDialogEngine(null);
+    if (!isMobile) setOpenEngine(engine);
   };
 
   const selectEngine = (option: MenuOption) => {
@@ -951,7 +1001,9 @@ export function CliMenu({
         model={selectedModel}
         effort={triggerEffort}
         ompServiceTier={ompServiceTier}
+        codexServiceTier={codexServiceTier}
         modelId={selectedModelId}
+        isOpen={isOpen}
       />
 
       <AriaPopover
@@ -978,6 +1030,8 @@ export function CliMenu({
             onEffortChange={onEffortChange}
             ompServiceTier={ompServiceTier}
             onOmpServiceTierChange={onOmpServiceTierChange}
+            codexServiceTier={codexServiceTier}
+            onCodexServiceTierChange={onCodexServiceTierChange}
             onRefreshModels={onRefreshModels}
             onFlyoutEnter={cancelFlyoutClose}
             onFlyoutLeave={scheduleFlyoutClose}
@@ -995,8 +1049,10 @@ export function CliMenu({
       onQueryChange={setQuery}
       onPickModel={pickModel}
       onEffortChange={onEffortChange}
-            ompServiceTier={ompServiceTier}
-            onOmpServiceTierChange={onOmpServiceTierChange}
+      ompServiceTier={ompServiceTier}
+      onOmpServiceTierChange={onOmpServiceTierChange}
+      codexServiceTier={codexServiceTier}
+      onCodexServiceTierChange={onCodexServiceTierChange}
       onRefreshModels={onRefreshModels}
       onClose={() => setDialogEngine(null)}
     />

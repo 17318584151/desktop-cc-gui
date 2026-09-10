@@ -45,6 +45,9 @@ pub struct AppSettings {
     /// Per-app OMP OpenAI tier override; None preserves native CLI settings.
     #[serde(default)]
     pub omp_openai_service_tier: Option<String>,
+    /// Per-app Codex Fast override (`service_tier`); None preserves ~/.codex.
+    #[serde(default)]
+    pub codex_service_tier: Option<String>,
     /// Max sessions shown per workspace in the sidebar before collapsing
     /// behind a "show more" row.
     #[serde(default = "default_sidebar_thread_limit")]
@@ -106,6 +109,7 @@ impl Default for AppSettings {
             default_models: HashMap::new(),
             default_efforts: HashMap::new(),
             omp_openai_service_tier: None,
+            codex_service_tier: None,
             sidebar_thread_limit: default_sidebar_thread_limit(),
             composer_send_shortcut: default_composer_send_shortcut(),
             terminal_shell_path: None,
@@ -381,6 +385,13 @@ pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
         .is_some_and(|tier| !matches!(tier, "default" | "priority"))
     {
         return Err("Invalid OMP OpenAI service tier".to_string());
+    }
+    if settings
+        .codex_service_tier
+        .as_deref()
+        .is_some_and(|tier| !matches!(tier, "default" | "priority"))
+    {
+        return Err("Invalid Codex service tier".to_string());
     }
     // Reject only the offending bin-override fields: the rest of the settings
     // still persist, and the error names what was dropped.

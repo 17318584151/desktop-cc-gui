@@ -49,7 +49,7 @@ export interface Message {
   ts: string | null;
   usage?: unknown;
   model?: string | null;
-  /** Reasoning effort level ("low" | "medium" | "high" | "xhigh" | "max") */
+  /** Reasoning effort level ("low" | "medium" | "high" | "xhigh" | "max" | "ultra") */
   effort?: string | null;
   /** Turn duration in milliseconds (measured from prompt send to turn completion) */
   durationMs?: number | null;
@@ -188,6 +188,8 @@ export interface AppSettings {
   defaultModels: Record<string, string>;
   defaultEfforts: Record<string, string>;
   ompOpenaiServiceTier?: "default" | "priority" | null;
+  /** Codex Fast override; null preserves ~/.codex/config.toml. */
+  codexServiceTier?: "default" | "priority" | null;
   /** Max sessions listed per workspace in the sidebar (default 5). */
   sidebarThreadLimit: number;
   /** Composer send gesture: "enter" (Enter sends) or "cmdEnter" (⌘/Ctrl+Enter sends). */

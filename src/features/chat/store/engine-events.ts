@@ -17,6 +17,7 @@ import {
   updatePendingStreamModel,
 } from "./stream";
 import type { ChatStore } from "../store";
+import { mergeUsage } from "../usage";
 
 /**
  * Engine-event handling: the main loop resolves each event's session key and
@@ -482,7 +483,7 @@ function onWarn(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
 function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   const prev = deps.get().bySession[key] ?? EMPTY_SESSION;
   const data = event.data as { usage: unknown };
-  const finalUsage = data.usage ?? prev.usage;
+  const finalUsage = mergeUsage(data.usage, prev.usage);
   // Fold the turn's last unflushed chunks (the final sink batch can arrive
   // in the same frame as done), then settle every live row: the streamed
   // text the user watched arrive *is* the final message.

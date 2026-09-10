@@ -4,16 +4,18 @@ import Zap from "lucide-react/dist/esm/icons/zap";
 import RotateCcw from "lucide-react/dist/esm/icons/rotate-ccw";
 import { supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
 
-export function OmpSpeedSection({ model, value, onChange, children }: {
+export function OmpSpeedSection({ model, value, onChange, children, supported: supportedProp }: {
   model: string;
   children?: ReactNode;
   value: OmpServiceTier;
   onChange: (tier: OmpServiceTier) => Promise<void>;
+  /** When set, bypasses the openai-codex model gate (Codex engine Fast). */
+  supported?: boolean;
 }) {
   const { t } = useTranslation();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
-  const supported = supportsOmpFastMode(model);
+  const supported = supportedProp ?? supportsOmpFastMode(model);
   const enabled = supported && value === "priority";
   if (!supported) return null;
   const change = async (tier: OmpServiceTier) => {
