@@ -81,3 +81,52 @@ describe("Markdown markdownRegistry merge (plan §4.2 #5)", () => {
     expect(container.querySelector(".md-codeblock")).not.toBeNull();
   });
 });
+
+describe("math rendering", () => {
+  it("typesets inline math instead of leaving the source literal", async () => {
+    await renderMarkdown("能量守恒 $E = mc^2$ 收尾");
+    expect(container.querySelector(".katex")).not.toBeNull();
+    // The raw TeX must not survive as visible text next to the typeset math.
+    expect(container.textContent).not.toContain("$E = mc^2$");
+  });
+
+  it("typesets display math as a centered block", async () => {
+    await renderMarkdown("推导：\n\n$$\n\\int_0^1 x^2 \\, dx = \\frac{1}{3}\n$$\n\n结束");
+    expect(container.querySelector(".katex-display")).not.toBeNull();
+    // The raw markup is gone: what remains is typeset, not source. (KaTeX
+    // keeps the TeX inside its MathML annotation for assistive tech, which
+    // is why the check looks for the delimiters and not for "\frac".)
+    expect(container.textContent).not.toContain("$$");
+  });
+
+  it("promotes a formula that owns its line to a display block", async () => {
+    // Models write this single-line form constantly; the parser alone would
+    // render it inline and wedge the formula into the paragraph flow.
+    await renderMarkdown("推导：\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$\n\n结束");
+    expect(container.querySelector(".katex-display")).not.toBeNull();
+  });
+
+  it("keeps math inline when it sits inside a sentence", async () => {
+    await renderMarkdown("由 $a^2 + b^2 = c^2$ 可得结论");
+    expect(container.querySelector(".katex")).not.toBeNull();
+    expect(container.querySelector(".katex-display")).toBeNull();
+  });
+
+  it("leaves dollar signs inside code blocks alone", async () => {
+    await renderMarkdown("```sh\necho $HOME\n```");
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.textContent).toContain("$HOME");
+  });
+
+  it("keeps the formula whole while the row is streaming", async () => {
+    // Reveal spans render text as a moving prefix; a formula must never be
+    // truncated by that (the reveal-plan unit test guards the mechanism).
+    await act(async () => {
+      root.render(<Markdown text={"$a+b$ 以及 $c$"} workspacePath="/ws" streaming />);
+    });
+    const katex = container.querySelector(".katex");
+    expect(katex).not.toBeNull();
+    expect(katex?.textContent ?? "").toContain("a");
+    expect(katex?.textContent ?? "").toContain("+");
+  });
+});
