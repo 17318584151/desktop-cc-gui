@@ -164,14 +164,19 @@ impl Engine for CodexEngine {
                     usage,
                 });
             }
-            "turn.failed" | "error" => {
-                let message = value
-                    .get("error")
-                    .and_then(|e| e.get("message").or(Some(e)).and_then(Value::as_str))
-                    .or_else(|| value.get("message").and_then(Value::as_str))
-                    .unwrap_or("codex turn failed")
-                    .to_string();
-                out.push(EngineEvent::Error(message));
+            "turn.failed" => {
+                out.push(EngineEvent::Error(error_message(&value)));
+            }
+            // Non-terminal: codex emits `error` for every retry it is about
+            // to make ("Reconnecting... 1/5 (...)") and once more with the
+            // final message just before `turn.failed`. Verified against a
+            // live run: both a retryable stream drop and a terminal 401
+            // produce retries, one bare error line, then turn.failed. Only
+            // turn.failed ends the turn — treating `error` as terminal
+            // settled the UI and killed the CLI on the first reconnect, so
+            // the turn died at 1/5 instead of continuing.
+            "error" => {
+                out.push(EngineEvent::Warn(error_message(&value)));
             }
             _ => {}
         }
@@ -201,6 +206,17 @@ fn attach_context_window(mut usage: Value, source: &Value) -> Value {
         }
     }
     usage
+}
+
+/// Message text of a codex error payload: `error.message` when nested,
+/// `error` or `message` when flat, with a generic fallback.
+fn error_message(value: &Value) -> String {
+    value
+        .get("error")
+        .and_then(|e| e.get("message").or(Some(e)).and_then(Value::as_str))
+        .or_else(|| value.get("message").and_then(Value::as_str))
+        .unwrap_or("codex turn failed")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -264,5 +280,58 @@ mod tests {
         let args = argv(&req);
         assert!(args.iter().any(|a| a == "model_reasoning_effort=\"max\""));
         assert!(!args.iter().any(|a| a.contains("xhigh")));
+    }
+
+    fn parse(line: &str) -> Vec<EngineEvent> {
+        let mut out = Vec::new();
+        CodexEngine.parse_line(line, &mut out);
+        out
+    }
+
+    /// Captured live from `codex exec --json` against a mock endpoint that
+    /// drops the SSE stream: codex announces every retry as an `error` event
+    /// and only `turn.failed` ends the turn. Handling these as terminal
+    /// settled the UI — and killed the CLI — on the first reconnect, so the
+    /// turn died at 1/5 instead of continuing to completion.
+    #[test]
+    fn reconnect_notice_is_non_terminal() {
+        let line = r#"{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: stream closed before response.completed)"}"#;
+        match &parse(line)[..] {
+            [EngineEvent::Warn(text)] => assert!(text.starts_with("Reconnecting... 1/5")),
+            other => panic!("expected a non-terminal warn, got {other:?}"),
+        }
+    }
+
+    /// The bare error line codex emits right before `turn.failed` repeats the
+    /// final message; the terminal signal is the `turn.failed` event itself.
+    #[test]
+    fn turn_failed_is_the_terminal_error() {
+        // The retry notice must not settle the turn.
+        match &parse(
+            r#"{"type":"error","message":"unexpected status 401 Unauthorized: Incorrect API key provided: x."}"#,
+        )[..] {
+            [EngineEvent::Warn(_)] => {}
+            other => panic!("expected warn for the retry notice, got {other:?}"),
+        }
+        // turn.failed carries the terminal error text to the banner.
+        match &parse(
+            r#"{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Incorrect API key provided: x."}}"#,
+        )[..] {
+            [EngineEvent::Error(message)] => assert!(message.contains("401 Unauthorized")),
+            other => panic!("expected terminal error, got {other:?}"),
+        }
+    }
+
+    /// A successful turn after retries must still complete normally.
+    #[test]
+    fn turn_completed_after_retries_still_dones() {
+        let mut out = Vec::new();
+        CodexEngine.parse_line(
+            r#"{"type":"error","message":"Reconnecting... 2/5 (stream disconnected before completion: x)"}"#,
+            &mut out,
+        );
+        CodexEngine.parse_line(r#"{"type":"turn.completed","usage":null}"#, &mut out);
+        assert!(matches!(out[0], EngineEvent::Warn(_)));
+        assert!(matches!(out[1], EngineEvent::Done { .. }));
     }
 }
