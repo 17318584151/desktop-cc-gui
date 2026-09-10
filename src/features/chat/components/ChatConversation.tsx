@@ -19,6 +19,7 @@ import {
   type ActiveSession,
   type QueuedMessage,
 } from "../store";
+import { parseUsage } from "../usage";
 import { recordPrompt } from "../prompt-history";
 import { MessageTimeline } from "./MessageTimeline";
 import { ConversationFooter } from "./ConversationFooter";
@@ -347,12 +348,20 @@ export const ChatConversation = memo(function ChatConversation({
     [tabEffort, efforts, activeEngine],
   );
 
-  // The catalog's context window beats the 200k assumption when the
-  // selected model reports one.
-  const contextMax =
-    (catalogs[activeEngine]?.models ?? []).find(
-      (m) => m.id === displayModels[activeEngine],
-    )?.contextWindow || CONTEXT_WINDOW_TOKENS;
+  // The usage payload's model_context_window beats the catalog, and the
+  // catalog's context window beats the 200k assumption when the selected
+  // model reports one.
+  const contextMax = useMemo(() => {
+    const parsed = parseUsage(sessionUsage);
+    if (parsed?.contextWindow && parsed.contextWindow > 0) {
+      return parsed.contextWindow;
+    }
+    return (
+      (catalogs[activeEngine]?.models ?? []).find(
+        (m) => m.id === displayModels[activeEngine],
+      )?.contextWindow || CONTEXT_WINDOW_TOKENS
+    );
+  }, [sessionUsage, catalogs, activeEngine, displayModels]);
 
   const engineInfo = engines.find((e) => e.id === activeEngine);
   const supportsImages = engineInfo?.supportsImages ?? false;

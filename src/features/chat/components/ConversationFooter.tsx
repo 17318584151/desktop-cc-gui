@@ -275,7 +275,7 @@ export function ConversationFooter({
             selectedFolder={active ? baseName(active.workspacePath) : undefined}
             onFolderSelect={handleFolderSelect}
             usagePct={usage?.pct}
-            contextMax={contextMax}
+            contextMax={usage?.contextWindow ?? contextMax}
             contextSegments={contextSegments}
             onCompactContext={handleCompact}
             onRefreshUsage={handleRefresh}
