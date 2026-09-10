@@ -767,7 +767,7 @@ fn strip_jsonc_comments(input: &str) -> String {
 /// Loose structural validation: parseable, `providers` is a map, each
 /// provider's `models` items carry a string `id`. Unknown fields are accepted
 /// and preserved (the raw user text is stored verbatim).
-fn validate_models_config_text(engine: &str, text: &str) -> Result<Value, String> {
+pub(crate) fn validate_models_config_text(engine: &str, text: &str) -> Result<Value, String> {
     let value: Value = if engine == "omp" {
         serde_yaml::from_str(text).map_err(|error| {
             format!("[PI_FAMILY_MODELS_INVALID] models.yml is not valid YAML: {error}")
