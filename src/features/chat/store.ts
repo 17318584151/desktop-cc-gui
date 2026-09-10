@@ -125,9 +125,11 @@ export interface ChatStore {
    * persisted in localStorage; engines resolve unsupported modes to their
    * first supported one at send time (and the picker greys them out). */
   permission: ComposerPermission;
-  /** Per-engine reasoning effort ("low" | … | "max"), persisted in app settings. */
+  /** Per-engine reasoning effort ("low" | … | "ultra"), persisted in app settings. */
   efforts: Record<string, EffortLevel>;
   ompServiceTier: OmpServiceTier;
+  /** Codex Fast override; null preserves ~/.codex. */
+  codexServiceTier: OmpServiceTier;
   /** Per-engine model override ("" = CLI/provider default), persisted in app settings. */
   models: Record<string, string>;
   /** Max sessions listed per workspace in the sidebar, persisted in app settings. */
@@ -198,6 +200,7 @@ export interface ChatStore {
   setPermission: (permission: ComposerPermission) => void;
   setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
   setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
+  setCodexServiceTier: (tier: OmpServiceTier) => Promise<void>;
   setModel: (engine: string, model: string) => Promise<void>;
   /** Pin several engines' models at once (startup defaulting); one settings
    * write instead of one per engine. */
@@ -546,6 +549,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     permission: readPermissionPref(),
     efforts: {},
     ompServiceTier: null,
+    codexServiceTier: null,
     models: {},
     threadLimit: 10,
     workspaceGroups: [],
@@ -634,6 +638,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
             >,
             ompServiceTier: normalizeOmpServiceTier(
               settings.ompOpenaiServiceTier,
+            ),
+            codexServiceTier: normalizeOmpServiceTier(
+              settings.codexServiceTier,
             ),
             models: settings.defaultModels ?? {},
             threadLimit: settings.sidebarThreadLimit ?? 5,
@@ -893,6 +900,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const settings = await ipc.getAppSettings();
       await ipc.updateAppSettings({ ...settings, ompOpenaiServiceTier: tier });
       set({ ompServiceTier: tier });
+    },
+    setCodexServiceTier: async (tier) => {
+      const settings = await ipc.getAppSettings();
+      await ipc.updateAppSettings({ ...settings, codexServiceTier: tier });
+      set({ codexServiceTier: tier });
     },
     setEffort: async (engine, effort) => {
       set({ efforts: { ...get().efforts, [engine]: effort } });

@@ -37,10 +37,11 @@ pub struct SendRequest {
     pub prompt: String,
     pub images: Vec<String>,
     pub model: Option<String>,
-    /// Reasoning effort ("low" | "medium" | "high" | "xhigh" | "max"); engines without an
+    /// Reasoning effort ("low" | "medium" | "high" | "xhigh" | "max" | "ultra"); engines without an
     /// effort knob ignore it, engines with a narrower knob clamp.
     pub effort: Option<String>,
-    /// OMP OpenAI service tier override, independent of reasoning effort.
+    /// OpenAI service tier override (OMP `--service-tier` / Codex `-c service_tier`),
+    /// independent of reasoning effort.
     pub service_tier: Option<String>,
     /// Permission mode ("auto" | "manual" | "plan" | "bypass"); each engine
     /// resolves it against the modes it can actually honor at spawn (see
@@ -708,10 +709,10 @@ fn prepare_launch(
         images: image_paths.unwrap_or_default(),
         model,
         effort,
-        service_tier: if engine == "omp" {
-            settings.omp_openai_service_tier.clone()
-        } else {
-            None
+        service_tier: match engine {
+            "omp" => settings.omp_openai_service_tier.clone(),
+            "codex" => settings.codex_service_tier.clone(),
+            _ => None,
         },
         permission: permission.filter(|p| !p.trim().is_empty()),
         // Cap defensively: the list lands on a command line, and a

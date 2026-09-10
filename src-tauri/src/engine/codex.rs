@@ -57,12 +57,21 @@ impl Engine for CodexEngine {
             cmd.arg("-m");
             cmd.arg(model);
         }
-        // Reasoning effort maps onto codex's config key (TOML value, so the string needs
-        // quotes). Codex tops out at "xhigh"; clamp "max" onto it.
+        // Reasoning effort maps onto codex's config key (TOML value, so the
+        // string needs quotes). Pass the level through as-is: current models
+        // accept low…ultra (catalog-ordered), including max.
         if let Some(effort) = req.effort.as_deref() {
-            let effort = if effort == "max" { "xhigh" } else { effort };
             cmd.arg("-c");
             cmd.arg(format!("model_reasoning_effort=\"{effort}\""));
+        }
+        // Fast mode is Codex's service_tier=priority (same id the desktop app
+        // uses). Explicit default opts out; None leaves the CLI's config alone.
+        if let Some(tier) = req.service_tier.as_deref() {
+            if !matches!(tier, "default" | "priority") {
+                return Err("Invalid Codex service tier".to_string());
+            }
+            cmd.arg("-c");
+            cmd.arg(format!("service_tier=\"{tier}\""));
         }
         for raw in &req.images {
             if let Some(path) = images::absolutize_image_path(raw, &req.workspace) {
@@ -130,8 +139,26 @@ impl Engine for CodexEngine {
                     _ => {}
                 }
             }
+            "token_count" => {
+                if let Some(usage) = usage_from_token_count(&value) {
+                    out.push(EngineEvent::Usage(usage));
+                }
+            }
+            "event_msg" => {
+                let Some(payload) = value.get("payload") else {
+                    return;
+                };
+                if payload.get("type").and_then(Value::as_str) == Some("token_count") {
+                    if let Some(usage) = usage_from_token_count(payload) {
+                        out.push(EngineEvent::Usage(usage));
+                    }
+                }
+            }
             "turn.completed" => {
-                let usage = value.get("usage").cloned();
+                let usage = value
+                    .get("usage")
+                    .cloned()
+                    .map(|usage| attach_context_window(usage, &value));
                 out.push(EngineEvent::Done {
                     session_id: None,
                     usage,
@@ -148,5 +175,94 @@ impl Engine for CodexEngine {
             }
             _ => {}
         }
+    }
+}
+
+/// last_token_usage + model_context_window from a Codex token_count event
+/// (top-level exec JSON or event_msg payload).
+fn usage_from_token_count(value: &Value) -> Option<Value> {
+    let info = value.get("info")?;
+    let usage = info
+        .get("last_token_usage")
+        .or_else(|| info.get("total_token_usage"))?
+        .clone();
+    Some(attach_context_window(usage, info))
+}
+
+fn attach_context_window(mut usage: Value, source: &Value) -> Value {
+    if usage.get("model_context_window").is_none() {
+        if let Some(window) = source
+            .get("model_context_window")
+            .or_else(|| source.get("info").and_then(|i| i.get("model_context_window")))
+        {
+            if let Some(obj) = usage.as_object_mut() {
+                obj.insert("model_context_window".to_string(), window.clone());
+            }
+        }
+    }
+    usage
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Engine, EngineEvent};
+
+    fn argv(req: &SendRequest) -> Vec<String> {
+        CodexEngine
+            .build_command(req, "fake-bin")
+            .unwrap()
+            .command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect()
+    }
+
+    fn base_req() -> SendRequest {
+        SendRequest {
+            session_id: None,
+            workspace: std::path::PathBuf::from("/tmp"),
+            prompt: "hi".into(),
+            images: Vec::new(),
+            model: Some("gpt-6-astra".into()),
+            effort: None,
+            service_tier: None,
+            permission: Some("auto".into()),
+            additional_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn token_count_emits_last_usage_and_window() {
+        let line = r#"{"type":"token_count","info":{"total_token_usage":{"input_tokens":2741100,"output_tokens":11900,"total_tokens":2753000},"last_token_usage":{"input_tokens":34660,"output_tokens":85,"total_tokens":34745},"model_context_window":475000}}"#;
+        let mut out = Vec::new();
+        CodexEngine.parse_line(line, &mut out);
+        match &out[..] {
+            [EngineEvent::Usage(usage)] => {
+                assert_eq!(usage["input_tokens"], 34660);
+                assert_eq!(usage["model_context_window"], 475000);
+            }
+            other => panic!("expected one usage event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn effort_and_fast_tier_pass_through() {
+        let mut req = base_req();
+        req.effort = Some("ultra".into());
+        req.service_tier = Some("priority".into());
+        let args = argv(&req);
+        assert!(args.iter().any(|a| a == "model_reasoning_effort=\"ultra\""));
+        assert!(args.iter().any(|a| a == "service_tier=\"priority\""));
+    }
+
+    #[test]
+    fn max_effort_is_not_clamped_to_xhigh() {
+        let mut req = base_req();
+        req.effort = Some("max".into());
+        let args = argv(&req);
+        assert!(args.iter().any(|a| a == "model_reasoning_effort=\"max\""));
+        assert!(!args.iter().any(|a| a.contains("xhigh")));
     }
 }

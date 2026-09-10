@@ -28,6 +28,7 @@ import { useEngineModels } from "./use-engine-models";
 import type { EngineInfo, Workspace } from "@/lib/ipc";
 import type { OmpServiceTier } from "@/lib/omp-service-tier";
 import { EmptyState } from "@/components/base/empty-state";
+import { parseUsage } from "../usage";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -97,12 +98,14 @@ function useConversationMenus({
   displayModels,
   displayEfforts,
   ompServiceTier,
+  codexServiceTier,
   permission,
   setActiveEngine,
   setPermission,
   setModel,
   setEffort,
   setOmpServiceTier,
+  setCodexServiceTier,
   refreshModels,
 }: {
   engines: EngineInfo[];
@@ -113,12 +116,14 @@ function useConversationMenus({
   displayModels: Record<string, string>;
   displayEfforts: Record<string, EffortLevel>;
   ompServiceTier: OmpServiceTier;
+  codexServiceTier: OmpServiceTier;
   permission: ComposerPermission;
   setActiveEngine: (engine: string) => void;
   setPermission: (permission: ComposerPermission) => void;
   setModel: (engine: string, model: string) => Promise<void>;
   setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
   setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
+  setCodexServiceTier: (tier: OmpServiceTier) => Promise<void>;
   refreshModels: () => Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -184,6 +189,8 @@ function useConversationMenus({
           onEffortChange={handleEffortChange}
           ompServiceTier={ompServiceTier}
           onOmpServiceTierChange={setOmpServiceTier}
+          codexServiceTier={codexServiceTier}
+          onCodexServiceTierChange={setCodexServiceTier}
           onRefreshModels={refreshModels}
         />
       ),
@@ -201,6 +208,8 @@ function useConversationMenus({
       handleEffortChange,
       ompServiceTier,
       setOmpServiceTier,
+      codexServiceTier,
+      setCodexServiceTier,
       refreshModels,
     ],
   );
@@ -261,11 +270,12 @@ export const ChatConversation = memo(function ChatConversation({
   const sendShortcut = useChatStore((s) => s.sendShortcut);
   const pendingMention = useChatStore((s) => s.pendingMention);
   // Engine/effort/model prefs: low-frequency, grouped into one shallow watch.
-  const { activeEngine, efforts, models, ompServiceTier } = useChatStore(
+  const { activeEngine, efforts, models, ompServiceTier, codexServiceTier } = useChatStore(
     useShallow((s) => ({
       activeEngine: s.activeEngine,
       efforts: s.efforts,
       ompServiceTier: s.ompServiceTier,
+      codexServiceTier: s.codexServiceTier,
       models: s.models,
     })),
   );
@@ -273,6 +283,7 @@ export const ChatConversation = memo(function ChatConversation({
     setActiveEngine,
     setEffort,
     setOmpServiceTier,
+    setCodexServiceTier,
     setModel,
     pinModels,
     setDraft,
@@ -288,6 +299,7 @@ export const ChatConversation = memo(function ChatConversation({
       setActiveEngine: s.setActiveEngine,
       setEffort: s.setEffort,
       setOmpServiceTier: s.setOmpServiceTier,
+      setCodexServiceTier: s.setCodexServiceTier,
       setModel: s.setModel,
       pinModels: s.pinModels,
       setDraft: s.setDraft,
@@ -347,12 +359,14 @@ export const ChatConversation = memo(function ChatConversation({
     [tabEffort, efforts, activeEngine],
   );
 
-  // The catalog's context window beats the 200k assumption when the
-  // selected model reports one.
+  // Conversation-reported window (Codex token_count) wins; catalog is only
+  // a fallback for engines that never send one.
   const contextMax =
+    parseUsage(sessionUsage)?.contextWindow ||
     (catalogs[activeEngine]?.models ?? []).find(
       (m) => m.id === displayModels[activeEngine],
-    )?.contextWindow || CONTEXT_WINDOW_TOKENS;
+    )?.contextWindow ||
+    CONTEXT_WINDOW_TOKENS;
 
   const engineInfo = engines.find((e) => e.id === activeEngine);
   const supportsImages = engineInfo?.supportsImages ?? false;
@@ -404,12 +418,14 @@ export const ChatConversation = memo(function ChatConversation({
       displayModels,
       displayEfforts,
       ompServiceTier,
+      codexServiceTier,
       permission,
       setActiveEngine,
       setPermission,
       setModel,
       setEffort,
       setOmpServiceTier,
+      setCodexServiceTier,
       refreshModels,
     });
 

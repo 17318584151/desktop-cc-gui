@@ -39,7 +39,8 @@ function Test() {
       modelsByEngine={{ omp: [{ id: "openai-codex/gpt-5.4", label: "GPT-5.4", provider: "openai-codex" }] }}
       models={{ omp: "openai-codex/gpt-5.4" }} onModelChange={() => {}}
       efforts={{ omp: effort }} onEffortChange={(_, level) => setEffort(level)}
-      ompServiceTier={null} onOmpServiceTierChange={async () => {}} />
+      ompServiceTier={null} onOmpServiceTierChange={async () => {}}
+      codexServiceTier={null} onCodexServiceTierChange={async () => {}} />
   </div></>;
 }
 createRoot(document.getElementById("root")!).render(<Test />);
