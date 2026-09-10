@@ -441,8 +441,6 @@ export const ipc = {
     invoke<CcSwitchImportResult>("import_cc_switch", { engine }),
   importCcSwitchFromPath: (path: string, engine: string) =>
     invoke<CcSwitchImportResult>("import_cc_switch_from_path", { path, engine }),
-  testProviderConnection: (url: string) =>
-    invoke<number>("test_provider_connection", { url }),
   /** 拉取模型: probe the channel's /v1/models endpoint for its model list. */
   fetchProviderModels: (baseUrl: string, apiKey: string) =>
     invoke<ProviderModelList>("fetch_provider_models", { baseUrl, apiKey }),

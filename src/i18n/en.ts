@@ -13,7 +13,8 @@ export const en: Messages = {
     error: "Error",
     refresh: "Refresh",
     copied: "Copied",
-    confirmCloseApp: "Quit CC GUI? All running sessions and terminals will be terminated.",
+    confirmCloseApp:
+      "Quit CC GUI? All running sessions and terminals will be terminated.",
   },
   chat: {
     ompFastToggle: "Fast mode",
@@ -25,7 +26,8 @@ export const en: Messages = {
     ompSpeedInherit: "Use CLI setting",
     ompSpeedStandard: "Standard",
     ompSpeedUnsupported: "Select a Codex model to configure Fast.",
-    ompSpeedSaveError: "Could not save. Speed setting is unchanged; please retry.",
+    ompSpeedSaveError:
+      "Could not save. Speed setting is unchanged; please retry.",
 
     newChat: "New chat",
     newSession: "New session",
@@ -83,7 +85,8 @@ export const en: Messages = {
     renameSession: "Rename session",
     loadEarlier: "Load earlier messages",
     grantTitle: "Directory access required",
-    grantScopeNote: "Grants directory: {{dir}} (persisted; revocable in Settings)",
+    grantScopeNote:
+      "Grants directory: {{dir}} (persisted; revocable in Settings)",
     grantAllow: "Allow access",
     grantDecline: "Decline",
     grantGranted: "Granted {{dir}}. The grant applies on the next message —",
@@ -100,12 +103,15 @@ export const en: Messages = {
     imagePasteFailed: "Failed to paste image: {{message}}",
     planUsageLimits: "Plan usage limits",
     managePlan: "Manage plan",
-    confirmDeleteSession: "Delete this session? The native session file will be removed.",
-    confirmRemoveWorkspace: "Remove this workspace? Only the record is removed, files stay on disk.",
+    confirmDeleteSession:
+      "Delete this session? The native session file will be removed.",
+    confirmRemoveWorkspace:
+      "Remove this workspace? Only the record is removed, files stay on disk.",
     setWorkspaceAlias: "Set alias",
     workspaceAliasTitle: "Set workspace alias",
     workspaceAliasPlaceholder: "e.g. Payments backend",
-    workspaceAliasHint: "Save with an empty value to clear the alias and show the original folder name.",
+    workspaceAliasHint:
+      "Save with an empty value to clear the alias and show the original folder name.",
     archiveWorkspace: "Archive",
     unarchiveWorkspace: "Unarchive",
     archivedWorkspaces: "Archived ({{count}})",
@@ -184,19 +190,24 @@ export const en: Messages = {
     appearance: "Appearance",
     sidebarThreadLimit: "Sessions shown per workspace",
     proxy: "Network Proxy",
-    proxyDesc: "When enabled, CC GUI and the networked child processes it launches will prefer this proxy.",
+    proxyDesc:
+      "When enabled, CC GUI and the networked child processes it launches will prefer this proxy.",
     proxyEnabled: "Enable network proxy",
-    proxyEnabledDesc: "Applies to networked child processes such as CLI engines and terminals.",
+    proxyEnabledDesc:
+      "Applies to networked child processes such as CLI engines and terminals.",
     proxyAddress: "Proxy address",
-    proxyHint: "Supports http(s)/socks5. Toggling applies immediately to new requests; after editing the address, click save to apply.",
+    proxyHint:
+      "Supports http(s)/socks5. Toggling applies immediately to new requests; after editing the address, click save to apply.",
     proxySave: "Save proxy settings",
     proxyRequired: "A proxy address is required when the proxy is enabled.",
     proxySaved: "Proxy settings saved and applied.",
     proxyEnabledSuccess: "Network proxy enabled and applied.",
-    proxyDisabledSuccess: "Network proxy disabled; new requests will connect directly.",
+    proxyDisabledSuccess:
+      "Network proxy disabled; new requests will connect directly.",
     workspaces: "Workspaces",
     workspaceGroups: "Groups",
-    workspaceGroupsDesc: "Create groups for related projects; the sidebar nests them under collapsible headers",
+    workspaceGroupsDesc:
+      "Create groups for related projects; the sidebar nests them under collapsible headers",
     addGroup: "Add group",
     newGroupPlaceholder: "New group name",
     noGroupsYet: "No groups yet",
@@ -206,7 +217,8 @@ export const en: Messages = {
     renameGroup: "Rename",
     groupNameRequired: "Group name is required",
     groupNameDuplicate: "Group name already exists",
-    deleteGroupConfirm: "Delete group \"{{name}}\"? Its projects will move to Ungrouped",
+    deleteGroupConfirm:
+      'Delete group "{{name}}"? Its projects will move to Ungrouped',
     dragGroup: "Drag to reorder",
     projects: "Projects",
     projectsDesc: "Assign projects to groups",
@@ -217,17 +229,20 @@ export const en: Messages = {
     sendShortcutCmdEnter: "Cmd+Enter",
     sendShortcutCmdEnterCtrl: "Ctrl+Enter",
     promptHistory: "History completion",
-    promptHistoryDesc: "Tab accepts a history suggestion while typing; ↑↓ recall history when the input is empty",
+    promptHistoryDesc:
+      "Tab accepts a history suggestion while typing; ↑↓ recall history when the input is empty",
     promptHistoryManage: "Input History",
     promptHistoryManageTitle: "Manage history ({{count}})",
     promptHistoryEmpty: "No history yet",
     promptHistoryClearAll: "Clear all",
-    promptHistoryClearConfirm: "Clear all prompt history? This cannot be undone.",
+    promptHistoryClearConfirm:
+      "Clear all prompt history? This cannot be undone.",
     promptHistoryDelete: "Delete this entry",
     about: "Community & Feedback",
     aboutDesc: "An open-source multi-engine AI coding desktop client",
     community: "Official Community",
-    communityDesc: "Scan the author's WeChat official-account QR code to get the group invite and join for the latest news and technical support",
+    communityDesc:
+      "Scan the author's WeChat official-account QR code to get the group invite and join for the latest news and technical support",
     communityQrTip: "Scan with WeChat",
     communityQrAlt: "Official WeChat community QR code",
     socialTitle: "Follow Us",
@@ -245,7 +260,8 @@ export const en: Messages = {
     updateRestarting: "Restarting…",
     updateError: "Update failed: {{message}}",
     updateDismiss: "Dismiss",
-    openSourceBanner: "This project is 100% open source and free (beware of pirated copies)",
+    openSourceBanner:
+      "This project is 100% open source and free (beware of pirated copies)",
     openSourceBannerStar: "Star us",
     openSourceBannerStarAria: "Star the project on GitHub",
     socialGithub: "GitHub repository — star us!",
@@ -263,7 +279,8 @@ export const en: Messages = {
     webAccessRunning: "Running",
     webAccessStopped: "Stopped",
     webAccessUrl: "Access URL",
-    webAccessScanHint: "Scan the QR code or open the URL on your phone (same Wi-Fi)",
+    webAccessScanHint:
+      "Scan the QR code or open the URL on your phone (same Wi-Fi)",
     webAccessCopy: "Copy URL",
     webAccessWarning:
       "Anyone with this link can control sessions, files, and terminals on this computer. Share carefully.",
@@ -326,7 +343,8 @@ export const en: Messages = {
     cliVersionUpToDate: "Up to date",
     cliUpdateTo: "Update to {{version}}",
     cliUpdateTitle: "One-Click CLI Install",
-    cliUpdateDialogDesc: "Confirm the execution plan to start the install and watch the live log.",
+    cliUpdateDialogDesc:
+      "Confirm the execution plan to start the install and watch the live log.",
     cliUpdatePlanning: "Building the execution plan…",
     cliUpdateEngine: "Engine: {{engine}}",
     cliUpdateActionInstall: "Install",
@@ -347,33 +365,41 @@ export const en: Messages = {
     cliOfficialDesc: "Use the CLI's own config file",
     cliEngineSection: "Engine Settings",
     cliEnableTitle: "Enable {{name}}",
-    cliEnableDesc: "While disabled, this CLI is hidden from the CLI picker and its history is not rendered.",
+    cliEnableDesc:
+      "While disabled, this CLI is hidden from the CLI picker and its history is not rendered.",
     cliChannelsHint: "Click a row to switch · applies to new sessions",
     cliBuiltin: "Built-in",
     cliAddChannelDesc: "Start from a preset, or enter a custom Base URL / Key",
     cliEmptyTitle: "No custom channels yet",
     cliEmptyDesc: "Use “Add Channel” above to create one",
-    cliDisabledOverlay: "This CLI is disabled — enable it above to manage channels",
+    cliDisabledOverlay:
+      "This CLI is disabled — enable it above to manage its settings",
     cliSyncTitle: "cc-switch config updated",
     cliSyncDetail: "{{count}} channels available to sync",
     cliSyncNow: "Sync",
     cliSyncLater: "Later",
-    cliSynced: "Synced: {{added}} added · {{updated}} updated · {{removed}} removed",
+    cliSynced:
+      "Synced: {{added}} added · {{updated}} updated · {{removed}} removed",
     cliImportEntry: "Import ccswitch",
     cliImportAuto: "Import/Update from cc-switch",
     cliImportFile: "Select cc-switch.db File to Import",
-    cliDeleteConfirm: "Delete channel \"{{name}}\"? This cannot be undone.",
-    cliSwitchConfirm: "Switching to \"{{name}}\" will overwrite these local config files:",
-    cliSwitchConfirmHint: "The originals are snapshotted automatically before the first managed write, but backing these files up manually first is still recommended.",
+    cliDeleteConfirm: 'Delete channel "{{name}}"? This cannot be undone.',
+    cliSwitchConfirm:
+      'Switching to "{{name}}" will overwrite these local config files:',
+    cliSwitchConfirmHint:
+      "The originals are snapshotted automatically before the first managed write, but backing these files up manually first is still recommended.",
     cliDialogAdd: "Add Channel",
     cliDialogEdit: "Edit Channel",
     cliDialogAddEngine: "Add {{name}} Provider",
-    cliDialogNote: "Provider configs are stored in this app only, scoped to sessions bound to that provider, and never modify the CLI's own config file.",
+    cliDialogNote:
+      "Provider configs are stored in this app only, scoped to sessions bound to that provider, and never modify the CLI's own config file.",
     cliOfficialSection: "Official Direct API",
     cliOfficialPreset: "Anthropic Official Direct",
-    cliOfficialPresetDesc: "Use your own credentials and connect directly to the official endpoint https://api.anthropic.com.",
+    cliOfficialPresetDesc:
+      "Use your own credentials and connect directly to the official endpoint https://api.anthropic.com.",
     cliProxySection: "Third-party / Proxy Presets",
-    cliProxyHint: "These presets route requests to third-party or proxy endpoints instead of the official Anthropic API.",
+    cliProxyHint:
+      "These presets route requests to third-party or proxy endpoints instead of the official Anthropic API.",
     cliPresetCustom: "Custom",
     cliName: "Name",
     cliNamePlaceholder: "e.g. My Relay",
@@ -391,7 +417,8 @@ export const en: Messages = {
     cliOpusModelPlaceholder: "e.g. claude-opus-4-5",
     cliHaikuModel: "Haiku default model",
     cliHaikuModelPlaceholder: "e.g. claude-haiku-4-5",
-    cliModelMappingHint: "Optional: specify Claude defaults for this provider. Leave blank to use system defaults.",
+    cliModelMappingHint:
+      "Optional: specify Claude defaults for this provider. Leave blank to use system defaults.",
     cliFetchModels: "Fetch models",
     cliFetchModelsLoading: "Fetching…",
     cliFetchModelsCount: "{{count}} models loaded",
@@ -399,31 +426,32 @@ export const en: Messages = {
     cliFetchModelsNeedUrl: "Enter an API URL first",
     cliFetchModelsError: "Failed to fetch models",
     cliJsonConfig: "JSON Config",
-    cliJsonConfigDesc: "Full settings.json content; all fields supported (model, alwaysThinkingEnabled, ccSwitchProviderId, …).",
+    cliJsonConfigDesc:
+      "Full settings.json content; all fields supported (model, alwaysThinkingEnabled, ccSwitchProviderId, …).",
     cliFormatJson: "Format",
     cliJsonError: "Invalid JSON",
-    cliProxyWarning: "Requests are routed through this endpoint instead of the official Anthropic API.",
+    cliProxyWarning:
+      "Requests are routed through this endpoint instead of the official Anthropic API.",
     cliCodexOfficialPreset: "OpenAI Official Direct",
-    cliCodexOfficialPresetDesc: "Use your own OPENAI_API_KEY and connect directly to https://api.openai.com/v1.",
+    cliCodexOfficialPresetDesc:
+      "Use your own OPENAI_API_KEY and connect directly to https://api.openai.com/v1.",
     cliConfigToml: "config.toml",
     cliConfigTomlHint: "Codex CLI connection parameters",
     cliAuthJson: "auth.json",
     cliAuthJsonHint: "Credential JSON config",
     cliAuthJsonError: "auth.json is not valid JSON",
     cliDrag: "Drag to reorder",
+    cliDisabledGroup: "Disabled",
     cliEdit: "Edit",
     cliDelete: "Delete",
-    cliMore: "More",
-    cliSetCurrent: "Set as current",
-    cliTest: "Test connection",
-    cliTesting: "Testing…",
-    cliTestFail: "Connection failed",
     piAuthOauthTitle: "Subscription Authorization",
-    piAuthOauthHint: "OAuth sign-in with automatic token refresh, stored by the CLI itself",
+    piAuthOauthHint:
+      "OAuth sign-in with automatic token refresh, stored by the CLI itself",
     piAuthSubscribed: "Authorized · auto-refresh",
     piAuthNotSubscribed: "Not authorized",
     piAuthLogin: "Sign in",
-    piAuthLoginNoWorkspace: "Open a project first — OAuth sign-in runs in the built-in terminal",
+    piAuthLoginNoWorkspace:
+      "Open a project first — OAuth sign-in runs in the built-in terminal",
     piAuthOauthDescClaude: "Claude Pro / Max subscription",
     piAuthOauthDescCodex: "ChatGPT Plus / Pro subscription",
     piAuthOauthDescCopilot: "GitHub Copilot subscription",
@@ -434,7 +462,8 @@ export const en: Messages = {
     piAuthOauthDescZai: "Z.AI GLM Coding Plan subscription",
     piAuthOauthDescGeminiCli: "Google Code Assist authorization",
     piAuthApiKeyTitle: "API Key",
-    piAuthApiKeyHint: "Written to {{path}} · takes precedence over environment variables",
+    piAuthApiKeyHint:
+      "Written to {{path}} · takes precedence over environment variables",
     piAuthSearchPlaceholder: "Filter providers...",
     piAuthConfigured: "Configured",
     piAuthNotConfigured: "Not configured",
@@ -446,31 +475,39 @@ export const en: Messages = {
     piAuthSaving: "Saving…",
     piAuthKeyPlaceholderKeep: "{{mask}} (leave empty to keep)",
     piAuthKeyPlaceholderNew: "Paste {{env}}, e.g. sk-…",
-    piAuthAdvancedTip: "Advanced: keys support !command secret tools (e.g. !op read 'op://vault/item') and $ENV_VAR interpolation; leave empty to keep the current credential.",
+    piAuthAdvancedTip:
+      "Advanced: keys support !command secret tools (e.g. !op read 'op://vault/item') and $ENV_VAR interpolation; leave empty to keep the current credential.",
     piAuthSaveHint: "Saved to {{path}} (0600 permissions)",
-    piAuthDeleteConfirm: "Delete the API key for {{name}}? This cannot be undone.",
+    piAuthDeleteConfirm:
+      "Delete the API key for {{name}}? This cannot be undone.",
     piAuthLoadFailed: "Failed to read auth state",
-    piAuthEmptySearch: "No providers matching \"{{query}}\"",
+    piAuthEmptySearch: 'No providers matching "{{query}}"',
     piAuthShowAll: "Show all {{count}} providers",
     piAuthShowLess: "Hide less-used providers",
-    piAuthResolutionOrder: "Resolution: --api-key → credential store → env vars → custom providers",
+    piAuthResolutionOrder:
+      "Resolution: --api-key → credential store → env vars → custom providers",
     piAuthCustomTitle: "Custom Providers",
     piAuthCustomHint: "Written to {{path}} · relays / custom models",
     piAuthEditConfig: "Edit config",
-    piAuthCustomParseError: "Failed to parse the config — fix it in the editor below",
+    piAuthCustomParseError:
+      "Failed to parse the config — fix it in the editor below",
     piAuthCustomModelCount: "{{count}} models",
     piAuthCustomHasKey: "Has key",
     piAuthCustomNoKey: "No key",
     piAuthCustomEmpty: "No custom providers defined yet",
-    piAuthCustomMissing: "No config file yet — click \"Edit config\" to start from the example template",
-    piAuthCustomEditorTips: "Loose validation: structure only, unknown fields are preserved. apiKey accepts literal values, $ENV_VAR and !command.",
+    piAuthCustomMissing:
+      'No config file yet — click "Edit config" to start from the example template',
+    piAuthCustomEditorTips:
+      "Loose validation: structure only, unknown fields are preserved. apiKey accepts literal values, $ENV_VAR and !command.",
 
     langZh: "中文",
     langEn: "English",
     grantedRoots: "Granted Directories",
-    grantedRootsDesc: "Directories outside workspaces that you explicitly allowed",
+    grantedRootsDesc:
+      "Directories outside workspaces that you explicitly allowed",
     revokeAccess: "Revoke access",
-    revokeAccessConfirm: "Revoke access to {{dir}}? Files inside become inaccessible again immediately.",
+    revokeAccessConfirm:
+      "Revoke access to {{dir}}? Files inside become inaccessible again immediately.",
   },
   files: {
     tab: "Files",
@@ -499,13 +536,15 @@ export const en: Messages = {
     revealInFileManager: "Reveal in File Manager",
     deleteItem: "Move to Trash",
     deleteFileConfirm: "Move “{{name}}” to the Trash?",
-    deleteFolderConfirm: "Move the folder “{{name}}” and all its contents to the Trash?",
+    deleteFolderConfirm:
+      "Move the folder “{{name}}” and all its contents to the Trash?",
     pasteUnavailable: "Nothing to paste.",
     opFailed: "Operation failed: {{message}}",
     fileTruncated: "File too large, showing partial content (read-only)",
     grantAccess:
       "This path is outside the registered workspaces. Allow access to {{dir}}? The app will be able to read and write all files inside; you can revoke it anytime in Settings → Workspaces.",
-    confirmCloseDirty: "“{{name}}” has unsaved changes. Closing the tab will discard them.",
+    confirmCloseDirty:
+      "“{{name}}” has unsaved changes. Closing the tab will discard them.",
   },
   git: {
     changes: "Changes",
@@ -581,12 +620,12 @@ export const en: Messages = {
     installPickTitle: "Choose a plugin directory (with manifest.json)",
     empty: "No plugins installed yet",
     uninstall: "Uninstall",
-    uninstallConfirm: "Uninstall plugin \"{{name}}\"?",
-    deleteDataConfirm: "Also delete this plugin's saved data? (OK = delete, Cancel = keep for 30 days)",
+    uninstallConfirm: 'Uninstall plugin "{{name}}"? (its saved data is kept for 30 days)',
     stateQuarantined: "Quarantined",
     stateFailed: "Failed to load",
     stateIncompatible: "Incompatible",
-    marketHint: "The plugin marketplace (browse / search / online install) lands in a later release.",
+    marketHint:
+      "The plugin marketplace (browse / search / online install) lands in a later release.",
     configLabel: "Plugin settings",
     configEmpty: "This plugin has no configurable options.",
     source: {

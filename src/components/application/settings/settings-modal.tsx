@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import X from "lucide-react/dist/esm/icons/x";
+import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
 import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import {
   WorkspaceSortableList,
@@ -44,11 +52,17 @@ export interface SettingsNavItem {
   key: string;
   label: string;
   icon: IconComponent;
+  /** Disabled entry (a CLI the user turned off): grayed icon and label. */
+  disabled?: boolean;
 }
 
 export interface SettingsNavGroup {
   /** Muted group heading; omit for an unlabeled group. */
   label?: string;
+  /** Collapsible rail section (the 未启用 CLI bucket): the heading becomes a
+   *  chevron toggle, items stay hidden until expanded, and a selected page
+   *  inside force-expands the group. Starts collapsed. */
+  collapsible?: boolean;
   /** When set, the group's items render as a drag-sortable list (the item
    *  icon becomes the grip, md+ vertical rail only) and a drop reports the
    *  new key order. */
@@ -93,17 +107,27 @@ function NavButton({
       className={cx(
         "flex w-auto shrink-0 cursor-pointer items-center gap-1.5 rounded-2lg p-1.5 text-left md:w-full md:gap-2 md:p-2",
         "outline-none transition-colors duration-150 ease focus-visible:ring-2 focus-visible:ring-border-focus-ring",
-        selected ? "bg-background-secondary-hover" : "hover:bg-background-secondary-hover/60",
+        selected
+          ? "bg-background-secondary-hover"
+          : "hover:bg-background-secondary-hover/60",
       )}
     >
-      <item.icon
-        className="size-4 shrink-0 text-foreground-icon-secondary md:size-5"
-        aria-hidden
-      />
+      <span
+        className={cx("flex shrink-0", item.disabled && "opacity-50 grayscale")}
+      >
+        <item.icon
+          className="size-4 text-foreground-icon-secondary md:size-5"
+          aria-hidden
+        />
+      </span>
       <span
         className={cx(
           "truncate text-body-medium",
-          selected ? "text-text-primary" : "text-text-secondary",
+          item.disabled
+            ? "text-text-tertiary"
+            : selected
+              ? "text-text-primary"
+              : "text-text-secondary",
         )}
       >
         {item.label}
@@ -140,7 +164,9 @@ function SortableNavItems({
       renderItem={({ item }, drag: RepoDragChrome | null) => {
         const selected = item.key === page;
         if (!drag?.dragHandleProps) {
-          return <NavButton item={item} selected={selected} onSelect={onSelect} />;
+          return (
+            <NavButton item={item} selected={selected} onSelect={onSelect} />
+          );
         }
         return (
           <div
@@ -162,7 +188,10 @@ function SortableNavItems({
                 "outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring",
               )}
             >
-              <item.icon className="size-5 shrink-0 text-foreground-icon-secondary" aria-hidden />
+              <item.icon
+                className="size-5 shrink-0 text-foreground-icon-secondary"
+                aria-hidden
+              />
             </button>
             <button
               type="button"
@@ -211,6 +240,11 @@ export function SettingsModal({
   // Top fade over the scrolling page so rows dissolve under the title row
   // instead of cutting sharply (same recipe as the medical alerts feed).
   const [contentScrolled, setContentScrolled] = useState(false);
+  /** Collapsed state per collapsible group (keyed by its rail key); absent =
+   *  collapsed, which is the default for those groups. */
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(
+    {},
+  );
 
   // Reset to the default page each time the modal opens. defaultPage/firstKey
   // only matter at the open transition, so the effect stays keyed on isOpen
@@ -270,33 +304,78 @@ export function SettingsModal({
                 key={group.label ?? groupIndex}
                 className="flex w-full flex-row md:flex-col gap-1.5 pt-1"
               >
-                {group.label && (
-                  <span className="hidden pl-2 text-body-medium text-text-secondary md:block">{group.label}</span>
-                )}
-                {group.onReorderItems ? (
-                  <SortableNavItems
-                    group={group}
-                    page={page}
-                    onSelect={(key) => {
-                      setPage(key);
-                      setContentScrolled(false);
-                    }}
-                  />
-                ) : (
-                  <div className="flex w-full flex-row gap-1 md:flex-col">
-                    {group.items.map((item) => (
-                      <NavButton
-                        key={item.key}
-                        item={item}
-                        selected={item.key === page}
-                        onSelect={(key) => {
-                          setPage(key);
-                          setContentScrolled(false);
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
+                {(() => {
+                  const groupKey = group.label ?? String(groupIndex);
+                  // A selected page inside a collapsed group force-expands it
+                  // so the current row never hides under the chevron.
+                  const expanded =
+                    !group.collapsible ||
+                    (expandedGroups[groupKey] ?? false) ||
+                    group.items.some((item) => item.key === page);
+                  return (
+                    <>
+                      {group.label &&
+                        (group.collapsible ? (
+                          <button
+                            type="button"
+                            aria-expanded={expanded}
+                            onClick={() =>
+                              setExpandedGroups((prev) => ({
+                                ...prev,
+                                [groupKey]: !(
+                                  expandedGroups[groupKey] ?? false
+                                ),
+                              }))
+                            }
+                            className={cx(
+                              "flex w-auto shrink-0 cursor-pointer items-center gap-1.5 rounded-2lg p-1.5 text-left md:w-full md:gap-1 md:px-2 md:py-1.5",
+                              "outline-none transition-colors duration-150 ease hover:bg-background-secondary-hover/60 focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+                            )}
+                          >
+                            <ChevronRight
+                              className={cx(
+                                "size-4 shrink-0 text-foreground-icon-secondary transition-transform duration-150 ease",
+                                expanded && "rotate-90",
+                              )}
+                              aria-hidden
+                            />
+                            <span className="truncate text-body-medium text-text-secondary">
+                              {group.label}
+                            </span>
+                          </button>
+                        ) : (
+                          <span className="hidden pl-2 text-body-medium text-text-secondary md:block">
+                            {group.label}
+                          </span>
+                        ))}
+                      {expanded &&
+                        (group.onReorderItems ? (
+                          <SortableNavItems
+                            group={group}
+                            page={page}
+                            onSelect={(key) => {
+                              setPage(key);
+                              setContentScrolled(false);
+                            }}
+                          />
+                        ) : (
+                          <div className="flex w-full flex-row gap-1 md:flex-col">
+                            {group.items.map((item) => (
+                              <NavButton
+                                key={item.key}
+                                item={item}
+                                selected={item.key === page}
+                                onSelect={(key) => {
+                                  setPage(key);
+                                  setContentScrolled(false);
+                                }}
+                              />
+                            ))}
+                          </div>
+                        ))}
+                    </>
+                  );
+                })()}
               </div>
             ))}
           </nav>
@@ -327,7 +406,9 @@ export function SettingsModal({
             <div className="relative min-h-0 flex-1">
               <div
                 className="h-full overflow-y-auto px-4 pb-4 md:px-8 md:pb-8"
-                onScroll={(e) => setContentScrolled(e.currentTarget.scrollTop > 0)}
+                onScroll={(e) =>
+                  setContentScrolled(e.currentTarget.scrollTop > 0)
+                }
               >
                 {renderPage(page)}
               </div>

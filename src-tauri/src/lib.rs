@@ -157,7 +157,6 @@ pub fn run() {
             cc_switch::dismiss_cc_switch,
             cc_switch::import_cc_switch,
             cc_switch::import_cc_switch_from_path,
-            cc_switch::test_provider_connection,
             provider_models::fetch_provider_models,
             // settings
             settings::get_app_settings,

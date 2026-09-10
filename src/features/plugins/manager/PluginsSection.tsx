@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import FolderInput from "lucide-react/dist/esm/icons/folder-input";
 import Loader2 from "lucide-react/dist/esm/icons/loader-2";
@@ -9,6 +9,7 @@ import {
   SettingsSectionLabel,
 } from "@/components/application/settings/settings-rows";
 import { cx } from "@/utils/cx";
+import { ConfirmDialog } from "@/components/dialogs";
 import type { PluginInfo } from "@/lib/ipc";
 import { usePluginsStore, usePluginStates } from "./usePlugins";
 
@@ -32,11 +33,12 @@ function PluginRow({ plugin }: { plugin: PluginInfo }) {
           : null;
   const errorText = runtime?.error ?? plugin.lastError;
 
-  const onUninstall = () => {
-    if (!window.confirm(t("plugins.uninstallConfirm", { name: plugin.name }))) return;
-    const deleteData = window.confirm(t("plugins.deleteDataConfirm", { name: plugin.name }));
-    void uninstall(plugin, deleteData);
-  };
+  // window.confirm is unreliable in Tauri's WKWebView (no JS confirm-panel
+  // delegate — it can return a non-boolean, which the backend rejects as
+  // "invalid type: map, expected a boolean"), so uninstall confirmation is
+  // a real modal. Saved plugin data is never wiped on uninstall: deleteData
+  // stays false and the KV rows ride the 30-day tombstone purge instead.
+  const [confirming, setConfirming] = useState(false);
 
   return (
     <div className="flex flex-col gap-1 px-4 py-3">
@@ -74,13 +76,24 @@ function PluginRow({ plugin }: { plugin: PluginInfo }) {
           <button
             type="button"
             aria-label={t("plugins.uninstall")}
-            onClick={onUninstall}
+            onClick={() => setConfirming(true)}
             className="cursor-pointer rounded-lg p-1.5 text-foreground-icon-secondary transition-colors hover:bg-background-primary-hover hover:text-foreground-icon-primary"
           >
             <Trash2 className="size-4" aria-hidden />
           </button>
         )}
       </div>
+      {confirming && (
+        <ConfirmDialog
+          danger
+          message={t("plugins.uninstallConfirm", { name: plugin.name })}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            void uninstall(plugin, false);
+          }}
+        />
+      )}
     </div>
   );
 }

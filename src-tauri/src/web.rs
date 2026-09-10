@@ -404,11 +404,6 @@ struct ImportCcSwitchFromPathArgs {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UrlArgs {
-    url: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct FetchProviderModelsArgs {
     base_url: String,
     #[serde(default)]
@@ -656,10 +651,6 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
                 a.path,
                 a.engine,
             ))
-        }
-        "test_provider_connection" => {
-            let a: UrlArgs = parse_args(&raw)?;
-            ser(crate::cc_switch::test_provider_connection(a.url).await)
         }
         "fetch_provider_models" => {
             let a: FetchProviderModelsArgs = parse_args(&raw)?;

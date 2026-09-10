@@ -21,8 +21,6 @@ import {
   type ProviderEntry,
 } from "./providers";
 import type { ProviderFormValue } from "./ProviderDialog";
-import type { Health } from "./CliChannelRow";
-
 /** Add (no entry) or edit (with entry) dialog state. */
 type DialogState = { entry?: ProviderEntry } | null;
 
@@ -48,7 +46,6 @@ export interface CliConfigState {
   pendingSwitch: PendingSwitch | null;
   setPendingSwitch: Dispatch<SetStateAction<PendingSwitch | null>>;
   ccStatus: CcSwitchStatus | null;
-  health: Record<string, Health>;
   currentId: string;
   enabled: boolean;
   entries: ProviderEntry[];
@@ -59,7 +56,6 @@ export interface CliConfigState {
   confirmSwitch: () => void;
   saveProvider: (value: ProviderFormValue) => void;
   confirmDelete: () => void;
-  testConnection: (entry: ProviderEntry) => Promise<void>;
   syncCcSwitch: (target: string) => Promise<void>;
   importCcSwitchFile: () => Promise<void>;
   dismissCcSwitch: () => void;
@@ -75,7 +71,8 @@ export interface CliConfigState {
  *     官方配置 switch can only be turned on, never off.
  *   - 停用 is a per-CLI state (the enable switch), not a channel row.
  *   - 官方配置 is the built-in fallback (the CLI's own config file) and
- *     lives in the 引擎设置 card, next to the enable switch.
+ *     sits directly below the enable switch, inside the disabled-overlay
+ *     wrapper.
  */
 export function useCliConfig(engine: EngineId): CliConfigState {
   const { t } = useTranslation();
@@ -87,8 +84,6 @@ export function useCliConfig(engine: EngineId): CliConfigState {
   const [pendingDelete, setPendingDelete] = useState<ProviderEntry | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
   const [ccStatus, setCcStatus] = useState<CcSwitchStatus | null>(null);
-  /** Per-channel connection probe results, keyed `${engine}:${id}`. */
-  const [health, setHealth] = useState<Record<string, Health>>({});
   useEffect(() => {
     let cancelled = false;
     ipc
@@ -232,21 +227,6 @@ export function useCliConfig(engine: EngineId): CliConfigState {
     void mutate(() => ipc.deleteProvider(engine, id));
   };
 
-  const testConnection = async (entry: ProviderEntry) => {
-    const key = `${engine}:${entry.id}`;
-    if (!entry.baseUrl.trim()) {
-      setHealth((h) => ({ ...h, [key]: { state: "fail" } }));
-      return;
-    }
-    setHealth((h) => ({ ...h, [key]: { state: "testing" } }));
-    try {
-      const ms = await ipc.testProviderConnection(entry.baseUrl);
-      setHealth((h) => ({ ...h, [key]: { state: "ok", ms } }));
-    } catch {
-      setHealth((h) => ({ ...h, [key]: { state: "fail" } }));
-    }
-  };
-
   /** Shared import→notice funnel. `target` is an engine id or "all" (banner).
    *  setState happens in the handler, not inside the `mutate` callback (React
    *  treats updater-style callbacks as pure and may invoke them twice). */
@@ -301,7 +281,6 @@ export function useCliConfig(engine: EngineId): CliConfigState {
     pendingSwitch,
     setPendingSwitch,
     ccStatus,
-    health,
     currentId,
     enabled,
     entries,
@@ -312,7 +291,6 @@ export function useCliConfig(engine: EngineId): CliConfigState {
     confirmSwitch,
     saveProvider,
     confirmDelete,
-    testConnection,
     syncCcSwitch,
     importCcSwitchFile,
     dismissCcSwitch,
