@@ -115,7 +115,10 @@ export function UsageChart({ rows, days, formatTokens }: UsageChartProps) {
   const plotW = W - padLeft - padRight;
   const plotH = H - padTop - padBottom;
   const step = plotW / Math.max(days.length, 1);
-  const barW = Math.max(2, Math.min(26, step * 0.62));
+  // Bar width follows the range: a month packs slim columns, a single day
+  // fills a readable slab instead of leaving one hairline in the plot.
+  // The cap keeps ≤7-day views from looking like solid blocks.
+  const barW = Math.max(3, Math.min(step * 0.62, 76));
   const y = (tokens: number) => padTop + plotH - (tokens / max) * plotH;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
   // Thin the date labels so they never collide.
