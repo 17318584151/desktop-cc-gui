@@ -11,6 +11,7 @@ export const zh = {
     error: "错误",
     refresh: "刷新",
     copied: "已复制",
+    confirmCloseApp: "确定要退出 CC GUI 吗？退出将结束所有进行中的会话和终端。",
   },
   chat: {
     ompFastToggle: "Fast 模式",

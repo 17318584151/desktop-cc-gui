@@ -9,6 +9,12 @@ import {
   currentGrantRequest,
   subscribeGrantDialog,
 } from "@/lib/grant";
+import {
+  cancelAppClose,
+  closeConfirmPending,
+  confirmAppClose,
+  subscribeCloseConfirm,
+} from "@/lib/close-confirm";
 
 /**
  * Shared shell for the small imperative dialogs below. Built on react-aria's
@@ -159,6 +165,23 @@ export function GrantAccessDialogHost() {
       message={t("files.grantAccess", { dir: request.dir })}
       onConfirm={() => answerGrantRequest(true)}
       onCancel={() => answerGrantRequest(false)}
+    />
+  );
+}
+
+/** Renders the app-close confirmation driven by lib/close-confirm.ts.
+ *  Mounted once at the app root (App.tsx); shown when the window close
+ *  button is pressed, so one misclick can't kill every running session. */
+export function CloseConfirmDialogHost() {
+  const { t } = useTranslation();
+  const pending = useSyncExternalStore(subscribeCloseConfirm, closeConfirmPending);
+  if (!pending) return null;
+  return (
+    <ConfirmDialog
+      danger
+      message={t("common.confirmCloseApp")}
+      onConfirm={confirmAppClose}
+      onCancel={cancelAppClose}
     />
   );
 }

@@ -9,6 +9,8 @@ import { UpdateToast } from "@/features/update/UpdateToast";
 import { useUpdateStore } from "@/features/update/store";
 import { GrantAccessDialogHost } from "@/components/dialogs";
 import { startPluginSystem } from "@/features/plugins";
+import { CloseConfirmDialogHost } from "@/components/dialogs";
+import { installCloseConfirm } from "@/lib/close-confirm";
 
 // Settings is a rare route; load it on demand so startup ships less JS.
 // Warm the chunk shortly after startup so the first click has no fetch gap.
@@ -31,6 +33,8 @@ export default function App() {
   // Plugin system bootstrap: hardening + event bridge + builtin/installed
   // plugin activation. Failures are logged, never fatal to the host UI.
   useEffect(() => startPluginSystem(), []);
+  // Intercept the window close button so quitting needs a confirmation.
+  useEffect(() => installCloseConfirm(), []);
   // Background update check after startup settles; dev builds skip it so
   // `tauri dev` doesn't nag about the published release being newer.
   useEffect(() => {
@@ -65,6 +69,7 @@ export default function App() {
       </HashRouter>
       <UpdateToast />
       <GrantAccessDialogHost />
+      <CloseConfirmDialogHost />
     </LazyMotion>
   );
 }

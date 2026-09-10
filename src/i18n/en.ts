@@ -13,6 +13,7 @@ export const en: Messages = {
     error: "Error",
     refresh: "Refresh",
     copied: "Copied",
+    confirmCloseApp: "Quit CC GUI? All running sessions and terminals will be terminated.",
   },
   chat: {
     ompFastToggle: "Fast mode",
