@@ -407,7 +407,10 @@ pub(crate) fn push_session_id(value: &Value, key: &str, out: &mut Vec<EngineEven
 // ==================== Process registry ====================
 
 /// Live engine child processes keyed by session key (native session id once
-/// known, otherwise the run id). Drop kills everything synchronously.
+/// known, otherwise the run id). Drop kills everything synchronously. Clone
+/// is a refcount bump: the registry keys the same child under BOTH keys
+/// after `rekey` so either route can interrupt it.
+#[derive(Clone)]
 pub struct ChildEntry {
     pub child: Arc<TokioMutex<Child>>,
     pub pid: u32,
@@ -436,8 +439,13 @@ impl ProcessRegistry {
         self.0.lock().map(|map| map.len()).unwrap_or(0)
     }
 
-    /// Move an entry to the native-session key once known. A colliding target
-    /// key belongs to another live run — keep both instead of overwriting.
+    /// Copy the entry to the native-session key once known. The run_id key
+    /// STAYS: the frontend interrupts by session id and by run id (a resume
+    /// whose session-id announcement never arrives leaves run id as the only
+    /// route), and a moving rekey closed exactly that path — the user hit
+    /// Stop, the by-run-id lookup found nothing, and the CLI kept streaming.
+    /// `kill` de-duplicates by pid: hitting both keys kills the tree once.
+    /// A colliding target key belongs to another live run — never overwrite.
     fn rekey(&self, from: &str, to: String) {
         if from == to {
             return;
@@ -446,7 +454,7 @@ impl ProcessRegistry {
             if map.contains_key(&to) {
                 return;
             }
-            if let Some(entry) = map.remove(from) {
+            if let Some(entry) = map.get(from).cloned() {
                 map.insert(to, entry);
             }
         }
@@ -491,7 +499,7 @@ impl ProcessRegistry {
     /// several parallel runs must all die on a single stop, or the survivors
     /// keep streaming and fight the next run over the session file.
     pub fn kill(&self, key: &str) -> bool {
-        let entries: Vec<(u32, Arc<TokioMutex<tokio::process::Child>>, Arc<std::sync::atomic::AtomicBool>)> =
+        let mut entries: Vec<(u32, Arc<TokioMutex<tokio::process::Child>>, Arc<std::sync::atomic::AtomicBool>)> =
             match self.0.lock() {
                 Ok(map) => map
                     .iter()
@@ -500,6 +508,11 @@ impl ProcessRegistry {
                     .collect(),
                 Err(_) => Vec::new(),
             };
+        // The registry keys one child under BOTH its session id and run id
+        // (rekey copies): de-duplicate by pid so one stop fires one
+        // taskkill, not one per key.
+        entries.sort_by_key(|(pid, _, _)| *pid);
+        entries.dedup_by_key(|(pid, _, _)| *pid);
         // No Iterator::any here: it short-circuits on the first true, which
         // would leave every later parallel run alive — the exact bug this
         // aggregate kill exists to fix.
@@ -1437,6 +1450,53 @@ mod permission_tests {
     }
 }
 
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    /// rekey must COPY (not move) so both the session-id and run-id keys
+    /// route an interrupt to the same process. A resume whose
+    /// thread.started never arrives leaves run id as the only route — a
+    /// moving rekey leaked the child (user pressed Stop, nothing died).
+    #[tokio::test]
+    async fn rekey_keeps_both_keys_and_kill_routes_by_either() {
+        let mut child = tokio::process::Command::new(if cfg!(windows) {
+            "cmd"
+        } else {
+            "sh"
+        })
+        .args(if cfg!(windows) { ["/c", "ping -n 30 127.0.0.1"] } else { ["-c", "sleep 30"] })
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn sleep child");
+        let pid = child.id().unwrap_or(0);
+        let entry = ChildEntry {
+            child: Arc::new(TokioMutex::new(child)),
+            pid,
+            run_id: "run-1".to_string(),
+            killed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let registry = ProcessRegistry::default();
+        registry.insert("run-1".to_string(), entry);
+
+        // Simulate the engine adopting the native session id mid-run.
+        registry.rekey("run-1", "session-9".to_string());
+
+        // Both keys route to the same pid; killing by the RUN id (the
+        // fallback route when the session announcement never arrived) must
+        // still find it, and the session key must survive the by-run-id
+        // kill so a second stop also lands (idempotent, pid-deduped).
+        assert!(registry.kill("run-1"));
+        assert!(registry.kill("session-9"));
+
+        // The registry drains the entry from both keys on exit.
+        registry.remove_if_pid("session-9", pid);
+        registry.remove_if_pid("run-1", pid);
+        assert_eq!(registry.len(), 0);
+    }
+}
 #[cfg(test)]
 mod tool_args_tests {
     use super::*;
