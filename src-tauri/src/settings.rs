@@ -52,6 +52,20 @@ pub struct AppSettings {
     /// Per-app Codex Fast override (`service_tier`); None preserves ~/.codex.
     #[serde(default)]
     pub codex_service_tier: Option<String>,
+    /// Require a pairing key before the bridge serves a browser (设置 → 远程
+    /// 访问 → 启用授权). Off by default: on the LAN the token URL is enough.
+    #[serde(default)]
+    pub web_auth_enabled: bool,
+    /// 8-character pairing key, generated when the switch is turned on.
+    #[serde(default)]
+    pub web_auth_key: Option<String>,
+    /// Worker base URL for the outbound relay (设置 → 远程访问 → 外网访问),
+    /// e.g. https://ccgui-relay.<account>.workers.dev.
+    #[serde(default)]
+    pub web_relay_url: Option<String>,
+    /// Shared key the relay worker checks.
+    #[serde(default)]
+    pub web_relay_key: Option<String>,
     /// Max sessions shown per workspace in the sidebar before collapsing
     /// behind a "show more" row.
     #[serde(default = "default_sidebar_thread_limit")]
@@ -109,6 +123,10 @@ impl Default for AppSettings {
             workspace_groups: Vec::new(),
             workspace_aliases: HashMap::new(),
             archived_workspaces: Vec::new(),
+            web_auth_enabled: false,
+            web_auth_key: None,
+            web_relay_url: None,
+            web_relay_key: None,
             language: default_language(),
             default_models: HashMap::new(),
             custom_models: HashMap::new(),

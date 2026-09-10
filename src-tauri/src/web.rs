@@ -14,7 +14,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Query, State as AxumState, WebSocketUpgrade};
 use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -23,12 +23,24 @@ use tauri::Manager;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use uuid::Uuid;
 
+
 use crate::event_sink::Emit;
 
 /// Managed inside AppState; holds the running server, if any.
 #[derive(Default)]
 pub struct WebAccessState {
     inner: Mutex<Option<Running>>,
+}
+
+impl WebAccessState {
+    /// Where the relay should dial (127.0.0.1:<port>) and the token its
+    /// public URL carries, when the bridge is running.
+    pub fn bridge_target(&self) -> Option<(u16, String)> {
+        let guard = self.inner.lock().ok()?;
+        guard
+            .as_ref()
+            .map(|running| (running.info.port, running.info.token.clone()))
+    }
 }
 
 struct Running {
@@ -45,6 +57,46 @@ pub struct WebAccessInfo {
     pub port: u16,
     pub token: String,
     pub lan_ip: String,
+}
+
+/// A browser that reached the bridge. Rows are created by the request itself;
+/// `approved_at` is what lets it through, and only the desktop can set it.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WebDevice {
+    pub id: String,
+    pub user_agent: String,
+    pub created_at: i64,
+    pub last_seen_at: i64,
+    pub approved_at: Option<i64>,
+}
+
+/// Tell every attached UI (webview and phones) that the device list moved.
+/// Plain `app.emit` would only reach the webview: the bridge forwards what
+/// goes through the sink.
+pub fn notify_devices(app: &tauri::AppHandle) {
+    app.state::<crate::AppState>()
+        .emitters
+        .emit_json("web://devices", "null");
+}
+
+/// Short, human-matching form of a device id (shown in the phone page and the
+/// settings list so the user can tell which row to approve).
+pub fn device_code(id: &str) -> String {
+    id.chars().take(8).collect::<String>().to_uppercase()
+}
+
+#[tauri::command]
+pub fn web_devices(app: tauri::AppHandle) -> Result<Vec<WebDevice>, String> {
+    app.state::<crate::AppState>().db.web_devices()
+}
+
+#[tauri::command]
+pub fn web_device_revoke(app: tauri::AppHandle, id: String) -> Result<bool, String> {
+    let state = app.state::<crate::AppState>();
+    let ok = state.db.web_device_revoke(&id)?;
+    notify_devices(&app);
+    Ok(ok)
 }
 
 #[tauri::command]
@@ -128,6 +180,261 @@ pub fn web_access_status(app: tauri::AppHandle) -> Option<WebAccessInfo> {
     guard.as_ref().map(|r| r.info.clone())
 }
 
+// ==================== Device gate ====================
+
+/// Cookie carrying the device id. Lax: the phone arrives by tapping a link,
+/// and the bridge is plain http on the LAN, so `Secure` would never be sent.
+const DEVICE_COOKIE: &str = "ccgui_device";
+/// A device that keeps polling must not write to sqlite on every asset hit.
+const TOUCH_INTERVAL_MS: i64 = 60_000;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn cookie_value(headers: &axum::http::HeaderMap) -> Option<String> {
+    let raw = headers.get(header::COOKIE)?.to_str().ok()?;
+    raw.split(';').find_map(|part| {
+        let (name, value) = part.trim().split_once('=')?;
+        (name == DEVICE_COOKIE && !value.is_empty()).then(|| value.to_string())
+    })
+}
+
+fn user_agent(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect()
+}
+
+/// The auth switch + pairing key, re-read at most once a second: the gate
+/// runs for every asset request, and settings.json lives on disk.
+fn auth_config() -> (bool, String) {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    static CACHE: OnceLock<Mutex<(Instant, bool, String)>> = OnceLock::new();
+    let cell = CACHE.get_or_init(|| {
+        Mutex::new((Instant::now() - Duration::from_secs(60), false, String::new()))
+    });
+    let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.0.elapsed() >= Duration::from_secs(1) {
+        let enabled = crate::settings::get_app_settings()
+            .map(|s| (s.web_auth_enabled, s.web_auth_key.unwrap_or_default()))
+            .unwrap_or((false, String::new()));
+        guard.1 = enabled.0;
+        guard.2 = enabled.1;
+        guard.0 = Instant::now();
+    }
+    (guard.1, guard.2.clone())
+}
+
+/// Is the `?token=` still needed? On the LAN it always is (upstream's model).
+/// Through the relay the pairing key takes over — but only while the switch
+/// is on; otherwise a tokenless tunnel would be wide open.
+fn token_required(headers: &axum::http::HeaderMap, auth_enabled: bool) -> bool {
+    let relayed = headers
+        .get(crate::relay::VIA_HEADER)
+        .is_some_and(|value| value == "relay");
+    !(relayed && auth_enabled)
+}
+
+/// Does this request have to unlock first? The pairing key guards the relay
+/// path only: on the LAN the token URL stays the whole story (upstream's
+/// model), while anything that arrived through the relay needs the key once.
+fn needs_unlock(relayed: bool, auth_enabled: bool, device: Option<&WebDevice>) -> bool {
+    relayed && auth_enabled && !device.is_some_and(|d| d.approved_at.is_some())
+}
+
+/// What the request may do.
+enum Gate {
+    /// Device approved: serve normally, carrying its id for the WS tick.
+    Allowed(String),
+    /// Unknown or unapproved: this page instead of the app.
+    Waiting(Response),
+}
+
+fn waiting_response(html: String, device: &str, first_seen: bool) -> Response {
+    let cookie = format!("{DEVICE_COOKIE}={device}; Path=/; Max-Age=31536000; SameSite=Lax");
+    let mut builder = Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8");
+    if first_seen {
+        builder = builder.header(header::SET_COOKIE, cookie);
+    }
+    builder
+        .body(axum::body::Body::from(html))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// Every entry point asks this before doing work. With the switch off the
+/// LAN behaves as it always did (the token URL is the only thing needed);
+/// with it on, an unknown browser gets the key page and is remembered once
+/// it types the key in.
+fn gate(ctx: &WebCtx, headers: &axum::http::HeaderMap) -> Gate {
+    let db = ctx.app.state::<crate::AppState>().db.clone();
+    let (enabled, _) = auth_config();
+    let relayed = headers
+        .get(crate::relay::VIA_HEADER)
+        .is_some_and(|value| value == "relay");
+    let now = now_ms();
+    let device = cookie_value(headers).and_then(|id| db.web_device_get(&id).ok().flatten());
+
+    if !needs_unlock(relayed, enabled, device.as_ref()) {
+        if let Some(device) = device.as_ref() {
+            if now - device.last_seen_at >= TOUCH_INTERVAL_MS {
+                let _ = db.web_device_touch(&device.id, "", now);
+            }
+        }
+        return Gate::Allowed(device.map(|d| d.id).unwrap_or_default());
+    }
+
+    // A cookie that no longer resolves (revoked, or a fresh browser): mint a
+    // new one so the unlock can name the device it approves.
+    let (id, first_seen, stale) = match &device {
+        Some(device) => (
+            device.id.clone(),
+            false,
+            now - device.last_seen_at >= TOUCH_INTERVAL_MS,
+        ),
+        None => (Uuid::new_v4().simple().to_string(), true, false),
+    };
+    if stale {
+        let _ = db.web_device_touch(&id, "", now);
+    }
+    Gate::Waiting(unlock_response(unlock_page(&id, None), &id, first_seen))
+}
+
+/// Key page: entered once per browser, then that browser is remembered.
+fn unlock_page(device: &str, error: Option<&str>) -> String {
+    let (code, message) = match error {
+        Some(text) => (String::new(), format!("<p class=\"err\">{text}</p>")),
+        None => (
+            format!("<div>配对码 <code>{}</code></div>", device_code(device)),
+            String::new(),
+        ),
+    };
+    format!(
+        r#"<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CC GUI 需要配对密钥</title>
+<style>
+:root{{color-scheme:dark}}
+body{{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
+background:#141414;color:#ebebeb;font:15px/1.6 -apple-system,system-ui,"Segoe UI",sans-serif}}
+.card{{width:320px;padding:26px 24px;border:1px solid #2c2c2c;border-radius:16px;background:#1b1b1b}}
+h1{{margin:0 0 14px;font-size:17px;font-weight:600}}
+code{{display:inline-block;margin:6px 0 2px;padding:4px 10px;border-radius:8px;
+background:#242424;color:#a7e05f;font:600 16px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em}}
+p{{margin:10px 0 0;color:#a3a3a3;font-size:13.5px}}
+.err{{color:#ff7b72}}
+input{{width:100%;margin:14px 0 10px;padding:10px 12px;border-radius:10px;border:1px solid #333;
+background:#101010;color:#ebebeb;font:600 18px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;
+letter-spacing:.16em;text-transform:uppercase;outline:none}}
+input:focus{{border-color:#4b5563}}
+button{{width:100%;padding:10px;border:0;border-radius:10px;background:#3b82f6;color:#fff;font-weight:600;font-size:15px}}
+</style></head>
+<body><div class="card">
+<h1>输入配对密钥</h1>
+{code}
+<form method="post" action="/unlock">
+<input name="key" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="8 位密钥" autofocus>
+<button type="submit">授权此设备</button>
+</form>
+{message}
+<p>密钥在电脑上的「设置 → 远程访问」里显示。此设备授权后不再询问。</p>
+</div>
+</body></html>"#
+    )
+}
+
+/// Page + cookie for a device that still has to unlock.
+fn unlock_response(html: String, device: &str, set_cookie: bool) -> Response {
+    let cookie = format!("{DEVICE_COOKIE}={device}; Path=/; Max-Age=31536000; SameSite=Lax");
+    let mut builder = Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8");
+    if set_cookie && !device.is_empty() {
+        builder = builder.header(header::SET_COOKIE, cookie);
+    }
+    builder
+        .body(axum::body::Body::from(html))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// `POST /unlock`: check the key, remember the device, send it into the app.
+async fn unlock_handler(
+    AxumState(ctx): AxumState<WebCtx>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Response {
+    let (enabled, expected) = auth_config();
+    let db = ctx.app.state::<crate::AppState>().db.clone();
+    let device = match cookie_value(&headers) {
+        Some(id) => id,
+        None => {
+            return unlock_response(unlock_page("", Some("浏览器没有拿到设备标识，请重新打开链接")), "", true)
+        }
+    };
+    let submitted = form_field(&body, "key").unwrap_or_default().to_uppercase();
+    if enabled && (expected.is_empty() || submitted != expected.to_uppercase()) {
+        return unlock_response(unlock_page(&device, Some("密钥不正确")), &device, false);
+    }
+
+    let _ = db.web_device_touch(&device, &user_agent(&headers), now_ms());
+    let _ = db.web_device_approve(&device, now_ms());
+    notify_devices(&ctx.app);
+    // Back to the app; the cookie is already in the browser.
+    (
+        StatusCode::SEE_OTHER,
+        [(header::LOCATION, "/")],
+        "".to_string(),
+    )
+        .into_response()
+}
+
+/// `application/x-www-form-urlencoded` field lookup.
+fn form_field(body: &str, name: &str) -> Option<String> {
+    body.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == name).then(|| url_decode(value))
+    })
+}
+
+fn url_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                if let Ok(byte) = u8::from_str_radix(&value[i + 1..i + 3], 16) {
+                    out.push(byte as char);
+                    i += 3;
+                } else {
+                    out.push('%');
+                    i += 1;
+                }
+            }
+            other => {
+                out.push(other as char);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
 // ==================== Server ====================
 
 #[derive(Clone)]
@@ -140,6 +447,7 @@ struct WebCtx {
 
 fn build_router(ctx: WebCtx) -> Router {
     Router::new()
+        .route("/unlock", post(unlock_handler))
         .route("/ws", get(ws_handler))
         .route("/file", get(file_handler))
         .fallback(get(static_handler))
@@ -163,6 +471,17 @@ impl Emit for WsEmit {
 }
 
 #[derive(Deserialize)]
+struct RelayArgs {
+    url: String,
+    key: String,
+}
+
+#[derive(Deserialize)]
+struct DeviceIdArgs {
+    id: String,
+}
+
+#[derive(Deserialize)]
 struct TokenQuery {
     token: String,
 }
@@ -170,12 +489,18 @@ struct TokenQuery {
 async fn ws_handler(
     AxumState(ctx): AxumState<WebCtx>,
     Query(q): Query<TokenQuery>,
+    headers: axum::http::HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    if q.token != *ctx.token {
-        return StatusCode::FORBIDDEN.into_response();
+    match gate(&ctx, &headers) {
+        Gate::Waiting(page) => return page,
+        Gate::Allowed(device) => {
+            if token_required(&headers, auth_config().0) && q.token != *ctx.token {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            ws.on_upgrade(move |socket| handle_socket(ctx, socket, device))
+        }
     }
-    ws.on_upgrade(move |socket| handle_socket(ctx, socket))
 }
 
 #[derive(Deserialize)]
@@ -188,7 +513,7 @@ struct InvokeReq {
     args: Value,
 }
 
-async fn handle_socket(ctx: WebCtx, socket: WebSocket) {
+async fn handle_socket(ctx: WebCtx, socket: WebSocket, device: String) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let hello = json!({"type": "hello", "version": env!("CARGO_PKG_VERSION")}).to_string();
     if ws_tx.send(Message::Text(hello.into())).await.is_err() {
@@ -219,6 +544,9 @@ async fn handle_socket(ctx: WebCtx, socket: WebSocket) {
     // Inbound: each invoke runs in its own task — long-running commands
     // (send_message) must not stall the read loop or other requests.
     let mut stop_reader = ctx.stop.clone();
+    // Re-checked slowly: revoking a device must drop the sockets it already
+    // holds, not just its next request.
+    let mut approval = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
         tokio::select! {
             msg = ws_rx.next() => {
@@ -242,6 +570,28 @@ async fn handle_socket(ctx: WebCtx, socket: WebSocket) {
                 }
             }
             _ = stop_reader.changed() => break,
+            _ = approval.tick() => {
+                // Only devices that unlocked can lose the socket this way:
+                // with the switch off (or an anonymous browser) there is
+                // nothing to revoke, and the socket must stay up.
+                let (auth_on, _) = auth_config();
+                if !auth_on || device.is_empty() {
+                    continue;
+                }
+                let approved = ctx
+                    .app
+                    .state::<crate::AppState>()
+                    .db
+                    .web_device_get(&device)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|d| d.approved_at.is_some());
+                if !approved {
+                    // Returning drops both halves: the writer task's channel
+                    // closes with out_tx, so the socket goes with us.
+                    break;
+                }
+            }
         }
     }
 }
@@ -260,7 +610,14 @@ fn load_static(app: &tauri::AppHandle, rel: &str) -> Option<(Vec<u8>, String)> {
     Some((asset.bytes, asset.mime_type))
 }
 
-async fn static_handler(AxumState(ctx): AxumState<WebCtx>, uri: Uri) -> Response {
+async fn static_handler(
+    AxumState(ctx): AxumState<WebCtx>,
+    headers: axum::http::HeaderMap,
+    uri: Uri,
+) -> Response {
+    if let Gate::Waiting(page) = gate(&ctx, &headers) {
+        return page;
+    }
     let rel = uri.path().trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
     // SPA fallback: unknown paths still get the app shell.
@@ -306,8 +663,15 @@ struct FileQuery {
     token: String,
 }
 
-async fn file_handler(AxumState(ctx): AxumState<WebCtx>, Query(q): Query<FileQuery>) -> Response {
-    if q.token != *ctx.token {
+async fn file_handler(
+    AxumState(ctx): AxumState<WebCtx>,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<FileQuery>,
+) -> Response {
+    if let Gate::Waiting(page) = gate(&ctx, &headers) {
+        return page;
+    }
+    if token_required(&headers, auth_config().0) && q.token != *ctx.token {
         return StatusCode::FORBIDDEN.into_response();
     }
     match read_scoped_file(Path::new(&q.path)) {
@@ -913,6 +1277,22 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         "app_metrics" => ser(crate::metrics::app_metrics(app.state())),
         // web access: phones may read status; start/stop stay desktop-only.
         "web_access_status" => ser(Ok(web_access_status(app.clone()))),
+        // The relay has no bootstrap problem (unlike the bridge, which cannot
+        // start itself over itself), so an approved device may manage it too.
+        "web_relay_status" => ser(Ok(crate::relay::web_relay_status(app.clone()))),
+        "web_relay_start" => {
+            let a: RelayArgs = parse_args(&raw)?;
+            ser(crate::relay::web_relay_start(app.clone(), a.url, a.key).await)
+        }
+        "web_relay_stop" => ser(crate::relay::web_relay_stop(app.clone())),
+        // Device approval is the one management action a phone may take: it
+        // is already device-scoped, and the desktop page would otherwise be
+        // the only way to approve a browser the user is holding.
+        "web_devices" => ser(web_devices(app.clone())),
+        "web_device_revoke" => {
+            let a: DeviceIdArgs = parse_args(&raw)?;
+            ser(web_device_revoke(app.clone(), a.id))
+        }
         // plugins (plan §9 risk table ruling): read-only commands ride the
         // bridge so web clients render plugin UI; install/uninstall/enable/
         // storage writes stay desktop-only and fall through to unknown.
@@ -995,4 +1375,74 @@ fn interface_ips() -> Vec<std::net::Ipv4Addr> {
 #[cfg(not(unix))]
 fn interface_ips() -> Vec<std::net::Ipv4Addr> {
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn device(approved_at: Option<i64>) -> WebDevice {
+        WebDevice {
+            id: "d".into(),
+            user_agent: String::new(),
+            created_at: 0,
+            last_seen_at: 0,
+            approved_at,
+        }
+    }
+
+    /// The switch is the whole point: off = LAN behaves as it always did,
+    /// on = only devices that typed the key get through.
+    #[test]
+    fn gate_only_locks_the_relay_path() {
+        assert!(
+            !needs_unlock(false, true, None),
+            "LAN keeps upstream's model: the token URL is enough"
+        );
+        assert!(
+            !needs_unlock(true, false, None),
+            "relay traffic with the switch off is not locked either"
+        );
+        assert!(needs_unlock(true, true, None), "relay + switch on: unlock");
+        assert!(
+            needs_unlock(true, true, Some(&device(None))),
+            "a relay device that never unlocked is still asked"
+        );
+        assert!(
+            !needs_unlock(true, true, Some(&device(Some(42)))),
+            "a device that unlocked is never asked again"
+        );
+    }
+
+    /// The relay swaps the token for the pairing key, and only while the
+    /// switch is on: a tokenless tunnel with no key would be wide open.
+    #[test]
+    fn token_is_waived_only_for_relayed_traffic_with_auth_on() {
+        let lan = |headers: &axum::http::HeaderMap, on: bool| token_required(headers, on);
+        // Switch off: the token stays mandatory everywhere.
+        assert!(lan(&axum::http::HeaderMap::new(), false));
+        assert!(lan(&relay_headers(), false));
+        // Switch on: relayed traffic may come without it, the LAN may not.
+        assert!(lan(&axum::http::HeaderMap::new(), true));
+        assert!(!lan(&relay_headers(), true));
+    }
+
+    fn relay_headers() -> axum::http::HeaderMap {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            crate::relay::VIA_HEADER,
+            axum::http::HeaderValue::from_static("relay"),
+        );
+        headers
+    }
+
+    #[test]
+    fn form_field_reads_the_posted_key() {
+        assert_eq!(
+            form_field("key=ABCD2345&other=1", "key").as_deref(),
+            Some("ABCD2345")
+        );
+        assert_eq!(form_field("key=a+b%2C", "key").as_deref(), Some("a b,"));
+        assert_eq!(form_field("other=1", "key"), None);
+    }
 }

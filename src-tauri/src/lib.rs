@@ -20,7 +20,8 @@ pub mod provider_models;
 pub mod settings;
 pub mod slash_commands;
 pub mod terminal;
-pub mod web;
+pub mod relay;
+mod web;
 
 use std::sync::Arc;
 use tauri::Manager;
@@ -34,6 +35,7 @@ pub struct AppState {
     pub terminals: terminal::TerminalRegistry,
     pub processes: Arc<engine::ProcessRegistry>,
     pub web: web::WebAccessState,
+    pub relay: relay::RelayState,
     pub dsh_host: dsh_host::DshHostState,
 }
 
@@ -88,6 +90,7 @@ pub fn run() {
                 terminals: terminal::TerminalRegistry::default(),
                 processes: Arc::new(engine::ProcessRegistry::default()),
                 web: web::WebAccessState::default(),
+                relay: relay::RelayState::default(),
                 dsh_host: dsh_host::DshHostState::default(),
             };
             // Clone what the initial scan needs before state moves into manage.
@@ -248,6 +251,9 @@ pub fn run() {
             web::web_access_start,
             web::web_access_stop,
             web::web_access_status,
+            relay::web_relay_start,
+            relay::web_relay_stop,
+            relay::web_relay_status,
             // dsh host + managed-CLI lifecycle
             dsh_host::dsh_host_status,
             dsh_host::dsh_host_start,
