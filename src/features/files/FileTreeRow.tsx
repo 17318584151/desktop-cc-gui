@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, type MouseEvent } from "react";
 import Loader2 from "lucide-react/dist/esm/icons/loader-2";
 import Plus from "lucide-react/dist/esm/icons/plus";
 import { cx } from "@/utils/cx";
-import type { DirEntry } from "@/lib/ipc";
+import type { DirEntry, FileTreeColor, RepositorySummary } from "@/lib/ipc";
 import { getFileTreeIconSvg } from "./fileIcons";
 
 export interface VisibleNode extends DirEntry {
@@ -10,6 +10,17 @@ export interface VisibleNode extends DirEntry {
   depth: number;
   expanded: boolean;
   loading: boolean;
+  /** Compact git status when this directory is itself a repo root. */
+  repository?: RepositorySummary;
+  /** Git-state name color: file states + blue for repo-root rows. */
+  color?: FileTreeColor;
+}
+
+/** Tooltip/aria text for a repo badge: `branch ✓` or `branch M<n> ?<n>`. */
+function repositoryLabel(repo: RepositorySummary): string {
+  return repo.changed + repo.untracked === 0
+    ? `${repo.branch} ✓`
+    : `${repo.branch}${repo.changed > 0 ? ` M${repo.changed}` : ""}${repo.untracked > 0 ? ` ?${repo.untracked}` : ""}`;
 }
 
 interface TreeRowProps {
@@ -81,7 +92,51 @@ export const TreeRow = memo(function TreeRow({
             dangerouslySetInnerHTML={{ __html: iconSvg }}
           />
         )}
-        <span className="truncate">{node.name}</span>
+        <span
+          className={cx(
+            // The folder/file name has display priority: it keeps its
+            // natural width (truncating only when it alone overflows the
+            // row), so the badge below yields space instead.
+            "min-w-0 max-w-full shrink-0 truncate",
+            // Spec: untracked files → green, modified files → orange, and
+            // repo-root rows (workspace repo root + nested repos) → blue.
+            // Plain folders never carry color.
+            node.color === "untracked" && "text-status-green-text",
+            node.color === "modified" && "text-text-warning-primary",
+            node.color === "repository" && "text-status-blue-text",
+          )}
+        >
+          {node.name}
+        </span>
+        {node.repository ? (
+          <span
+            className={cx(
+              // The branch badge takes what's left; the branch name
+              // truncates with an ellipsis (full text in the title tip) —
+              // no horizontal scrolling, ever.
+              "ml-2 flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-caption-1-medium",
+              node.repository.changed + node.repository.untracked === 0
+                ? "text-state-success-text"
+                : "text-status-yellow-text",
+            )}
+            title={repositoryLabel(node.repository)}
+            aria-label={repositoryLabel(node.repository)}
+          >
+            <span className="min-w-0 flex-1 truncate">{node.repository.branch}</span>
+            {node.repository.changed + node.repository.untracked === 0 ? (
+              <span className="shrink-0" aria-hidden>✓</span>
+            ) : (
+              <>
+                {node.repository.changed > 0 && (
+                  <span className="shrink-0 text-text-warning-primary" aria-hidden>M{node.repository.changed}</span>
+                )}
+                {node.repository.untracked > 0 && (
+                  <span className="shrink-0 text-status-green-text" aria-hidden>?{node.repository.untracked}</span>
+                )}
+              </>
+            )}
+          </span>
+        ) : null}
       </button>
       <button
         type="button"
