@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ipc } from "@/lib/ipc";
 import { useChatStore } from "./store";
 import { OPEN_TABS_KEY } from "./store/persistence";
+import { EMPTY_SESSION } from "./store/stream";
 
 vi.mock("@/lib/ipc", () => ({
   ipc: {
@@ -261,5 +262,110 @@ describe("compactContext and refreshSessionUsage", () => {
 
     expect(ipc.loadSessionPage).toHaveBeenCalledWith("claude", "sess-compact", 100);
     expect(useChatStore.getState().bySession[key]?.usage).toEqual(newUsage);
+  });
+});
+
+describe("model selection is per session", () => {
+  beforeEach(resetStore);
+
+  const sess = (id: string) => ({
+    engine: "omp",
+    sessionId: id,
+    workspacePath: WS,
+  });
+
+  it("picking a model inside a session leaves the engine default alone", async () => {
+    // Two sessions of the SAME CLI: the complaint is that choosing a model in
+    // one changed the other, because the pick was written as the engine-wide
+    // default.
+    const a = sess("s-a");
+    const b = sess("s-b");
+    useChatStore.setState({ activeEngine: "omp", openTabs: [a, b], active: a });
+
+    await useChatStore.getState().setModel("omp", "deepseek-v4-flash");
+
+    expect(useChatStore.getState().models.omp).toBe("kimi-k3");
+    const tabA = useChatStore.getState().openTabs.find((t) => t.sessionId === "s-a");
+    const tabB = useChatStore.getState().openTabs.find((t) => t.sessionId === "s-b");
+    expect(tabA?.model).toBe("deepseek-v4-flash");
+    expect(tabB?.model).toBeUndefined();
+  });
+
+  it("a pending new chat still edits the engine default", async () => {
+    // The starting choice for future conversations is made on a new-chat tab.
+    useChatStore.setState({ activeEngine: "omp", openTabs: [], active: null });
+    useChatStore.getState().startNewChat(WS);
+    await useChatStore.getState().setModel("omp", "glm-5.3-flash");
+
+    expect(useChatStore.getState().models.omp).toBe("glm-5.3-flash");
+    // and the pending tab carries it too
+    expect(useChatStore.getState().active?.model).toBe("glm-5.3-flash");
+  });
+
+  it("continues a session on the model that session actually ran", async () => {
+    const a = sess("s-a");
+    useChatStore.setState({
+      activeEngine: "omp",
+      openTabs: [a],
+      active: a,
+      models: { omp: "kimi-k3" },
+      bySession: {
+        "omp/s-a": {
+          ...EMPTY_SESSION,
+          messages: [
+            { seq: 1, role: "assistant", text: "hi", ts: null, model: "glm-5.3-flash" },
+          ],
+        },
+      },
+    });
+
+    await useChatStore.getState().send("next", []);
+
+    // Not the engine default: the conversation keeps its own model.
+    expect(vi.mocked(ipc.sendMessage)).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "glm-5.3-flash" }),
+    );
+  });
+
+  it("prefers the session's reported model over its history", async () => {
+    const a = sess("s-a");
+    useChatStore.setState({
+      activeEngine: "omp",
+      openTabs: [a],
+      active: a,
+      models: { omp: "kimi-k3" },
+      bySession: {
+        "omp/s-a": {
+          ...EMPTY_SESSION,
+          activeModel: "gpt-5.6-luna",
+          messages: [
+            { seq: 1, role: "assistant", text: "hi", ts: null, model: "glm-5.3-flash" },
+          ],
+        },
+      },
+    });
+
+    await useChatStore.getState().send("next", []);
+    expect(vi.mocked(ipc.sendMessage)).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-5.6-luna" }),
+    );
+  });
+
+  it("an explicit per-session pick wins over the reported model", async () => {
+    const a = sess("s-a");
+    useChatStore.setState({
+      activeEngine: "omp",
+      openTabs: [{ ...a, model: "claude-opus-5" }],
+      active: { ...a, model: "claude-opus-5" },
+      models: { omp: "kimi-k3" },
+      bySession: {
+        "omp/s-a": { ...EMPTY_SESSION, activeModel: "gpt-5.6-luna" },
+      },
+    });
+
+    await useChatStore.getState().send("next", []);
+    expect(vi.mocked(ipc.sendMessage)).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "claude-opus-5" }),
+    );
   });
 });

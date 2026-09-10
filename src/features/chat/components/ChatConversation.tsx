@@ -339,11 +339,38 @@ export const ChatConversation = memo(function ChatConversation({
     refresh: refreshModels,
   } = useEngineModels(engines, models, pinModels);
 
-  // Per-tab model/effort overrides win over the engine's global defaults, so
-  // the picker follows each session across tab switches (multi-CLI tabs keep
-  // their own selection).
-  const tabModel =
-    active && active.engine === activeEngine ? active.model : undefined;
+  // The picker follows the SESSION, not the CLI: an explicit pick for this
+  // tab, else the model this session actually ran, else the engine default.
+  // Two omp sessions in one project therefore show their own models and do
+  // not change under each other when the user switches tabs.
+  //
+  // Subscribed as two narrow slices (strings, Object.is-compared) instead of
+  // the bySession record: stream flushes swap that record every frame, and
+  // the composer must not re-render with it (SessionTimeline owns that).
+  const sessionActiveModel = useChatStore((s) =>
+    key ? (s.bySession[key]?.activeModel ?? null) : null,
+  );
+  const sessionHistoryModel = useChatStore((s) => {
+    if (!key) return null;
+    const messages = s.bySession[key]?.messages;
+    if (!messages) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const model = messages[i].model;
+      if (model) return model;
+    }
+    return null;
+  });
+  const tabModel = useMemo(() => {
+    if (!active || active.engine !== activeEngine) return undefined;
+    // tab pick → what the engine reported running → this session's history
+    // → the engine default for a session with nothing recorded yet.
+    return (
+      active.model ||
+      sessionActiveModel ||
+      sessionHistoryModel ||
+      models[activeEngine]
+    );
+  }, [active, activeEngine, sessionActiveModel, sessionHistoryModel, models]);
   const tabEffort =
     active && active.engine === activeEngine ? active.effort : undefined;
   const displayModels = useMemo(

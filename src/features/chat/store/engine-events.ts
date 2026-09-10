@@ -10,6 +10,7 @@ import {
   migratePendingStream,
   moveStreamingFlag,
   patchSession,
+  resolveSessionModel,
   runRouting,
   scheduleDeltaFlush,
   setStreamingFlag,
@@ -88,19 +89,21 @@ export function upsertSessionMetaInto(
 }
 
 /** Effective model for event-stamped rows: the session's activeModel wins,
- * followed by the owning tab's per-tab override, then engine default. */
+ * followed by the owning tab's per-tab override, then the session's own
+ * history, then the engine default — the same resolveSessionModel the send
+ * path uses, so a row can never claim a model the turn did not run. */
 function stampedModel(
   deps: EngineEventDeps,
   engine: string,
   key: string,
 ): string | null {
   const s = deps.get();
-  const sessionActive = s.bySession[key]?.activeModel;
-  if (sessionActive) return sessionActive;
   const tab = s.openTabs.find(
     (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
   );
-  return (tab?.model ?? s.models[engine]) || null;
+  return (
+    resolveSessionModel(tab, s.bySession[key], s.models[engine]) || null
+  );
 }
 
 /** Effective reasoning effort for event-stamped rows: the session's activeEffort wins,

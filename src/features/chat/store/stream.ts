@@ -47,6 +47,35 @@ export const EMPTY_SESSION: SessionState = {
   interrupted: false,
 };
 
+/** The model one session runs with, most specific first:
+ *
+ *  1. the tab's own pick (an explicit choice for this session),
+ *  2. what the engine reported running for this session,
+ *  3. the model this session's history was written with,
+ *  4. the engine default (new chats, sessions with no history yet).
+ *
+ * Per session on purpose: two omp sessions may run different models, so the
+ * picker, the send, and the stamped rows must all read the session's model —
+ * an engine-wide default would make one session's pick leak into the other.
+ */
+export function resolveSessionModel(
+  tab: { engine: string; model?: string } | null | undefined,
+  session: Pick<SessionState, "activeModel" | "messages"> | undefined,
+  engineDefault?: string,
+): string | undefined {
+  if (!tab) return engineDefault;
+  if (tab.model) return tab.model;
+  if (session?.activeModel) return session.activeModel;
+  const messages = session?.messages;
+  if (messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const model = messages[i].model;
+      if (model) return model;
+    }
+  }
+  return engineDefault;
+}
+
 /** Minimal store shape these helpers touch. */
 export interface BySessionSlice {
   bySession: Record<string, SessionState>;

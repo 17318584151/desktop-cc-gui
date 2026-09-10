@@ -37,6 +37,7 @@ import {
   drainPending,
   moveStreamingFlag,
   patchSession,
+  resolveSessionModel,
   runRouting,
   setStreamingFlag,
   settleLiveRows,
@@ -392,6 +393,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
     if (!prompt.trim() && images.length === 0) return;
     const engine = tab.engine;
     const key = sessionKey(engine, tab.sessionId, tab.workspacePath);
+    // Resolve BEFORE the optimistic rows land: the patch below writes
+    // activeModel, and a resolver reading it afterwards would see its own
+    // write instead of the session's history.
+    // The session's own model, not the engine default: continuing a
+    // conversation keeps running the model that conversation uses.
+    const model =
+      resolveSessionModel(tab, get().bySession[key], get().models[engine]) ||
+      null;
+    const effort = tab.effort ?? get().efforts[engine] ?? null;
     // Optimistic user message.
     set((s) => ({
       streamingByKey: setStreamingFlag(s.streamingByKey, key, true),
@@ -412,8 +422,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         error: null,
         interrupted: false,
         turnStartedAt: Date.now(),
-        activeModel: (tab.model ?? get().models[engine]) || null,
-        activeEffort: tab.effort ?? get().efforts[engine] ?? null,
+        activeModel: model,
+        activeEffort: effort,
       },
     );
     try {
@@ -423,8 +433,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         sessionId: tab.sessionId,
         prompt,
         imagePaths: images.length ? images : null,
-        model: (tab.model ?? get().models[engine]) || null,
-        effort: tab.effort ?? get().efforts[engine] ?? null,
+        model,
+        effort,
         permission: effectivePermission(
           get().engines,
           engine,
@@ -940,21 +950,29 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }));
     },
     setModel: async (engine, model) => {
-      const models = { ...get().models };
-      if (model) models[engine] = model;
-      else delete models[engine];
-      set({ models });
-      if (get().active?.engine === engine) {
-        // Empty = "CLI default": clear the tab override too, so the tab
-        // follows the (also cleared) global default again.
+      const active = get().active;
+      // Model choice is a property of the CONVERSATION: picking one inside a
+      // session must not rewrite the engine-wide default, or a second session
+      // of the same CLI would silently switch models with it. Only a pending
+      // "new chat" tab (no session yet) edits the default — that tab is where
+      // the next conversation's starting choice is made.
+      if (!active || active.sessionId === null) {
+        const models = { ...get().models };
+        if (model) models[engine] = model;
+        else delete models[engine];
+        set({ models });
+        await persistSettings((settings) => {
+          const defaultModels = { ...settings.defaultModels };
+          if (model) defaultModels[engine] = model;
+          else delete defaultModels[engine];
+          return { defaultModels };
+        });
+      }
+      if (active?.engine === engine) {
+        // Empty = "CLI default": clear the tab override so the session falls
+        // back to its own history/model default again.
         stampActiveTab({ model: model || undefined });
       }
-      await persistSettings((settings) => {
-        const defaultModels = { ...settings.defaultModels };
-        if (model) defaultModels[engine] = model;
-        else delete defaultModels[engine];
-        return { defaultModels };
-      });
     },
     pinModels: async (updates) => {
       const entries = Object.entries(updates).filter(([, model]) =>
