@@ -107,6 +107,33 @@ function writeCollapsedGroups(collapsed: Set<string>) {
   }
 }
 
+/** localStorage key for the expanded workspace id set. */
+const EXPANDED_WORKSPACES_KEY = "ccgui-next.sidebarExpandedWorkspaces:v1";
+
+/** Expanded workspace ids, or null when the user never expanded/collapsed
+ *  anything — null keeps the built-in default (the first workspace open)
+ *  instead of reading "nothing stored" as "everything collapsed". */
+function readExpandedWorkspaces(): Set<string> | null {
+  try {
+    const raw = localStorage.getItem(EXPANDED_WORKSPACES_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : [],
+    );
+  } catch {
+    return null;
+  }
+}
+
+function writeExpandedWorkspaces(expanded: Set<string>) {
+  try {
+    localStorage.setItem(EXPANDED_WORKSPACES_KEY, JSON.stringify([...expanded]));
+  } catch {
+    // Storage unavailable/full is non-fatal: expansion stays in memory.
+  }
+}
+
 /** Top-level nav row — icon + label, p 8, radius/2lg. */
 function NavItem({
   icon: Icon,
@@ -529,6 +556,8 @@ function RepoThreadList({
  *  handle (press to reorder, no long-press), remove. */
 function RepoItem({
   repo,
+  open,
+  onToggleOpen,
   forceOpen = false,
   activeThreadId,
   onThreadSelect,
@@ -540,6 +569,9 @@ function RepoItem({
   dragHandleProps = null,
 }: {
   repo: AiChatRepo;
+  /** Expanded state, owned by the sidebar so it can persist across restarts. */
+  open: boolean;
+  onToggleOpen?: () => void;
   /** Query-driven filtering pins the thread list open while searching. */
   forceOpen?: boolean;
   activeThreadId?: string;
@@ -555,12 +587,11 @@ function RepoItem({
   /** Immediate drag entry attached to the row's grip handle. */
   dragHandleProps?: DragHandleProps | null;
 }) {
-  const [open, setOpen] = useState(repo.defaultOpen ?? false);
   const dragDownPos = useRef<{ x: number; y: number } | null>(null);
   // Pagination: 0 = 初始 limit 条, 1 = +50 条, 2 = 全部。
   const [page, setPage] = useState(0);
   const expanded = open || forceOpen;
-  const toggleOpen = useCallback(() => setOpen((o) => !o), []);
+  const toggleOpen = useCallback(() => onToggleOpen?.(), [onToggleOpen]);
   const hasHoverActions = Boolean(
     (repo.id && onNewSession) || dragHandleProps || (repo.id && onRemove),
   );
@@ -751,6 +782,8 @@ function WorkspaceSection({
   sections,
   searching,
   collapsedGroups,
+  isRepoExpanded,
+  onToggleRepo,
   activeThreadId,
   onThreadSelect,
   onThreadAction,
@@ -766,6 +799,9 @@ function WorkspaceSection({
   sections?: AiChatRepoSection[];
   searching: boolean;
   collapsedGroups: Set<string>;
+  /** Sidebar-owned so expansion survives restarts. */
+  isRepoExpanded: (repo: AiChatRepo) => boolean;
+  onToggleRepo: (repo: AiChatRepo) => void;
   activeThreadId?: string;
   onThreadSelect?: (id: string) => void;
   onThreadAction?: (id: string, action: ThreadAction) => void;
@@ -804,6 +840,8 @@ function WorkspaceSection({
         renderItem={(repo, drag) => (
           <RepoItem
             repo={repo}
+            open={isRepoExpanded(repo)}
+            onToggleOpen={() => onToggleRepo(repo)}
             forceOpen={searching}
             activeThreadId={activeThreadId}
             onThreadSelect={onThreadSelect}
@@ -921,6 +959,43 @@ export function AiChatSidebar({
   const normalizedQuery = query.trim().toLocaleLowerCase();
   // Group collapse: persisted so the tree reopens the way it was left.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
+  // Workspace expansion: likewise persisted. null = the user never toggled a
+  // workspace, so the built-in default (the first one open) still applies.
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string> | null>(
+    readExpandedWorkspaces,
+  );
+  const allRepos = useMemo(
+    () => (sections ? sections.flatMap((section) => section.repos) : repos),
+    [sections, repos],
+  );
+  const isRepoExpanded = useCallback(
+    (repo: AiChatRepo) =>
+      expandedWorkspaces && repo.id
+        ? expandedWorkspaces.has(repo.id)
+        : (repo.defaultOpen ?? false),
+    [expandedWorkspaces],
+  );
+  const toggleRepoExpanded = useCallback(
+    (repo: AiChatRepo) => {
+      const id = repo.id;
+      if (!id) return;
+      setExpandedWorkspaces((prev) => {
+        // First toggle materializes the current defaults, so workspaces the
+        // user never touched keep the state they were showing.
+        const base =
+          prev ??
+          new Set(
+            allRepos.flatMap((r) => (r.defaultOpen && r.id ? [r.id] : [])),
+          );
+        const next = new Set(base);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        writeExpandedWorkspaces(next);
+        return next;
+      });
+    },
+    [allRepos],
+  );
   // Workspace right-click menu: pointer-anchored, one open at a time. The
   // archived flag selects the 归档/取消归档 entry label.
   const [workspaceMenu, setWorkspaceMenu] = useState<WorkspaceMenuState | null>(null);
@@ -1081,6 +1156,8 @@ export function AiChatSidebar({
             sections={filteredSections}
             searching={Boolean(normalizedQuery)}
             collapsedGroups={collapsedGroups}
+            isRepoExpanded={isRepoExpanded}
+            onToggleRepo={toggleRepoExpanded}
             activeThreadId={activeThreadId}
             onThreadSelect={onThreadSelect}
             onThreadAction={onThreadAction}

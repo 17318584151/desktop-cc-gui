@@ -184,6 +184,30 @@ function MessageActions({ text }: { text: string }) {
   );
 }
 
+/** Copy affordance for a user bubble: icon only, no chrome, sitting at the
+ *  bubble's left edge. Mirrors the assistant row's hover-reveal so a settled
+ *  conversation stays clean, and stays reachable by keyboard. */
+function UserMessageCopy({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const { copied, copy } = useCopied();
+  if (!text.trim()) return null;
+  return (
+    <button
+      type="button"
+      aria-label={t("chat.copy")}
+      title={t("chat.copy")}
+      onClick={() => copy(text)}
+      className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-transparent text-foreground-icon-secondary opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground-icon-primary"
+    >
+      {copied ? (
+        <Check className="size-3.5 text-lime-500" aria-hidden />
+      ) : (
+        <Copy className="size-3.5" aria-hidden />
+      )}
+    </button>
+  );
+}
+
 const MessageRow = memo(function MessageRow({
   message,
   workspacePath,
@@ -204,11 +228,14 @@ const MessageRow = memo(function MessageRow({
   }
   if (message.role === "user") {
     return (
-      <div className="-mr-1.5 ml-auto flex w-fit max-w-[85%] flex-col rounded-xl bg-bubble-user px-3.5 py-2.5 text-left text-body-regular whitespace-pre-wrap break-words text-text-white">
-        {message.images && message.images.length > 0 && (
-          <MessageImages images={message.images} />
-        )}
-        {message.text}
+      <div className="group -mr-1.5 ml-auto flex w-fit max-w-[85%] items-center gap-1">
+        <UserMessageCopy text={message.text} />
+        <div className="flex flex-col rounded-xl bg-bubble-user px-3.5 py-2.5 text-left text-body-regular whitespace-pre-wrap break-words text-text-white">
+          {message.images && message.images.length > 0 && (
+            <MessageImages images={message.images} />
+          )}
+          {message.text}
+        </div>
       </div>
     );
   }
