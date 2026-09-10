@@ -389,6 +389,9 @@ async fn unlock_handler(
 
     let _ = db.web_device_touch(&device, &user_agent(&headers), now_ms());
     let _ = db.web_device_approve(&device, now_ms());
+    // One-time code: the moment a device pairs with it, a fresh one takes
+    // over, so the same key can never pair a second device.
+    let _ = crate::settings::rotate_web_auth_key(&ctx.app);
     notify_devices(&ctx.app);
     // Back to the app; the cookie is already in the browser.
     (

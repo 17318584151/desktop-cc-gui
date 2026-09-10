@@ -52,7 +52,7 @@ pub struct AppSettings {
     /// Per-app Codex Fast override (`service_tier`); None preserves ~/.codex.
     #[serde(default)]
     pub codex_service_tier: Option<String>,
-    /// Require a pairing key before the bridge serves a browser (设置 → 远程
+/// Require a pairing key before the bridge serves a browser (设置 → 远程
     /// 访问 → 启用授权). Off by default: on the LAN the token URL is enough.
     #[serde(default)]
     pub web_auth_enabled: bool,
@@ -114,6 +114,17 @@ fn default_composer_send_shortcut() -> String {
 
 fn default_language() -> String {
     "zh".to_string()
+}
+
+/// Random 8-character pairing key: no vowels and no look-alikes, so it can
+/// be read out loud and typed on a phone without ambiguity.
+pub fn generate_pair_key() -> String {
+    const ALPHABET: &[u8] = b"23456789BCDFGHJKLMNPQRSTVWXZ";
+    let mut out = String::with_capacity(8);
+    for _ in 0..8 {
+        out.push(ALPHABET[uuid::Uuid::new_v4().as_bytes()[0] as usize % ALPHABET.len()] as char);
+    }
+    out
 }
 
 impl Default for AppSettings {
@@ -402,6 +413,13 @@ pub fn get_app_settings() -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
+    persist_settings(&mut settings)
+}
+
+/// Validate + persist + apply. Shared by the UI command and internal writers
+/// (key rotation); on Err the settings were still written, and the message
+/// names what was rejected.
+pub fn persist_settings(settings: &mut AppSettings) -> Result<(), String> {
     if settings
         .omp_openai_service_tier
         .as_deref()
@@ -415,6 +433,11 @@ pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
         .is_some_and(|tier| !matches!(tier, "default" | "priority"))
     {
         return Err("Invalid Codex service tier".to_string());
+    }
+    if settings.web_auth_enabled && settings.web_auth_key.is_none() {
+        settings.web_auth_key = Some(generate_pair_key());
+    } else if !settings.web_auth_enabled {
+        settings.web_auth_key = None;
     }
     // Reject only the offending bin-override fields: the rest of the settings
     // still persist, and the error names what was dropped.
@@ -458,6 +481,21 @@ pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
     } else {
         Err(format!("rejected settings: {}", rejected.join("; ")))
     }
+}
+
+/// Rotate the pairing key (only when the switch is on) and tell every surface
+/// that settings moved. Used after a successful unlock and on a timer, so a
+/// code is good for exactly one device and never lingers.
+pub fn rotate_web_auth_key(app: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    let mut settings = read_settings()?;
+    if !settings.web_auth_enabled {
+        return Ok(());
+    }
+    settings.web_auth_key = Some(generate_pair_key());
+    persist_settings(&mut settings)?;
+    let _ = app.emit("settings://changed", ());
+    Ok(())
 }
 
 #[cfg(test)]

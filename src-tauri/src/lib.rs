@@ -146,6 +146,19 @@ pub fn run() {
                 }
             }
         })
+        .setup(|app| {
+            // Keep the pairing key from lingering: every ten minutes, when the
+            // switch is on, a fresh code is minted and broadcast.
+            let app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+                loop {
+                    interval.tick().await;
+                    let _ = crate::settings::rotate_web_auth_key(&app);
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // config
             config::get_cli_config,
