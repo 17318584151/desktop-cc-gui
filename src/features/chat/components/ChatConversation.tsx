@@ -23,12 +23,13 @@ import { recordPrompt } from "../prompt-history";
 import { MessageTimeline } from "./MessageTimeline";
 import { ConversationFooter } from "./ConversationFooter";
 import { useBranchSwitcher } from "./use-branch-switcher";
-import { useComposerImages } from "./use-composer-images";
+import { IMAGE_EXTENSIONS, useComposerImages } from "./use-composer-images";
 import { useEngineModels } from "./use-engine-models";
 import type { EngineInfo, Workspace } from "@/lib/ipc";
 import type { OmpServiceTier } from "@/lib/omp-service-tier";
 import { EmptyState } from "@/components/base/empty-state";
 import { parseUsage } from "../usage";
+import { pickFiles } from "@/lib/platform";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -92,8 +93,9 @@ function SessionErrorBanner({
 function useConversationMenus({
   engines,
   engineInfo,
-  supportsImages,
   activeEngine,
+  onPickFiles,
+  onPickSkills,
   modelsByEngine,
   displayModels,
   displayEfforts,
@@ -110,8 +112,10 @@ function useConversationMenus({
 }: {
   engines: EngineInfo[];
   engineInfo: EngineInfo | undefined;
-  supportsImages: boolean;
   activeEngine: string;
+  onPickFiles: () => void;
+  /** "Skills" add-menu row: opens the composer's `/` command picker. */
+  onPickSkills: () => void;
   modelsByEngine: Record<string, ModelOption[]>;
   displayModels: Record<string, string>;
   displayEfforts: Record<string, EffortLevel>;
@@ -158,14 +162,14 @@ function useConversationMenus({
     [setEffort],
   );
 
+
+  // Files & folders works for every engine: non-image picks become @mentions
+  // (plain text), and image picks on an engine without image input surface
+  // the unsupported banner instead of being silently dropped — so the menu
+  // stays enabled regardless of supportsImages.
   const addMenu = useMemo(
-    () => (
-      <AddMenu
-        disabled={!supportsImages}
-        disabledReason={t("chat.imagesUnsupported")}
-      />
-    ),
-    [supportsImages, t],
+    () => <AddMenu onPickFiles={onPickFiles} onPickSkills={onPickSkills} />,
+    [onPickFiles, onPickSkills],
   );
   const cliMenu = useMemo(
     () =>
@@ -324,6 +328,7 @@ export const ChatConversation = memo(function ChatConversation({
   // first supported one, which is what the chip displays.
   const permission = useChatStore((s) => s.permission);
   const setPermission = useChatStore((s) => s.setPermission);
+
   const {
     images,
     previews,
@@ -331,6 +336,7 @@ export const ChatConversation = memo(function ChatConversation({
     removeImage,
     clearImages,
     pasteImages,
+    importImageFiles,
     dismissImageError,
   } = useComposerImages();
   const {
@@ -434,14 +440,44 @@ export const ChatConversation = memo(function ChatConversation({
     (v: string) => setDraft(key, v),
     [key, setDraft],
   );
+
+  // "Add → Files and folders": native multi-picker. Images flow through the
+  // sandboxed image pipeline (chips); every other picked file becomes an
+  // @mention at the caret — same as the file tree's "+" — so its content
+  // stays live instead of a frozen sandbox copy.
+  const handleAddAttachments = useCallback(() => {
+    void (async () => {
+      const picked = await pickFiles(t("chat.addFilesFolders"));
+      if (picked.length === 0) return;
+      const imagePaths: string[] = [];
+      const mentionPaths: string[] = [];
+      for (const path of picked) {
+        const ext = path.split(".").pop()?.toLowerCase() ?? "";
+        (IMAGE_EXTENSIONS.includes(ext) ? imagePaths : mentionPaths).push(path);
+      }
+      if (mentionPaths.length > 0) {
+        const input = composerInputRef.current;
+        if (input) {
+          input.focus();
+          input.insertText(`${mentionPaths.map(mentionToken).join(" ")} `);
+        }
+      }
+      if (imagePaths.length > 0) importImageFiles(imagePaths, supportsImages);
+    })();
+  }, [t, composerInputRef, importImageFiles, supportsImages]);
   const handleStop = useCallback(() => void interrupt(), [interrupt]);
+  const handlePickSkills = useCallback(
+    () => composerInputRef.current?.openSlashPicker(),
+    [composerInputRef],
+  );
   const { addMenu, cliMenu, permissionMenu, noEnabledEngines } =
     useConversationMenus({
       engines,
       engineInfo,
-      supportsImages,
       activeEngine,
       modelsByEngine,
+      onPickFiles: handleAddAttachments,
+      onPickSkills: handlePickSkills,
       displayModels,
       displayEfforts,
       ompServiceTier,

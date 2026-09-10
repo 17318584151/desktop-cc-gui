@@ -18,7 +18,7 @@
  * After every write `notifyCliConfigChanged()` re-probes the chat model
  * catalogs — the CLIs filter available models by stored credentials.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { ConfirmDialog } from "@/components/dialogs";
@@ -40,7 +40,15 @@ import { launchPiFamilyLogin } from "./piFamilyLogin";
 import { PiFamilyOauthSection } from "./PiFamilyOauthSection";
 import { notifyCliConfigChanged } from "./providers";
 
-export function PiFamilyAuthSection({ engine }: { engine: "pi" | "omp" }) {
+export function PiFamilyAuthSection({
+  engine,
+  openCustomEditorSignal,
+}: {
+  engine: "pi" | "omp";
+  /** Bump to open the 自定义供应商 editor from the 官方配置 row's 编辑
+   *  entry (pi/omp official files are never cc-gui-managed, so no gate). */
+  openCustomEditorSignal?: number;
+}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [snapshot, setSnapshot] = useState<PiFamilyAuthListResult | null>(null);
@@ -193,6 +201,21 @@ export function PiFamilyAuthSection({ engine }: { engine: "pi" | "omp" }) {
     setModelsError(null);
     setModelsEditorOpen(true);
   }, [modelsEditorOpen, modelsConfig]);
+
+  // The 官方配置 row's 编辑 entry bumps this signal to open the models
+  // editor. The consumed-signal ref keeps modelsConfig refreshes from
+  // re-firing it while the signal value stays set.
+  const consumedSignal = useRef(openCustomEditorSignal ?? 0);
+  useEffect(() => {
+    const signal = openCustomEditorSignal ?? 0;
+    if (signal === consumedSignal.current) return;
+    consumedSignal.current = signal;
+    const existing = modelsConfig?.text ?? "";
+    setModelsDraft(existing.trim() ? existing : (modelsConfig?.template ?? ""));
+    setModelsError(null);
+    setModelsEditorOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCustomEditorSignal]);
 
   const handleModelsSave = useCallback(async () => {
     setModelsSaving(true);
