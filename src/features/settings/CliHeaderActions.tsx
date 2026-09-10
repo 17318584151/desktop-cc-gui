@@ -8,6 +8,8 @@ import { Button } from "@/components/base/buttons/button";
 import { openExternal } from "@/lib/platform";
 import { cx } from "@/utils/cx";
 import { ENGINE_DOCS_URLS, type EngineId } from "./providers";
+import { CliUpdateDialog } from "./CliUpdateDialog";
+import { useCliUpdateFlow } from "./useCliUpdateFlow";
 import { useCliVersionStatus } from "./useCliVersionStatus";
 
 /**
@@ -24,7 +26,8 @@ import { useCliVersionStatus } from "./useCliVersionStatus";
  */
 export function CliHeaderActions({ engine }: { engine: EngineId }) {
   const { t } = useTranslation();
-  const { status, loading, error, updating, refresh, update } = useCliVersionStatus(engine);
+  const { status, loading, error, updating, refresh} = useCliVersionStatus(engine);
+  const updateFlow = useCliUpdateFlow(engine);
 
   const installed = status?.installed === true;
   const localVersion = status?.localVersion ?? null;
@@ -95,7 +98,7 @@ export function CliHeaderActions({ engine }: { engine: EngineId }) {
               "disabled:cursor-not-allowed disabled:text-button-primary-disabled-foreground",
             )}
             disabled={updating || loading}
-            onClick={() => void update()}
+            onClick={() => void updateFlow.begin()}
           >
             {updating ? null : installed ? (
               <ArrowUp className="size-3.5" aria-hidden />
@@ -110,6 +113,7 @@ export function CliHeaderActions({ engine }: { engine: EngineId }) {
           </button>
         ) : null}
       </span>
+      <CliUpdateDialog engine={engine} flow={updateFlow} />
     </div>
   );
 }

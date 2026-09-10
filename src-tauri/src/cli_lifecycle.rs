@@ -8,21 +8,28 @@
 //! processes, so polling would keep the machine awake for nothing.
 
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt};
+use tauri::State;
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use crate::engine::{command_for_binary, resolve};
+use crate::event_sink::{BroadcastEmit, EventSink, CLI_UPDATE_PROGRESS_EVENT};
+use crate::AppState;
 
 const CLI_VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 const NPM_VIEW_TIMEOUT: Duration = Duration::from_secs(15);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(420);
 /// Bytes of installer output quoted back in a failure error.
 const ERROR_TAIL_CAP: usize = 2048;
+/// Chars per streamed output line; minified progress-bar lines would
+/// otherwise flood the IPC channel in one event.
+const PROGRESS_LINE_CAP: usize = 1000;
 
 /// npm-distributed engines → registry package. Grok CLI ships via its own
 /// installer script (no npm distribution), so it gets a local-version probe
@@ -57,6 +64,34 @@ pub struct CliVersionStatus {
 pub struct UpdateResult {
     pub ok: bool,
     pub version: Option<String>,
+}
+/// What the one-click install dialog shows before the user confirms:
+/// the exact command plus a copy-paste fallback for manual runs.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliUpdatePlan {
+    pub engine: String,
+    /// "install" | "update"
+    pub action: &'static str,
+    /// "npm" | "native" | "none"
+    pub kind: &'static str,
+    pub command: Vec<String>,
+    pub manual_command: String,
+    pub can_run: bool,
+    pub blockers: Vec<String>,
+    pub platform: &'static str,
+}
+
+fn platform_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    }
 }
 
 /// Claude Code is distributed both as an npm package and as a native
@@ -168,17 +203,60 @@ pub async fn cli_version_status(engine: String) -> Result<CliVersionStatus, Stri
     })
 }
 
+/// Execution plan for the confirm dialog: same argv the run uses, so the
+/// preview can never drift from what actually executes.
 #[tauri::command]
-pub async fn cli_update(engine: String) -> Result<UpdateResult, String> {
+pub async fn cli_update_plan(engine: String) -> Result<CliUpdatePlan, String> {
     let engine = checked_engine(&engine)?;
     let settings = crate::settings::read_settings().unwrap_or_default();
     let bin = crate::engine::engine_bin(&settings, &engine);
+    let installed = probe_local_version(&bin).await.installed;
+    let kind = update_kind(&engine, &bin);
+    let (command, blockers) = match kind {
+        Some("npm") => {
+            let package = npm_package(&engine).expect("npm kind implies package");
+            let (program, args) = npm_install_argv(package);
+            (std::iter::once(program).chain(args).collect(), Vec::new())
+        }
+        Some("native") => {
+            let (program, args) = claude_native_argv();
+            (
+                std::iter::once(program.to_string())
+                    .chain(args.iter().map(|a| a.to_string()))
+                    .collect(),
+                Vec::new(),
+            )
+        }
+        _ => (Vec::new(), vec![format!("{engine} 不支持一键安装/更新。")]),
+    };
+    Ok(CliUpdatePlan {
+        action: if installed { "update" } else { "install" },
+        kind: kind.unwrap_or("none"),
+        can_run: blockers.is_empty(),
+        manual_command: command.join(" "),
+        command,
+        blockers,
+        engine,
+        platform: platform_name(),
+    })
+}
+
+#[tauri::command]
+pub async fn cli_update(
+    engine: String,
+    run_id: String,
+    state: State<'_, AppState>,
+) -> Result<UpdateResult, String> {
+    let engine = checked_engine(&engine)?;
+    let settings = crate::settings::read_settings().unwrap_or_default();
+    let bin = crate::engine::engine_bin(&settings, &engine);
+    let reporter = ProgressReporter::new(state.emitters.clone(), run_id, engine.clone());
     match update_kind(&engine, &bin) {
         Some("npm") => {
             let package = npm_package(&engine).expect("npm kind implies package");
-            run_npm_install(package).await?;
+            run_npm_install(package, &reporter).await?;
         }
-        Some("native") => run_claude_native_install().await?,
+        Some("native") => run_claude_native_install(&reporter).await?,
         _ => return Err(format!("{engine} 不支持一键安装/更新。")),
     }
     // Fresh local version after the install.
@@ -189,19 +267,49 @@ pub async fn cli_update(engine: String) -> Result<UpdateResult, String> {
     })
 }
 
-async fn run_npm_install(package: &str) -> Result<(), String> {
+/// npm global install argv, shared by the plan preview and the run so the
+/// dialog always shows exactly what will execute.
+fn npm_install_argv(package: &str) -> (String, Vec<String>) {
     let npm = resolve::resolve_launchable_cli_binary("npm");
+    let args = vec![
+        "install".to_string(),
+        "-g".to_string(),
+        "--maxsockets=1".to_string(),
+        "--fetch-retries=5".to_string(),
+        "--no-audit".to_string(),
+        "--no-fund".to_string(),
+        format!("{package}@latest"),
+    ];
+    (npm, args)
+}
+
+/// Claude native-channel argv (official install script; handles both fresh
+/// installs and in-place updates).
+fn claude_native_argv() -> (&'static str, Vec<&'static str>) {
+    if cfg!(target_os = "windows") {
+        (
+            "powershell",
+            vec![
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://claude.ai/install.ps1 | iex",
+            ],
+        )
+    } else {
+        (
+            "bash",
+            vec!["-lc", "curl -fsSL https://claude.ai/install.sh | bash"],
+        )
+    }
+}
+
+async fn run_npm_install(package: &str, reporter: &ProgressReporter) -> Result<(), String> {
+    let (npm, args) = npm_install_argv(package);
     let mut command = command_for_binary(&npm);
-    command.args([
-        "install",
-        "-g",
-        "--maxsockets=1",
-        "--fetch-retries=5",
-        "--no-audit",
-        "--no-fund",
-        &format!("{package}@latest"),
-    ]);
-    let output = run_capture(&mut command, INSTALL_TIMEOUT)
+    command.args(&args);
+    let output = run_streaming(&mut command, INSTALL_TIMEOUT, reporter)
         .await
         .map_err(|e| format!("无法运行 npm（{npm}）：{e}"))?;
     if output.timed_out {
@@ -224,23 +332,11 @@ async fn run_npm_install(package: &str) -> Result<(), String> {
 
 /// Claude native channel: the official install script handles both fresh
 /// installs and in-place updates.
-async fn run_claude_native_install() -> Result<(), String> {
-    let mut command = if cfg!(target_os = "windows") {
-        let mut c = Command::new("powershell");
-        c.args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            "irm https://claude.ai/install.ps1 | iex",
-        ]);
-        c
-    } else {
-        let mut c = Command::new("bash");
-        c.args(["-lc", "curl -fsSL https://claude.ai/install.sh | bash"]);
-        c
-    };
-    let output = run_capture(&mut command, INSTALL_TIMEOUT)
+async fn run_claude_native_install(reporter: &ProgressReporter) -> Result<(), String> {
+    let (program, args) = claude_native_argv();
+    let mut command = Command::new(program);
+    command.args(args);
+    let output = run_streaming(&mut command, INSTALL_TIMEOUT, reporter)
         .await
         .map_err(|e| format!("无法运行官方安装脚本：{e}"))?;
     if output.timed_out {
@@ -259,6 +355,44 @@ async fn run_claude_native_install() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+// ==================== Progress streaming ====================
+
+/// Per-run reporter: streams installer output lines to the frontend as
+/// batched `cli://update-progress` events (32ms/64KB, same as terminal
+/// output), so the dialog renders the install as it happens. The `run_id`
+/// scopes events to one confirmed run; the frontend ignores anything else.
+#[derive(Clone)]
+struct ProgressReporter {
+    sink: Arc<EventSink>,
+    run_id: Arc<str>,
+    engine: Arc<str>,
+}
+
+impl ProgressReporter {
+    fn new(emitters: Arc<BroadcastEmit>, run_id: String, engine: String) -> Self {
+        Self {
+            sink: EventSink::with_name(emitters, CLI_UPDATE_PROGRESS_EVENT),
+            run_id: run_id.into(),
+            engine: engine.into(),
+        }
+    }
+
+    /// phase: "started" | "stdout" | "stderr" | "finished"
+    fn emit(&self, phase: &'static str, line: Option<String>, exit_ok: Option<bool>) {
+        self.sink.push(serde_json::json!({
+            "runId": self.run_id,
+            "engine": self.engine,
+            "phase": phase,
+            "line": line,
+            "exitOk": exit_ok,
+        }));
+    }
+
+    fn flush(&self) {
+        self.sink.flush();
+    }
 }
 
 // ==================== Shared process helpers ====================
@@ -322,6 +456,92 @@ fn spawn_read_all<R: AsyncRead + Unpin + Send + 'static>(pipe: R) -> JoinHandle<
         String::from_utf8_lossy(&bytes).into_owned()
     })
 }
+/// Like `run_capture`, but each output line is also pushed to the progress
+/// reporter as it arrives. The full text is still captured for failure
+/// tails, so error reporting is unchanged.
+async fn run_streaming(
+    command: &mut Command,
+    limit: Duration,
+    reporter: &ProgressReporter,
+) -> Result<ProcOutput, String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(windows)]
+    crate::engine::hide_console(command);
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let pid = child.id();
+    reporter.emit("started", None, None);
+    let stdout = child
+        .stdout
+        .take()
+        .map(|pipe| spawn_read_lines(pipe, reporter.clone(), "stdout"));
+    let stderr = child
+        .stderr
+        .take()
+        .map(|pipe| spawn_read_lines(pipe, reporter.clone(), "stderr"));
+    let (status, timed_out) = match timeout(limit, child.wait()).await {
+        Ok(Ok(status)) => (Some(status), false),
+        Ok(Err(e)) => return Err(e.to_string()),
+        Err(_) => {
+            if let Some(pid) = pid {
+                crate::engine::kill_process_group(pid);
+            }
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            (None, true)
+        }
+    };
+    let stdout = match stdout {
+        Some(handle) => handle.await.unwrap_or_default(),
+        None => String::new(),
+    };
+    let stderr = match stderr {
+        Some(handle) => handle.await.unwrap_or_default(),
+        None => String::new(),
+    };
+    reporter.emit("finished", None, status.map(|s| s.success()));
+    reporter.flush();
+    Ok(ProcOutput {
+        status,
+        stdout,
+        stderr,
+        timed_out,
+    })
+}
+
+/// Read a stream line by line, reporting each line (clipped to
+/// PROGRESS_LINE_CAP chars) while capturing the full text. Invalid UTF-8
+/// ends the read early — captured-so-far is still returned.
+fn spawn_read_lines<R: AsyncRead + Unpin + Send + 'static>(
+    pipe: R,
+    reporter: ProgressReporter,
+    stream: &'static str,
+) -> JoinHandle<String> {
+    tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(pipe).lines();
+        let mut captured = String::new();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    captured.push_str(&line);
+                    captured.push('\n');
+                    let clipped = if line.chars().count() > PROGRESS_LINE_CAP {
+                        line.chars().take(PROGRESS_LINE_CAP).collect()
+                    } else {
+                        line
+                    };
+                    reporter.emit(stream, Some(clipped), None);
+                }
+                Ok(None) | Err(_) => break,
+            }
+        }
+        captured
+    })
+}
 
 /// Last `cap` bytes of `text`, on a char boundary.
 fn tail(text: &str, cap: usize) -> &str {
@@ -372,6 +592,68 @@ mod tests {
             assert!(npm_package(engine).is_some(), "{engine} missing package");
         }
         assert_eq!(npm_package("grok"), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_streaming_emits_scoped_lines_then_finished() {
+        use std::sync::Mutex as StdMutex;
+
+        use crate::event_sink::Emit;
+
+        struct Collector {
+            raws: StdMutex<Vec<String>>,
+        }
+        impl Emit for Collector {
+            fn emit_json(&self, _name: &str, raw_json: &str) {
+                self.raws
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(raw_json.to_string());
+            }
+        }
+
+        let collector = Arc::new(Collector {
+            raws: StdMutex::new(Vec::new()),
+        });
+        let emitters = crate::event_sink::BroadcastEmit::new(collector.clone());
+        let reporter =
+            ProgressReporter::new(emitters, "run-test".to_string(), "kimi".to_string());
+        let mut command = Command::new("bash");
+        command.args(["-c", "printf 'out1\\nout2\\n'; printf 'err1\\n' >&2"]);
+
+        let output = run_streaming(&mut command, Duration::from_secs(10), &reporter)
+            .await
+            .unwrap();
+
+        // Captured text is unchanged from run_capture semantics.
+        assert_eq!(output.stdout, "out1\nout2\n");
+        assert_eq!(output.stderr, "err1\n");
+        assert_eq!(output.status.map(|s| s.success()), Some(true));
+        assert!(!output.timed_out);
+
+        // The sink flushes events as JSON arrays; flatten them.
+        let events: Vec<serde_json::Value> = collector
+            .raws
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .flat_map(|raw| serde_json::from_str::<Vec<serde_json::Value>>(raw).unwrap())
+            .collect();
+        // Every event carries the run scope.
+        assert!(events.iter().all(|e| e["runId"] == "run-test"));
+        assert_eq!(events.first().unwrap()["phase"], "started");
+        assert_eq!(events.last().unwrap()["phase"], "finished");
+        assert_eq!(events.last().unwrap()["exitOk"], true);
+        let lines: Vec<(&str, &str)> = events
+            .iter()
+            .filter(|e| e["phase"] == "stdout" || e["phase"] == "stderr")
+            .map(|e| (e["phase"].as_str().unwrap(), e["line"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![("stdout", "out1"), ("stdout", "out2"), ("stderr", "err1")]
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ipc, type AppSettings, type DshHostStatus } from "@/lib/ipc";
 import { pickFile } from "@/lib/platform";
+import { useCliUpdateFlow, type CliUpdateFlow } from "./useCliUpdateFlow";
 import { useCliVersionStatus } from "./useCliVersionStatus";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -40,6 +41,7 @@ export interface DshHostSectionState {
   start: () => Promise<void>;
   stop: () => Promise<void>;
   updateCli: () => Promise<void>;
+  updateFlow: CliUpdateFlow;
   save: (patch: Partial<AppSettings>) => Promise<void>;
   commitHost: () => void;
   commitPort: () => void;
@@ -230,19 +232,18 @@ export function useDshHost(): DshHostSectionState {
   const probe = useDshHostProbe();
   const { settings, saveError, save } = useDshSettings();
   // Install CTA for the "CLI missing" host state; the version display lives
-  // in the CLI 管理 page header, both backed by the same session store.
-  const { updating, update } = useCliVersionStatus("dsh");
+  // in the CLI 管理 page header, both backed by the same session store. The
+  // CTA opens the confirm-plan dialog and streams the install log there.
+  const { updating } = useCliVersionStatus("dsh");
   const [cliError, setCliError] = useState<string | null>(null);
-  const updateCli = useCallback(async () => {
-    try {
-      await update();
+  const updateFlow = useCliUpdateFlow("dsh", {
+    onSuccess: () => {
       setCliError(null);
-    } catch (e) {
-      setCliError(String(e));
-      return;
-    }
-    await probe.refreshStatus();
-  }, [update, probe.refreshStatus]);
+      void probe.refreshStatus();
+    },
+    onError: setCliError,
+  });
+  const updateCli = updateFlow.begin;
   const view = deriveDshView(probe.status, settings, probe.probeError, {
     checking: probe.checking,
     starting: probe.starting,
@@ -257,5 +258,5 @@ export function useDshHost(): DshHostSectionState {
     refreshStatus: probe.refreshStatus,
   });
 
-  return { t, ...probe, cliError, updating, updateCli, saveError, save, ...view, ...form };
+  return { t, ...probe, cliError, updating, updateCli, updateFlow, saveError, save, ...view, ...form };
 }

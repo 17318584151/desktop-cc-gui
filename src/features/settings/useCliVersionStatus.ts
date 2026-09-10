@@ -62,11 +62,12 @@ function refresh(engine: EngineId): Promise<void> {
   return task.finally(() => patch(engine, { inflight: null }));
 }
 
-/** Install/update an engine, then re-probe so badges reflect the result. */
-async function update(engine: EngineId): Promise<void> {
+/** Install/update an engine, then re-probe so badges reflect the result.
+ *  `runId` scopes the streamed `cli://update-progress` events to this run. */
+async function update(engine: EngineId, runId: string): Promise<void> {
   patch(engine, { updating: true, error: null });
   try {
-    await ipc.cliUpdate(engine);
+    await ipc.cliUpdate(engine, runId);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     patch(engine, { updating: false, error: message });
@@ -83,7 +84,7 @@ export interface CliVersionStatusView {
   error: string | null;
   updating: boolean;
   refresh: () => void;
-  update: () => Promise<void>;
+  update: (runId: string) => Promise<void>;
 }
 
 export function useCliVersionStatus(engine: EngineId): CliVersionStatusView {
@@ -97,6 +98,6 @@ export function useCliVersionStatus(engine: EngineId): CliVersionStatusView {
     error: entry.error,
     updating: entry.updating,
     refresh: useCallback(() => void refresh(engine), [engine]),
-    update: useCallback(() => update(engine), [engine]),
+    update: useCallback((runId: string) => update(engine, runId), [engine]),
   };
 }

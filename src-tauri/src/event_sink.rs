@@ -14,6 +14,7 @@ pub const ENGINE_EVENT_NAME: &str = "engine://event";
 pub const SESSIONS_CHANGED_EVENT: &str = "sessions://changed";
 pub const SCAN_PROGRESS_EVENT: &str = "scan://progress";
 pub const INSTALL_PROGRESS_EVENT: &str = "plugin://install-progress";
+pub const CLI_UPDATE_PROGRESS_EVENT: &str = "cli://update-progress";
 
 /// History-scan progress for the status bar; `finished` marks the last event
 /// of a scan run.

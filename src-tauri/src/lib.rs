@@ -252,6 +252,7 @@ pub fn run() {
             dsh_host::dsh_host_start,
             dsh_host::dsh_host_stop,
             cli_lifecycle::cli_version_status,
+            cli_lifecycle::cli_update_plan,
             cli_lifecycle::cli_update,
             // baidu tongji (Linux-native transport; rejected elsewhere)
             baidu_tongji::load_baidu_tongji_script,

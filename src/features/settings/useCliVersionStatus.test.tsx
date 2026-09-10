@@ -121,9 +121,9 @@ describe("useCliVersionStatus session store", () => {
     const probesBefore = mocks.cliVersionStatus.mock.calls.length;
 
     await act(async () => {
-      await latest.update();
+      await latest.update("run-1");
     });
-    expect(mocks.cliUpdate).toHaveBeenCalledWith("kimi");
+    expect(mocks.cliUpdate).toHaveBeenCalledWith("kimi", "run-1");
     expect(mocks.cliVersionStatus.mock.calls.length).toBe(probesBefore + 1);
     expect(latest.updating).toBe(false);
     expect(latest.error).toBeNull();
@@ -136,7 +136,7 @@ describe("useCliVersionStatus session store", () => {
     const probesBefore = mocks.cliVersionStatus.mock.calls.length;
 
     await act(async () => {
-      await expect(latest.update()).rejects.toThrow("npm boom");
+      await expect(latest.update("run-2")).rejects.toThrow("npm boom");
     });
     expect(latest.error).toBe("npm boom");
     expect(latest.updating).toBe(false);

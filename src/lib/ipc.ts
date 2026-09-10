@@ -330,6 +330,20 @@ export interface CliVersionStatus {
   /** How install/update acts: "npm" | "native"; null = no action (grok). */
   updateKind: "npm" | "native" | null;
 }
+/** Confirm-dialog execution plan for a one-click install/update. */
+export interface CliUpdatePlan {
+  engine: string;
+  action: "install" | "update";
+  /** "npm" | "native" | "none". */
+  kind: string;
+  /** Exact argv that will execute. */
+  command: string[];
+  /** Copy-paste fallback for a manual run. */
+  manualCommand: string;
+  canRun: boolean;
+  blockers: string[];
+  platform: string;
+}
 
 // ==================== Typed invoke wrappers ====================
 // Shared in-flight/cached app-settings promise: startup, the settings page
@@ -590,6 +604,8 @@ export const ipc = {
   // managed-CLI lifecycle (CLI 管理 header: version probe + install/update)
   cliVersionStatus: (engine: string) =>
     invoke<CliVersionStatus>("cli_version_status", { engine }),
-  cliUpdate: (engine: string) =>
-    invoke<{ ok: boolean; version: string | null }>("cli_update", { engine }),
+  cliUpdatePlan: (engine: string) =>
+    invoke<CliUpdatePlan>("cli_update_plan", { engine }),
+  cliUpdate: (engine: string, runId: string) =>
+    invoke<{ ok: boolean; version: string | null }>("cli_update", { engine, runId }),
 };

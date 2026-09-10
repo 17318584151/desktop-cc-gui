@@ -65,3 +65,20 @@ export function listenTerminalOutput(
 ): Promise<UnlistenFn> {
   return listen<TerminalOutputPayload[]>("terminal://output", (e) => cb(e.payload));
 }
+export interface CliUpdateProgress {
+  /** Scopes events to one confirmed run; other runs are ignored. */
+  runId: string;
+  engine: string;
+  phase: "started" | "stdout" | "stderr" | "finished";
+  /** Output line for stdout/stderr phases (clipped to 1000 chars). */
+  line: string | null;
+  /** Exit status on the finished phase. */
+  exitOk: boolean | null;
+}
+
+/** One-click CLI install/update progress: batched arrays, 32ms / 64KB. */
+export function listenCliUpdateProgress(
+  cb: (events: CliUpdateProgress[]) => void,
+): Promise<UnlistenFn> {
+  return listen<CliUpdateProgress[]>("cli://update-progress", (e) => cb(e.payload));
+}
