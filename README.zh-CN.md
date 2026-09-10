@@ -2,7 +2,7 @@
 
 # CC GUI 客户端
 
-<img width="120" alt="ccgui 图标" src="./icon.png" />
+<img width="120" alt="ccgui 图标" src="./public/app-icon.png" />
 
 [English](./README.md) · **简体中文**
 
@@ -12,63 +12,53 @@
 
 </div>
 
-**ccgui** 是一个开源的 **multi-engine AI 编程桌面客户端**。简单说：它把 Claude Code、Codex CLI、Gemini CLI、OpenCode、**DeepSeek Harness（DSH）** 等命令行 AI 编程 runtime，放进一个统一的图形界面里。
+**ccgui** 是一个开源的 **multi-engine AI 编程桌面客户端**。简单说：它把 **Claude Code**、**Codex CLI**、**Kimi CLI**、**Grok CLI**、**Pi CLI**、**OMP CLI**、**DeepSeek Harness（DSH）** 等命令行 AI 编程 runtime，放进一个统一的图形界面里。
 
-它**不是** DSH Web UI 外壳，也**不是** `dsh-plugin`。DSH 只是多个 native engine 之一；DSH 的模型与 API key 仍在 DSH host / Web UI 中配置，ccgui 负责统一的聊天、文件、Git 与项目智能界面。
+你不用再盯着黑乎乎的终端敲命令——打开 ccgui，选好项目，像聊天一样让 AI 帮你写代码、改 Bug、提交 Git。流式输出、思考过程和工具调用都会实时展示；token 用量在引擎上报时同步呈现。
 
-你不用再盯着黑乎乎的终端敲命令——打开 ccgui，选好项目，像聊天一样让 AI 帮你写代码、改 Bug、提交 Git。文件与工具活动会实时展示；token 用量和预估费用则取决于当前 runtime 是否提供相应 metadata。
-
-应用基于 **Tauri 2 + React 19 + TypeScript + Rust** 开发，支持 macOS / Windows / Linux。应用设置、工作区索引和客户端状态默认在本机持久化；发送给 AI provider、Browser Agent、邮件服务或可选 remote/web service 的内容，遵循对应配置与第三方服务边界。
-
-<img src="./docs/banner.png" alt="ccgui 界面截图" width="800" />
+应用基于 **Tauri 2 + React 18 + TypeScript + Rust** 开发，支持 macOS / Windows / Linux。设置与状态默认在本机持久化；发送给 AI provider 的内容，遵循你为对应 CLI 配置的渠道边界。
 
 ---
 
 ## ccgui 能干什么
 
-### 一个客户端，装下多个 AI 引擎
+### 一个客户端，装下七个 AI 引擎
 
-- 当前注册 **Claude Code**、**Codex CLI**、**Gemini CLI**、**OpenCode**、**DeepSeek Harness（DSH）** 等 runtime adapter。Gemini 默认启用，OpenCode 可选启用；二者的退役仍是 active migration，并未交付。
-- Claude 与 Codex 支持多套 managed provider profile；Gemini、OpenCode 保留各自 runtime 提供的 provider/config 能力。
-- **DeepSeek Harness** 作为 native engine（`dsh-host-rpc`）：ccgui 可复用本机已运行的 `dsh web`，也可按设置自动拉起，并在同一 GUI 里创建 / 恢复 / 分叉 DSH 会话。模型与凭证仍归 DSH——本仓库**不能**通过 `dsh plugin add` 安装。
-- 会话不丢：关掉应用再打开，历史对话还在；会话断了可以接着聊，还能看每个会话用了多少上下文。
+- 注册了 **Claude Code**、**Codex CLI**、**Kimi CLI**、**Grok CLI**、**Pi CLI**、**OMP CLI**、**DeepSeek Harness** 的 runtime adapter——在输入框里按会话切换引擎。
+- **供应商渠道**直接写入各 CLI 自己的原生配置文件（不搞平行的凭证存储），内置 GLM、Kimi、DeepSeek、MiniMax、MiMo、百炼、LongCat、OpenCode Go、OpenRouter 等精选预设；Claude / Codex / Grok 的渠道还能从 [CC Switch](https://github.com/farion1231/cc-switch) 一键导入。
+- Pi 系引擎（Pi / OMP）支持在设置页内完成 API Key 与 OAuth 登录。
+- 支持**按标签页覆盖模型与 effort 档位**：同一个窗口里，不同标签页可以跑不同模型或思考强度。
+- 会话历史不丢：历史扫描器直接读取各 CLI 的原生会话文件并保持标题同步，关掉应用再打开还能接着聊。
 
 ### 聊天框是为写代码设计的
 
-- 输入框支持 `@` 引用项目文件、斜杠命令、粘贴图片、上传附件。
-- 支持展示的文件修改、shell/tool call 与读取操作会以实时卡片呈现。
-- Claude/Codex 会话在当前 runtime capability 支持时提供**回退**（rewind）和**分叉**（fork）。
-- 懒得打字可以用**语音输入**；提示词写不好，内置的**提示词增强**帮你润色。
-- 排队提问：AI 正在干活时，你可以把下一个问题先排上队。
+- 流式回复按动画帧逐步展示，配合语法高亮缓存——长输出也保持流畅，不会每来一个 token 就重排一遍 markdown。
+- **思考流**与正文合并展示，结束后自动折叠，需要时一键展开看全文。
+- 工具调用以实时行呈现，参数与结果可展开查看，内置美化的 **Git Diff**、**Bash** 查看器和每次运行的完成元数据。
+- **运行状态条**实时镜像引擎进度（含 todo 快照），消息**锚点导航栏**让你在用户消息之间快速跳转。
+- 粘贴图片自动转附件；`@` 文件引用基于感知 `.gitignore` 的项目文件索引；回复中的文件链接能处理 URL 编码路径，并支持右键菜单。
+- 权限被拒时可以在对话内直接为引擎追加授权目录；输入框还内置提示词历史与可选的 **Codex Fast** 开关。
 
 ### 不只是聊天，是一整套开发面板
 
-- **文件树**：浏览、预览、复制、粘贴、重命名，直接拖文件进对话。
-- **内置终端**：完整的终端体验，不用切出去开别的窗口。
-- **Git 面板**：暂存、提交（AI 帮你写提交信息）、分支、worktree、看 diff、翻提交历史。
-- **全局搜索**：文件、会话、历史消息、技能、命令，一个搜索框全搞定。
+- **文件树**：虚拟化渲染，带 Git 状态颜色、嵌套仓库徽标、右键菜单与拖拽——内置 CodeMirror 编辑器面板，支持 Markdown 预览。
+- **内置终端**：真正的 PTY 终端坞（xterm + WebGL），不用切窗口。
+- **Git 面板**：暂存、提交、分支搜索、看 diff、翻提交历史。
+- **命令面板**：一个键盘驱动的入口，调起应用内所有命令。
 
-### 任务多了也不乱
+### 插件系统
 
-- **Plan 面板**：AI 的执行计划一步步列出来，做到哪了一眼看清。
-- **意图画布**：在画布上拖节点做规划，想清楚再动手。
+- 自研 **插件 SDK**（`@ccgui/plugin-sdk`），配套应用内运行时、管理界面与信任边界。
+- **声明式插件**无需编写前端代码即可新增设置区块与配置驱动的界面；应用内建界面（包括设置页本身）也走同一套扩展点注册。
+- 完整开发指南见 [docs/plugin-development-guide.zh-CN.md](./docs/plugin-development-guide.zh-CN.md)。
 
-### 项目智能（ccgui 比较独特的部分）
+### 设置、网络与更新
 
-- **项目知识地图**：AI 扫描你的项目，生成可交互的结构图谱——文件关系、API 接口、模块依赖一目了然，还支持增量更新。
-- **项目记忆**：保存关键约定和经验；发送时可用 `@@` 手动选择，或显式开启 Memory Reference 检索后注入当前 turn。
-- **上下文账本**：展示已选择或继承的 context source，以及可用的 token/character estimate、freshness 和 attribution confidence。
-- **用量统计**：runtime 提供 metadata 时展示 token、cache 与预估费用。月度 budget threshold 只是本地视觉提醒，不会中断 runtime。
-
-### 扩展和个性化
-
-- 可发现和管理已配置的 MCP server 与 Skills，并启用 bundled curated skills；MCP / Plugin marketplace 入口当前仍是 **Coming Soon**。
-- **浏览器 Agent**：打开策略允许的 HTTP(S) 页面并采集有界的只读 context；snapshot/navigation 会因平台降级，element/form action 尚不支持。
-- **21 个 VS Code 衍生主题**，并支持用户消息颜色、窗口透明度、UI/code 字体调整。
-- WebView UI 已提供 **10 种语言**。native desktop menu 当前只本地化中文与英文，其他 locale 回退中文；composer、panel、navigation 与 file action 快捷键可配置。
-- macOS / Windows / Linux 全平台，支持应用内**自动更新**。
-
-每个版本的详细更新内容，见 [CHANGELOG.md](./CHANGELOG.md)。
+- **代理设置**：为应用与引擎流量配置代理。
+- **局域网网页访问**：通过 token 鉴权的 WebSocket 桥接，把界面共享给局域网内其他设备，设置页提供二维码入口。
+- **工作区管理**：给项目分组，快速切换。
+- 应用内**自动更新**（Tauri updater，对接 GitHub Releases）、版本记录对话框、macOS 签名构建。
+- 中英双语界面。
 
 ---
 
@@ -78,21 +68,17 @@
 
 | 平台 | 安装包 |
 | --- | --- |
-| macOS（M 系列芯片） | `aarch64.dmg` |
-| macOS（Intel 芯片） | `x64.dmg` |
+| macOS（M 系列芯片，已签名） | `aarch64.dmg` |
 | Windows | `.exe`（NSIS）安装包 |
 | Linux | `.AppImage` |
 
-装好之后，在设置里配置好你的 AI 引擎（比如 Claude Code 的 API Key 或本地 CLI），添加一个项目文件夹，就可以开始用了。
+装好之后，打开设置，为要用的 CLI 配置供应商渠道（或直接登录），添加一个项目文件夹，就可以开始聊了。
 
 ### 使用 DeepSeek Harness（DSH）
 
-1. 在本机安装 DSH CLI（例如 `npm i -g @deepseek-ai/dsh`，或使用你已有的本地 binary）。
-2. 在 **DSH Web UI / host** 中配置模型与 API key——不要把它当成 ccgui 里的另一套 vendor preset。
-3. 打开 ccgui 设置 → CLI 校验 / 引擎设置，选择 **DeepSeek Harness**，按需填写 host/port，并可开启本地 host 自动拉起。
-4. 在输入框引擎选择器中选中 **DeepSeek Harness**，开始对话。
-
-ccgui 是面向 DSH 生态的 multi-engine 桌面客户端，不是插件包，也不是官方 Web UI 的换皮壳。
+1. 在本机安装 DSH CLI，并在 DSH 自身中配置模型与 API key——不要把它当成 ccgui 里的另一套 vendor preset。
+2. 在设置 → DeepSeek Harness 中，ccgui 可以接管本机已运行的 `dsh web` host，也可以自动拉起一个。
+3. 在输入框引擎选择器中选中 **DeepSeek Harness**。对话走 DSH 的 headless profile；模型与凭证仍归 DSH 管理。
 
 ---
 
@@ -102,17 +88,15 @@ ccgui 是面向 DSH 生态的 multi-engine 桌面客户端，不是插件包，�
 
 ### 第一步：准备环境
 
-需要装这三样东西：
-
 | 工具 | 版本要求 | 用来干嘛 |
 | --- | --- | --- |
-| [Node.js](https://nodejs.org/) | 20 或更新 | 跑前端 |
+| [Node.js](https://nodejs.org/) | 20 或更新 | 跑前端工具链 |
+| [pnpm](https://pnpm.io/) | 10（`packageManager` 字段已锁定） | 安装依赖 |
 | [Rust](https://rustup.rs/) | stable（用 rustup 装） | 编译后端 |
-| [CMake](https://cmake.org/download/) | 较新版本即可 | 编译部分依赖 |
 
 不同系统还需要一点额外准备（这是 Tauri 框架的要求，详见 [Tauri 官方环境文档](https://v2.tauri.app/start/prerequisites/)）：
 
-- **macOS**：装 Xcode 命令行工具：`xcode-select --install`；CMake 用 `brew install cmake`。
+- **macOS**：装 Xcode 命令行工具：`xcode-select --install`。
 - **Windows**：装 Microsoft C++ Build Tools 和 WebView2（Win 11 自带 WebView2）。
 - **Linux**：装 `webkit2gtk` 等系统库，照着 Tauri 官方文档抄命令就行。
 
@@ -121,38 +105,30 @@ ccgui 是面向 DSH 生态的 multi-engine 桌面客户端，不是插件包，�
 ```bash
 git clone https://github.com/zhukunpenglinyutong/desktop-cc-gui.git
 cd desktop-cc-gui
-npm install
+pnpm install
 ```
 
-注意：**必须用 npm**。用 pnpm 或 yarn 会被脚本拦下来（为了保证所有人的依赖版本一致）。
+注意：这是一个 **pnpm workspace**（插件 SDK 在 `packages/plugin-sdk`），锁定文件是 `pnpm-lock.yaml`。
 
 ### 第三步：启动
 
 ```bash
-# macOS / Linux
-npm run tauri:dev
-
-# Windows
-npm run tauri:dev:win
+pnpm dev
 ```
 
 几个小提示：
 
 - **第一次启动要编译整个 Rust 后端，可能等上几分钟**，去倒杯水。之后是增量编译，很快。
-- 启动前会自动做环境自检（doctor）。报错了就单独跑 `npm run doctor`，它会告诉你缺什么、怎么装。
-- 前端跑在 `1420` 端口。端口被占了不用管，脚本会自动清理。
-- 只想改界面、不碰 Rust？跑 `npm run dev` 可以在浏览器里调前端（但调不了和后端相关的功能）。
+- 前端开发服务器跑在 `1420` 端口。
 
 ### 打安装包
 
 ```bash
-npm run build:mac-arm64      # macOS Apple Silicon
-npm run build:mac-x64        # macOS Intel
-npm run build:mac-universal  # macOS 通用包
-npm run build:win-x64        # Windows x64
-npm run build:linux-x64      # Linux x64
-npm run build:linux-arm64    # Linux arm64
+pnpm build:mac                 # macOS 签名构建（scripts/build-signed-macos.sh）
+pnpm build:mac:skip-notarize   # 同上，但跳过公证
 ```
+
+Windows 与 Linux 安装包由 `.github/workflows/` 下的 CI 工作流产出（`release.yml`、`build-windows-artifact.yml`）。
 
 ---
 
@@ -162,9 +138,9 @@ npm run build:linux-arm64    # Linux arm64
 
 | 部分 | 用的什么 |
 | --- | --- |
-| 界面 | React 19 + TypeScript + Tailwind CSS 4 |
-| 构建 | Vite 7 |
-| 桌面框架 | Tauri 2（后端是 Rust） |
+| 界面 | React 18 + TypeScript + Tailwind CSS 4 + zustand |
+| 构建 | Vite 6 |
+| 桌面框架 | Tauri 2（Rust 后端：git2、rusqlite、portable-pty、axum） |
 | 测试 | Vitest（前端）+ cargo test（Rust） |
 
 ### 目录结构
@@ -172,47 +148,41 @@ npm run build:linux-arm64    # Linux arm64
 ```text
 desktop-cc-gui/
 ├── src/                    # 前端代码
-│   ├── features/           # ★ 功能模块（50+ 个），按功能分目录，开发主战场
-│   │   ├── composer/       #    输入框
-│   │   ├── messages/       #    消息流
-│   │   ├── git/            #    Git 面板
-│   │   ├── project-map/    #    项目知识地图
-│   │   └── ...             #    每个目录就是一个独立功能
-│   ├── components/         # 跨功能共享的通用 UI 组件
-│   ├── services/           # 业务逻辑；services/tauri/* 放前端↔Rust wrapper
-│   ├── i18n/               # WebView UI 的 10 套 locale bundle
+│   ├── features/           # ★ 功能模块：chat / files / git / terminal /
+│   │                       #   settings / plugins / commands / update / open-app
+│   ├── components/         # 跨功能共享的通用 UI 组件（含引擎品牌图标）
+│   ├── i18n/               # zh + en 两套 locale bundle
 │   ├── styles/             # 全局样式
 │   └── lib/ utils/         # 工具函数
 ├── src-tauri/              # Rust 后端
-│   └── src/                # 按模块分目录：engine / codex / git / terminal / files ...
-├── scripts/                # 构建、检查、诊断脚本
-└── docs/                   # 架构文档、性能基线
+│   └── src/                # engine/（每个 CLI 一个模块）、history/、plugins/、
+│                           # git.rs、terminal.rs、web.rs（局域网桥接）……
+├── packages/plugin-sdk/    # @ccgui/plugin-sdk —— 插件开发套件
+├── tests/                  # 前端集成向测试（Vitest）
+├── scripts/                # 构建与打包脚本
+└── docs/                   # 插件开发指南、引擎模式说明
 ```
 
 ### 改一个功能的套路
 
 1. **只改界面**：找到 `src/features/` 下对应的模块改就行。新组件直接放在该模块自己的目录里。
-2. **需要后端配合**：在 `src-tauri/src/` 对应模块里加 `#[tauri::command]`，注册到 `src-tauri/src/command_registry.rs`，再把前端 wrapper 放进 `src/services/tauri/<domain>.ts`；需要统一出口时由 `src/services/tauri.ts` re-export。
-3. **改了界面文字**：必须走 i18n，并同步 `src/i18n/locales/` 下所有已发布 locale bundle；界面文字不允许硬编码。
+2. **需要后端配合**：在 `src-tauri/src/` 对应模块里加 `#[tauri::command]`，前端通过 Tauri API 调用。
+3. **改了界面文字**：必须走 i18n，并同步两套 bundle（`src/i18n/zh.ts`、`src/i18n/en.ts`）；界面文字不允许硬编码。
 
 ### 常用命令
 
 | 命令 | 干嘛的 |
 | --- | --- |
-| `npm run tauri:dev` | 启动完整应用（开发模式） |
-| `npm run dev` | 只启动前端（浏览器调试） |
-| `npm run lint` | 代码风格检查 |
-| `npm run typecheck` | TypeScript 类型检查 |
-| `npm run test` | 跑单元测试 |
-| `npm run test:watch` | 监听模式跑测试（边改边测） |
-| `npm run test:integration` | 跑包含重型集成测试的完整测试 |
+| `pnpm dev` | 启动完整应用（Tauri 开发模式） |
+| `pnpm build` | TypeScript 类型检查 + 前端生产构建 |
+| `pnpm test` | 跑 Vitest 测试套件 |
+| `pnpm preview` | 预览生产构建的前端 |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 跑 Rust 测试 |
 
 ### 测试怎么写
 
-- 测试文件和源码放一起，命名 `xxx.test.ts` / `xxx.test.tsx`。
-- 框架是 [Vitest](https://vitest.dev/)，写法和 Jest 基本一样。
-- 重型集成测试命名为 `xxx.integration.test.tsx`，默认不跑，`npm run test:integration` 才跑。
-- Rust 端测试照常写在模块里，从仓库根目录用 `cargo test --manifest-path src-tauri/Cargo.toml` 跑。
+- 前端测试用 [Vitest](https://vitest.dev/)——源码旁边放 `xxx.test.ts(x)` 同位测试，较重的套件统一放 `tests/` 目录。
+- Rust 端测试照常写在模块里，用 `cargo test --manifest-path src-tauri/Cargo.toml` 跑。
 
 ---
 
@@ -220,15 +190,12 @@ desktop-cc-gui/
 
 规矩不多，但都有原因，提交前过一遍：
 
-1. **提交前跑三件套**：`npm run lint && npm run typecheck && npm run test`，全绿再提。当前 CI 只在 push 到 `main` 或手动 dispatch 时运行，因此提 PR 前必须先准备本地验证证据。
-2. **界面文字必须走 i18n**：所有用户可见文案都从 `src/i18n/` 取，并保持全部已发布 locale bundle 同步，不许硬编码。
+1. **提 PR 前跑通本地验证**：`pnpm build`（类型检查）和 `pnpm test` 全绿；动了 Rust 再加 `cargo test`。
+2. **界面文字必须走 i18n**：所有用户可见文案都从 `src/i18n/` 取，并保持两套 locale bundle 同步，不许硬编码。
 3. **组件就近放**：新组件先放自己 feature 的目录里；确实被多个功能复用了，再挪到 `src/components/`。
-4. **CSS 类名加功能前缀**：比如 Git 历史面板的样式类用 `git-history-*` 开头，避免不同功能的样式互相打架。
-5. **遵守大文件策略**：新文件使用 800 行 ratchet，既有区域使用 2600/2800/3000 行 hard threshold。`npm run check:large-files` 只出报告，阻断检查用 `npm run check:large-files:gate`。
-6. **TypeScript 严格模式**：别用 `any` 糊弄，类型写明白。
-7. **Rust 端写文件走统一封装**：用 `storage.rs` 提供的原子写入，不要直接 `write`，避免写一半断电把用户数据写坏。
-8. **加 Tauri command 前先搜一搜**：`command_registry` 里可能已经有现成的，别重复造。
-9. **永远不要提交密钥**：API Key、token 这类东西绝对不能进代码和提交记录。
+4. **TypeScript 严格模式**：别用 `any` 糊弄，类型写明白。
+5. **优先通过插件 SDK 扩展**：新增设置区块与界面，尽量走内建界面同款扩展点注册。
+6. **永远不要提交密钥**：API Key、token 这类东西绝对不能进代码和提交记录。
 
 ### Commit 信息怎么写
 
@@ -244,12 +211,12 @@ desktop-cc-gui/
 | `chore` | 杂活（版本号、依赖、脚本） |
 | `perf` / `style` / `ci` | 性能优化 / 格式 / CI |
 
-真实例子：
+仓库里的真实例子：
 
 ```text
-feat(composer): 支持粘贴图片自动转附件
-fix(git): 修复 diff 面板滚动位置丢失
-docs(readme): 校准项目文档索引
+feat(chat): 支持工具调用参数与结果展开、Git Diff/Bash美化及完成元数据展示
+fix(codex): Windows .cmd shim 下多行提示词只送达第一行
+perf(chat): reveal streamed text per frame without reparsing markdown
 ```
 
 不要在 commit 信息里写 emoji，也不要带 AI 生成署名。
@@ -260,22 +227,15 @@ docs(readme): 校准项目文档索引
 
 1. **Fork** 本仓库，clone 到本地。
 2. 从 `main` 切一个分支，名字按 `feat/xxx`、`fix/xxx` 这种风格起。
-3. 改代码，本地把三件套跑绿（`lint` / `typecheck` / `test`）。
+3. 改代码，本地把 `pnpm build` + `pnpm test` 跑绿。
 4. 提 PR 到本仓库的 **`main` 分支**。标题按 commit 格式写，描述里说清楚：改了什么、为什么改、怎么验证的。
-5. 在 PR 中附上本地验证证据。当前 CI 只在 push 到 `main` 或手动 dispatch 时运行，不要假设打开 PR 会自动触发；审查指出的中高风险问题必须修复后才能合并。
 
 不知道从哪下手？看看 [Issues](https://github.com/zhukunpenglinyutong/desktop-cc-gui/issues)，挑一个感兴趣的开干。发现 Bug 或有新点子，也欢迎直接开 Issue 聊。
 
 ### 想深入了解项目内部？
 
-- [AGENTS.md](AGENTS.md) — 仓库规则总入口（用 AI 辅助开发本项目时必读）。
-- [项目文档总索引](docs/README.md) — 架构、性能、计划、研究和时间快照，并明确各自事实边界。
-- [dev-guidelines/](dev-guidelines/) — 前端、后端的详细实现规范。
-- [OpenSpec 工作区](openspec/README.md) — behavior specs、工作流与治理总览。
-- [主 capability spec 索引](openspec/specs/README.md) — 已同步到主线的全部 behavior contract。
-- [活跃提案索引](openspec/changes/README.md) — 当前变更、进度、归档门禁与 artifact 链接。
-- [归档提案索引](openspec/changes/archive/README.md) — 按月份和归档日期分组的完整历史提案。
-- [OpenSpec 审计 / evidence 索引](openspec/docs/README.md) — durable reference 与时间快照的分层入口。
+- [插件开发指南](docs/plugin-development-guide.zh-CN.md) — SDK、manifest、权限模型与信任边界。
+- [docs/omp-fast-mode.md](docs/omp-fast-mode.md) — Codex Fast / OMP 快速模式说明。
 
 ---
 
@@ -288,11 +248,6 @@ docs(readme): 校准项目文档索引
 ## 友链
 
 感谢 [LINUX DO](https://linux.do/) 用户的支持与反馈。
-
-### DeepSeek Harness 生态
-
-- 公开插件发现页：[github.com/topics/dsh-plugin](https://github.com/topics/dsh-plugin)（仅插件——本客户端**不是** `dsh-plugin`）。
-- 精选生态列表：[Awesome DeepSeek Harness](https://github.com/0xsline/awesome-deepseek-harness) — 建议归入 **IDE & Clients**，定位 multi-engine desktop client。
 
 ---
 
@@ -308,9 +263,7 @@ docs(readme): 校准项目文档索引
 
 ## 参考项目说明
 
-1.本项目最初源自 [CodexMonitor](https://github.com/Dimillian/CodexMonitor)
-2.拓展-使用统计 模块 主要采用 [TokenTracker](https://github.com/mm7894215/TokenTracker) 源码
-
+本项目最初源自 [CodexMonitor](https://github.com/Dimillian/CodexMonitor)。自 v1.0.0 起代码库已从零完全重写，不再包含 CodexMonitor 的任何代码，但仍感谢其最初带来的启发。
 
 ---
 
