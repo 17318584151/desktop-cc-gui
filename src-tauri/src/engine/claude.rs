@@ -13,6 +13,9 @@ pub struct ClaudeEngine {
     /// tool_use id -> tool name, recorded at `content_block_start` so a
     /// later `tool_result` (user message) can be attributed to its call.
     tool_names: Mutex<HashMap<String, String>>,
+    /// Post-compaction remaining context tokens from `compact_boundary` event,
+    /// used to report accurate post-compaction usage instead of the turn's billing usage.
+    compact_post_tokens: Mutex<Option<i64>>,
 }
 
 struct PendingTool {
@@ -25,6 +28,7 @@ impl ClaudeEngine {
         Self {
             pending_tool_json: Mutex::new(HashMap::new()),
             tool_names: Mutex::new(HashMap::new()),
+            compact_post_tokens: Mutex::new(None),
         }
     }
 }
@@ -126,8 +130,24 @@ impl Engine for ClaudeEngine {
                 // api_retry precedes minutes of silent exponential backoff
                 // (10 attempts, 30s+ delays); surface it as a non-terminal
                 // warning so the UI shows progress instead of a dead spinner.
-                if value.get("subtype").and_then(Value::as_str) == Some("api_retry") {
+                let subtype = value.get("subtype").and_then(Value::as_str);
+                if subtype == Some("api_retry") {
                     out.push(EngineEvent::Warn(format_api_retry(&value)));
+                } else if subtype == Some("compact_boundary") {
+                    if let Some(post_tokens) = value
+                        .get("compactMetadata")
+                        .and_then(|m| m.get("postTokens").or_else(|| m.get("post_tokens")))
+                        .and_then(Value::as_i64)
+                    {
+                        if let Ok(mut lock) = self.compact_post_tokens.lock() {
+                            *lock = Some(post_tokens);
+                        }
+                        let usage_obj = serde_json::json!({
+                            "input_tokens": post_tokens,
+                            "total_tokens": post_tokens,
+                        });
+                        out.push(EngineEvent::Usage(usage_obj));
+                    }
                 }
             }
             "stream_event" => {
@@ -229,7 +249,25 @@ impl Engine for ClaudeEngine {
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .map(str::to_string);
-                let usage = value.get("usage").cloned();
+                let raw_usage = value.get("usage").cloned();
+                let usage = if let Ok(mut lock) = self.compact_post_tokens.lock() {
+                    if let Some(post_tokens) = lock.take() {
+                        let mut post_usage = serde_json::json!({
+                            "input_tokens": post_tokens,
+                            "total_tokens": post_tokens,
+                        });
+                        if let Some(mcw) = raw_usage.as_ref().and_then(|u| u.get("model_context_window")) {
+                            if let Some(obj) = post_usage.as_object_mut() {
+                                obj.insert("model_context_window".to_string(), mcw.clone());
+                            }
+                        }
+                        Some(post_usage)
+                    } else {
+                        raw_usage
+                    }
+                } else {
+                    raw_usage
+                };
                 let is_error = value
                     .get("is_error")
                     .and_then(Value::as_bool)
