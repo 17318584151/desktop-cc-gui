@@ -6,9 +6,11 @@ import { OPEN_TABS_KEY } from "./store/persistence";
 vi.mock("@/lib/ipc", () => ({
   ipc: {
     sendMessage: vi.fn(async () => ({ runId: "run-1", sessionId: null })),
+    interruptSession: vi.fn(async () => true),
     loadSessionPage: vi.fn(async () => ({ messages: [], nextBefore: null })),
     getAppSettings: vi.fn(async () => ({})),
     updateAppSettings: vi.fn(async () => {}),
+    rescanSessions: vi.fn(async () => {}),
   },
 }));
 vi.mock("@/lib/events", () => ({
@@ -21,6 +23,7 @@ const WS = "/tmp/ws";
 function resetStore() {
   localStorage.clear();
   vi.mocked(ipc.sendMessage).mockClear();
+  vi.mocked(ipc.interruptSession).mockClear();
   useChatStore.setState({
     openTabs: [],
     active: null,
@@ -111,5 +114,40 @@ describe("per-session composer selection", () => {
     expect(s.active?.engine).toBe("claude");
     expect(s.active?.model).toBeUndefined();
     expect(s.active?.effort).toBeUndefined();
+  });
+});
+
+describe("stop during an in-flight send", () => {
+  beforeEach(resetStore);
+
+  it("kills the run when Stop is pressed before sendMessage resolves", async () => {
+    // Existing resumed session: the tab already carries a native id, so the
+    // send takes the run-routing branch (no id adoption).
+    const tab = { engine: "omp", sessionId: "sess-42", workspacePath: WS };
+    useChatStore.setState({ activeEngine: "omp", openTabs: [tab], active: tab });
+
+    // Hold sendMessage open so Stop lands while the invoke is still pending —
+    // exactly the window where runRouting has no entry for this run yet.
+    const { promise, resolve: resolveSend } = Promise.withResolvers<{
+      runId: string;
+      sessionId: string | null;
+    }>();
+    vi.mocked(ipc.sendMessage).mockReturnValueOnce(promise);
+
+    const sending = useChatStore.getState().send("hello", []);
+    // User presses Stop mid-flight.
+    await useChatStore.getState().interrupt();
+    expect(useChatStore.getState().bySession["omp/sess-42"]?.interrupted).toBe(
+      true,
+    );
+    // The stop could not have killed anything yet: no run id existed.
+    expect(vi.mocked(ipc.interruptSession)).not.toHaveBeenCalledWith("run-9");
+
+    resolveSend({ runId: "run-9", sessionId: null });
+    await sending;
+
+    // sendPrompt saw the interrupted flag once the ids materialized and
+    // killed the run that Stop could not reach.
+    expect(vi.mocked(ipc.interruptSession)).toHaveBeenCalledWith("run-9");
   });
 });

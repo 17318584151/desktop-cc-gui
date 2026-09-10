@@ -484,6 +484,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
       } else {
         runRouting.set(result.runId, key);
       }
+      // Stop pressed while this send was still in flight: interrupt() ran
+      // before runRouting had this run (it is written above, after the
+      // await), so it settled the UI and killed nothing — the CLI kept
+      // streaming. Now that the ids exist, kill it. A native id adopted
+      // just above moved the state to a new key, so read the key the turn
+      // actually lives under.
+      const liveKey =
+        result.sessionId && !tab.sessionId
+          ? sessionKey(engine, result.sessionId, tab.workspacePath)
+          : key;
+      if (get().bySession[liveKey]?.interrupted) {
+        runRouting.delete(result.runId);
+        await Promise.all([
+          ipc.interruptSession(result.runId).catch(() => false),
+          ...(result.sessionId
+            ? [ipc.interruptSession(result.sessionId).catch(() => false)]
+            : []),
+        ]);
+      }
     } catch (error) {
       set((s) => ({
         streamingByKey: setStreamingFlag(s.streamingByKey, key, false),

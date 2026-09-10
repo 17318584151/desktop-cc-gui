@@ -408,8 +408,9 @@ pub(crate) fn push_session_id(value: &Value, key: &str, out: &mut Vec<EngineEven
 
 /// Live engine child processes keyed by session key (native session id once
 /// known, otherwise the run id). Drop kills everything synchronously. Clone
-/// is a refcount bump: the registry keys the same child under BOTH keys
-/// after `rekey` so either route can interrupt it.
+/// is a refcount bump: the registry keys the same child under BOTH keys —
+/// its run id and its session id (preassigned at spawn, or adopted via
+/// `rekey`) — so either route can interrupt it.
 #[derive(Clone)]
 pub struct ChildEntry {
     pub child: Arc<TokioMutex<Child>>,
@@ -437,6 +438,18 @@ impl ProcessRegistry {
 
     fn len(&self) -> usize {
         self.0.lock().map(|map| map.len()).unwrap_or(0)
+    }
+
+    /// Register a second lookup key for the same live child without
+    /// replacing an unrelated concurrent run. A resumed session is keyed
+    /// here at spawn: its id is preassigned, so the engine's own session
+    /// announcement equals it and never triggers a rekey.
+    fn insert_alias(&self, key: String, entry: ChildEntry) {
+        if let Ok(mut map) = self.0.lock() {
+            if !map.contains_key(&key) {
+                map.insert(key, entry);
+            }
+        }
     }
 
     /// Copy the entry to the native-session key once known. The run_id key
@@ -501,11 +514,14 @@ impl ProcessRegistry {
     pub fn kill(&self, key: &str) -> bool {
         let mut entries: Vec<(u32, Arc<TokioMutex<tokio::process::Child>>, Arc<std::sync::atomic::AtomicBool>)> =
             match self.0.lock() {
-                Ok(map) => map
-                    .iter()
-                    .filter(|(k, e)| *k == key || e.run_id == key)
-                    .map(|(_, e)| (e.pid, Arc::clone(&e.child), Arc::clone(&e.killed)))
-                    .collect(),
+                Ok(map) => {
+                    let mut seen_pids = std::collections::HashSet::new();
+                    map.iter()
+                        .filter(|(k, e)| *k == key || e.run_id == key)
+                        .filter(|(_, e)| seen_pids.insert(e.pid))
+                        .map(|(_, e)| (e.pid, Arc::clone(&e.child), Arc::clone(&e.killed)))
+                        .collect()
+                }
                 Err(_) => Vec::new(),
             };
         // The registry keys one child under BOTH its session id and run id
@@ -571,11 +587,15 @@ pub(crate) fn kill_process_group(pid: u32) {
 }
 
 /// Windows has no process groups; npm CLIs spawn as `cmd /c x.cmd`, so the
-/// real CLI is a grandchild. Killing only the direct child (start_kill)
-/// orphans node — the turn keeps streaming and burning API calls, and its
-/// inherited stdout pipe never reaches EOF. `taskkill /T /F` takes the
-/// whole tree down. Fire-and-forget: the callers' start_kill still handles
-/// the direct child synchronously.
+/// real CLI (node/bun) is a grandchild. `taskkill /T /F` walks the tree from
+/// the wrapper down.
+///
+/// This MUST complete before the caller terminates the direct child. It used
+/// to be fire-and-forget, and `kill_entry`'s `start_kill()` killed the
+/// wrapper first: by the time taskkill ran, its target pid was gone, the
+/// tree walk found nothing, and the real CLI kept streaming as an orphan
+/// (dangling ppid) long after the user pressed Stop. Waiting here is what
+/// makes the stop button actually stop the engine.
 #[cfg(not(unix))]
 pub(crate) fn kill_process_group(pid: u32) {
     let mut command = std::process::Command::new("taskkill");
@@ -590,7 +610,23 @@ pub(crate) fn kill_process_group(pid: u32) {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let _ = command.spawn();
+    let Ok(mut killer) = command.spawn() else {
+        return;
+    };
+    // Bounded: app teardown sweeps every child, and a wedged taskkill must
+    // not hang the exit path. Normal completion is tens of milliseconds.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match killer.try_wait() {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
 }
 
 // ==================== stderr redaction ====================
@@ -950,7 +986,14 @@ impl RunContext {
                 // the killed flag makes the runner's EOF path a no-op
                 // (saw_error already settled the turn) and the registry
                 // entry drains as usual.
-                self.registry.kill(&self.run_id);
+                //
+                // Off the reader thread: the kill blocks on the Windows tree
+                // walk, and stalling this task would also stall the stdout
+                // drain it owns. saw_error already settled the turn, so
+                // nothing here depends on the kill completing first.
+                let registry = Arc::clone(&self.registry);
+                let run_id = self.run_id.clone();
+                tokio::task::spawn_blocking(move || registry.kill(&run_id));
             }
             EngineEvent::Warn(error) => {
                 // Not terminal: no saw_error — EOF settle still decides the
@@ -1197,6 +1240,17 @@ pub async fn send_message(
             killed: Arc::clone(&killed),
         },
     );
+    if let Some(session_id) = launch.built.preassigned_session_id.as_deref() {
+        state.processes.insert_alias(
+            session_id.to_string(),
+            ChildEntry {
+                child: Arc::clone(&child),
+                pid,
+                run_id: run_id.clone(),
+                killed: Arc::clone(&killed),
+            },
+        );
+    }
 
     let stderr_buf = spawn_stderr_capture(stderr);
     let ctx = RunContext {
@@ -1220,9 +1274,18 @@ pub async fn send_message(
     })
 }
 
+/// Async + spawn_blocking: the kill waits for the Windows tree walk to
+/// finish (see `kill_process_group`), and a synchronous command would hold
+/// that wait on the UI thread — the app would visibly hitch on every Stop.
 #[tauri::command]
-pub fn interrupt_session(state: tauri::State<'_, crate::AppState>, session_id: String) -> bool {
-    state.processes.kill(&session_id)
+pub async fn interrupt_session(
+    state: tauri::State<'_, crate::AppState>,
+    session_id: String,
+) -> Result<bool, String> {
+    let registry = Arc::clone(&state.processes);
+    tauri::async_runtime::spawn_blocking(move || registry.kill(&session_id))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -1515,6 +1578,111 @@ mod registry_tests {
         registry.remove_if_pid("session-9", pid);
         registry.remove_if_pid("run-1", pid);
         assert_eq!(registry.len(), 0);
+    }
+
+    /// A resumed session is registered under its preassigned id at spawn:
+    /// the engine's own announcement of that same id equals it, so
+    /// adopt_session_id early-returns and never rekeys. Without the alias a
+    /// by-session-id Stop found nothing.
+    #[tokio::test]
+    async fn preassigned_session_alias_routes_stop_before_session_event() {
+        let child = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+            .args(if cfg!(windows) { ["/c", "ping -n 30 127.0.0.1"] } else { ["-c", "sleep 30"] })
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep child");
+        let pid = child.id().unwrap_or(0);
+        let entry = ChildEntry {
+            child: Arc::new(TokioMutex::new(child)),
+            pid,
+            run_id: "run-preassigned".to_string(),
+            killed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let registry = ProcessRegistry::default();
+        registry.insert("run-preassigned".to_string(), entry.clone());
+        registry.insert_alias("session-preassigned".to_string(), entry);
+
+        assert!(registry.kill("session-preassigned"));
+        registry.remove_if_pid("session-preassigned", pid);
+        registry.remove_if_pid("run-preassigned", pid);
+        assert_eq!(registry.len(), 0);
+    }
+
+    /// The real Windows stop bug: engine CLIs run as `cmd /c shim.cmd` and
+    /// the model process is a grandchild. Killing must take the WHOLE tree
+    /// down synchronously — a fire-and-forget taskkill that raced the direct
+    /// child's start_kill orphaned the grandchild (it kept streaming and
+    /// burning tokens after the user pressed Stop). This spawns a cmd whose
+    /// grandchild outlives it and asserts the grandchild is gone after kill.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn kill_reaps_windows_grandchild_process_tree() {
+        use std::collections::HashSet;
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+        let child = tokio::process::Command::new("cmd")
+            .args(["/c", "ping -n 60 127.0.0.1 > NUL"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn cmd child");
+        let cmd_pid = child.id().unwrap_or(0);
+
+        // Let cmd spawn its ping grandchild.
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let grandchildren: Vec<Pid> = sys
+            .processes()
+            .iter()
+            .filter(|(_, p)| p.parent() == Some(Pid::from_u32(cmd_pid)))
+            .map(|(pid, _)| *pid)
+            .collect();
+        assert!(
+            !grandchildren.is_empty(),
+            "expected cmd to have spawned a ping grandchild"
+        );
+
+        let entry = ChildEntry {
+            child: Arc::new(TokioMutex::new(child)),
+            pid: cmd_pid,
+            run_id: "run-tree".to_string(),
+            killed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let registry = ProcessRegistry::default();
+        registry.insert("run-tree".to_string(), entry);
+        assert!(registry.kill("run-tree"));
+
+        // Poll: process teardown is observable only after the kernel reaps.
+        let targets: HashSet<Pid> = grandchildren
+            .iter()
+            .copied()
+            .chain(std::iter::once(Pid::from_u32(cmd_pid)))
+            .collect();
+        let mut alive = targets.clone();
+        for _ in 0..50 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            sys.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::nothing(),
+            );
+            alive.retain(|pid| sys.process(*pid).is_some());
+            if alive.is_empty() {
+                break;
+            }
+        }
+        assert!(
+            alive.is_empty(),
+            "stop left process-tree survivors alive: {alive:?}"
+        );
     }
 }
 #[cfg(test)]
