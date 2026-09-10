@@ -1,5 +1,6 @@
 pub mod baidu_tongji;
 pub mod cc_switch;
+pub mod cli_lifecycle;
 pub mod config;
 pub mod db;
 pub mod dsh_host;
@@ -17,6 +18,7 @@ pub mod proxy;
 pub mod provider_files;
 pub mod provider_models;
 pub mod settings;
+pub mod slash_commands;
 pub mod terminal;
 pub mod web;
 
@@ -206,6 +208,8 @@ pub fn run() {
             files::create_file,
             files::search_text,
             files::list_file_index,
+            // composer `/` slash-command picker
+            slash_commands::list_slash_commands,
             // On-demand directory grants (desktop-only — see grant_root).
             files::grant_scope,
             files::grant_root,
@@ -243,12 +247,12 @@ pub fn run() {
             web::web_access_start,
             web::web_access_stop,
             web::web_access_status,
-            // dsh host
+            // dsh host + managed-CLI lifecycle
             dsh_host::dsh_host_status,
             dsh_host::dsh_host_start,
             dsh_host::dsh_host_stop,
-            dsh_host::dsh_cli_version,
-            dsh_host::dsh_cli_update,
+            cli_lifecycle::cli_version_status,
+            cli_lifecycle::cli_update,
             // baidu tongji (Linux-native transport; rejected elsewhere)
             baidu_tongji::load_baidu_tongji_script,
             baidu_tongji::send_baidu_tongji_beacon,

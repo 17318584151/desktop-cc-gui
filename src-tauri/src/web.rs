@@ -819,6 +819,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
             let a: PathArgs = parse_args(&raw)?;
             ser(crate::files::list_file_index(app.state(), a.path).await)
         }
+        "list_slash_commands" => {
+            let a: PathArgs = parse_args(&raw)?;
+            ser(crate::slash_commands::list_slash_commands(app.state(), a.path).await)
+        }
         // NB: grant_scope/grant_root/revoke_granted_root are intentionally
         // absent — remote clients must not widen the filesystem boundary.
         // git

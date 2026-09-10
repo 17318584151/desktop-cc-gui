@@ -6,6 +6,7 @@ import type { ReactNode, KeyboardEvent, PointerEvent as ReactPointerEvent } from
 import type { LucideIcon } from "lucide-react";
 import { isWeb, startWindowDrag } from "@/lib/platform";
 import { cx } from "@/utils/cx";
+import { ContextMenu } from "@/components/context-menu";
 import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 
 // Overlay titlebar leaves the native traffic lights floating over the
@@ -41,6 +42,8 @@ interface SessionTabStripProps {
   activeKey: string | null;
   onSelect: (key: string) => void;
   onClose: (key: string) => void;
+  /** Tab right-click menu entry: close every tab. Omit to hide the menu. */
+  onCloseAll?: () => void;
   closeLabel: string;
   /** Drag-reorder: dragged tab key dropped before/after a target tab key. */
   onReorder?: (draggedKey: string, targetKey: string, before: boolean) => void;
@@ -66,6 +69,7 @@ export function SessionTabStrip({
   activeKey,
   onSelect,
   onClose,
+  onCloseAll,
   closeLabel,
   onReorder,
   actions,
@@ -88,6 +92,9 @@ export function SessionTabStrip({
   } | null>(null);
   // pointerup fires before click; swallow the click that ends a drag.
   const suppressClickRef = useRef(false);
+  // Tab right-click menu (a single "Close All" entry for now), anchored at
+  // the pointer like every other context menu in the app.
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   function handleTabPointerDown(tab: SessionTabItem) {
     return (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -235,6 +242,11 @@ export function SessionTabStrip({
             data-tab-key={tab.key}
             role="presentation"
             title={tab.title ?? tab.label}
+            onContextMenu={(e) => {
+              if (!onCloseAll) return;
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY });
+            }}
             className={cx(
               "group relative flex h-7 max-w-48 shrink-0 cursor-default items-center gap-1.5 rounded-lg px-2.5 text-body-medium transition-colors",
               dropTarget?.draggedKey === tab.key && "opacity-50",
@@ -347,6 +359,22 @@ export function SessionTabStrip({
         <div className="flex h-full shrink-0 items-center">
           {actions}
         </div>
+      )}
+      {menu && onCloseAll && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          ariaLabel={t("chat.closeAllTabs")}
+          entries={[
+            {
+              id: "close-all",
+              label: t("chat.closeAllTabs"),
+              icon: <X className="size-4" aria-hidden />,
+              onSelect: onCloseAll,
+            },
+          ]}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   );

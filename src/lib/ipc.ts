@@ -237,6 +237,17 @@ export interface FileIndexEntry {
   isDir: boolean;
 }
 
+/** A custom slash command from `.claude/commands` (`list_slash_commands`):
+ *  workspace commands shadow global ones of the same name. */
+export interface SlashCommandEntry {
+  /** Slash-less name; directory segments join with `:` ("aimax:plan"). */
+  name: string;
+  description?: string | null;
+  argumentHint?: string | null;
+  /** "workspace" (project `.claude/commands`) or "global" (CLI home). */
+  source: string;
+}
+
 export interface GitFileEntry {
   path: string;
   status: string;
@@ -306,12 +317,15 @@ export interface DshHostStatus {
   error: string | null;
 }
 
-/** Local dsh CLI version + npm registry latest (`dsh_cli_version`). */
-export interface DshCliVersion {
+/** Managed-CLI local version + npm registry latest (`cli_version_status`). */
+export interface CliVersionStatus {
+  engine: string;
   installed: boolean;
   localVersion: string | null;
   latestVersion: string | null;
   updateAvailable: boolean;
+  /** How install/update acts: "npm" | "native"; null = no action (grok). */
+  updateKind: "npm" | "native" | null;
 }
 
 // ==================== Typed invoke wrappers ====================
@@ -504,6 +518,10 @@ export const ipc = {
    * paths; backend caps at 20k entries). */
   listFileIndex: (path: string) =>
     withGrantRetry(() => invoke<FileIndexEntry[]>("list_file_index", { path })),
+  /** Custom slash commands for the composer `/` picker (workspace
+   *  `.claude/commands` + the CLI's global commands dir). */
+  listSlashCommands: (path: string) =>
+    withGrantRetry(() => invoke<SlashCommandEntry[]>("list_slash_commands", { path })),
   // granted directories (desktop-only commands; the settings list hides on web)
   listGrantedRoots: () => invoke<string[]>("list_granted_roots"),
   /** Directory a grant for `path` would cover (path itself when a dir, else
@@ -566,6 +584,9 @@ export const ipc = {
   dshHostStatus: () => invoke<DshHostStatus>("dsh_host_status"),
   dshHostStart: () => invoke<DshHostStatus>("dsh_host_start"),
   dshHostStop: () => invoke<{ ok: boolean }>("dsh_host_stop"),
-  dshCliVersion: () => invoke<DshCliVersion>("dsh_cli_version"),
-  dshCliUpdate: () => invoke<{ ok: boolean; version: string | null }>("dsh_cli_update"),
+  // managed-CLI lifecycle (CLI 管理 header: version probe + install/update)
+  cliVersionStatus: (engine: string) =>
+    invoke<CliVersionStatus>("cli_version_status", { engine }),
+  cliUpdate: (engine: string) =>
+    invoke<{ ok: boolean; version: string | null }>("cli_update", { engine }),
 };

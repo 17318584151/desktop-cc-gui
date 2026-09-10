@@ -60,6 +60,9 @@ export interface SettingsModalProps {
   groups: SettingsNavGroup[];
   titles: Record<string, string>;
   renderPage: (key: string) => ReactNode;
+  /** Optional per-page action cluster rendered next to the title (e.g. the
+   *  CLI 管理 docs/version/update controls). */
+  renderHeaderActions?: (key: string) => ReactNode;
 }
 
 export function SettingsModal({
@@ -70,6 +73,7 @@ export function SettingsModal({
   groups,
   titles,
   renderPage,
+  renderHeaderActions,
 }: SettingsModalProps) {
   const firstKey = groups[0]?.items[0]?.key ?? "general";
   /** Page the modal resets to on open. */
@@ -184,9 +188,12 @@ export function SettingsModal({
           {/* Content pane — fixed title row, scrollable page below */}
           <div className="flex min-w-0 min-h-0 flex-1 flex-col">
             <div className="flex shrink-0 items-center justify-between px-4 pt-4 pb-3 md:px-8 md:pt-8">
-              <h2 className="text-title-3-medium text-text-primary">
-                {titles[page] ?? page}
-              </h2>
+              <div className="flex min-w-0 items-center gap-3">
+                <h2 className="shrink-0 text-title-3-medium text-text-primary">
+                  {titles[page] ?? page}
+                </h2>
+                {renderHeaderActions?.(page)}
+              </div>
               <button
                 type="button"
                 aria-label={ariaLabel}

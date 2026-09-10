@@ -31,6 +31,7 @@ import { ComposerResizeHandle } from "@/components/application/ai-chat/composer-
 import { ComposerEditable } from "@/components/application/ai-chat/composer-editable";
 import { ComposerToolbar } from "@/components/application/ai-chat/composer-toolbar";
 import { useMentionPicker } from "@/components/application/ai-chat/use-mention-picker";
+import { useSlashPicker } from "@/components/application/ai-chat/use-slash-picker";
 import { useResizableComposer } from "@/components/application/ai-chat/use-resizable-composer";
 import {
   FILE_TAG_CLASS,
@@ -44,7 +45,10 @@ import {
   setCaretOffset,
 } from "@/components/application/ai-chat/file-tags";
 import { FileMentionMenu } from "@/components/application/ai-chat/file-mention-menu";
+import { SlashCommandMenu } from "@/components/application/ai-chat/slash-command-menu";
+import { findSlashTrigger } from "@/components/application/ai-chat/slash-commands";
 import { type MentionEntry } from "@/components/application/ai-chat/mention-files";
+import { type SlashCommandEntry } from "@/lib/ipc";
 import { joinPath } from "@/features/files/store";
 import {
   usePromptCompletion,
@@ -140,6 +144,17 @@ export function Composer({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const { mention, setMention, mentionMenuRef, updateMentionTrigger } =
     useMentionPicker({ editableRef, wrapperRef, workspacePath, value, lastEmittedRef });
+  // `/` command picker: same trigger-tracking model as the mention picker.
+  const { slash, setSlash, slashMenuRef, updateSlashTrigger } =
+    useSlashPicker({ editableRef, wrapperRef, workspacePath, value, lastEmittedRef });
+
+  // One detection pass per input, `/` first (desktop-cc-gui parity: a
+  // line-start slash owns the completion surface; `@` inside a slash query
+  // must not open the file picker on top of it).
+  const updateTriggers = useCallback(() => {
+    if (updateSlashTrigger()) setMention(null);
+    else updateMentionTrigger();
+  }, [updateSlashTrigger, updateMentionTrigger, setMention]);
 
   const emitChange = useCallback(() => {
     const el = editableRef.current;
@@ -185,6 +200,36 @@ export function Composer({
       syncTags();
     },
     [workspacePath, emitChange, syncTags, setMention],
+  );
+  /** Replace the active `/query` trigger with the picked command
+   *  (+ trailing space). Plain text, no chip: the CLI expands `/name args`
+   *  itself when the prompt is sent. */
+  const handleSlashSelect = useCallback(
+    (entry: SlashCommandEntry) => {
+      const el = editableRef.current;
+      if (!el) return;
+      setSlash(null);
+      const token = `/${entry.name} `;
+      const caret = getCaretOffset(el);
+      const text = extractText(el);
+      // Recompute the trigger at select time — the caret may have moved
+      // since the menu last sampled it.
+      const trigger = caret >= 0 ? findSlashTrigger(text, caret) : null;
+      el.focus();
+      if (!trigger) {
+        insertTextAtCaret(el, token);
+      } else {
+        el.innerHTML = htmlFromText(
+          text.slice(0, trigger.start) +
+            token +
+            text.slice(trigger.start + 1 + trigger.query.length),
+        );
+        setCaretOffset(el, trigger.start + token.length);
+      }
+      emitChange();
+      syncTags();
+    },
+    [emitChange, syncTags, setSlash],
   );
   // Ghost-text completion from prompt history (desktop-cc-gui parity):
   // suffix is painted via data-completion-suffix and accepted with Tab.
@@ -284,23 +329,35 @@ export function Composer({
           menuRef={mentionMenuRef}
         />
       )}
+      {!isCollapsed && slash && workspacePath && (
+        <SlashCommandMenu
+          root={workspacePath}
+          query={slash.query}
+          left={slash.left}
+          onSelect={handleSlashSelect}
+          onClose={() => setSlash(null)}
+          menuRef={slashMenuRef}
+        />
+      )}
 
       {!isCollapsed && (
         <ComposerEditable
           editableRef={editableRef}
           sendShortcut={sendShortcut}
           mentionOpen={mention != null}
+          slashOpen={slash != null}
           completionSuffix={completion.suffix}
           acceptCompletion={completion.accept}
           setEditableText={setEditableText}
           handleHistoryKeyDown={handleHistoryKeyDown}
           mentionMenuRef={mentionMenuRef}
+          slashMenuRef={slashMenuRef}
           isComposingRef={isComposingRef}
           lastCompositionEndTimeRef={lastCompositionEndTimeRef}
           setIsComposing={setIsComposing}
           emitChange={emitChange}
           syncTags={syncTags}
-          updateMentionTrigger={updateMentionTrigger}
+          updateTriggers={updateTriggers}
           disabled={disabled}
           onSubmit={onSubmit}
           onPasteImages={onPasteImages}

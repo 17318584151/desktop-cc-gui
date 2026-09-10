@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import Globe from "lucide-react/dist/esm/icons/globe";
 import EllipsisVertical from "lucide-react/dist/esm/icons/ellipsis-vertical";
@@ -32,14 +32,14 @@ export function Badge({
   children,
   tone = "default",
 }: {
-  children: string;
+  children: ReactNode;
   /** "warning" = orange, used for the cc-switch origin pill. */
   tone?: "default" | "warning";
 }) {
   return (
     <span
       className={cx(
-        "shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-none",
+        "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-none",
         tone === "warning"
           ? "bg-background-tertiary-warning text-text-warning-primary"
           : "bg-background-tertiary-default text-text-secondary",

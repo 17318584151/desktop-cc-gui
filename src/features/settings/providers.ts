@@ -4,6 +4,16 @@ import type { ProviderSection } from "@/lib/ipc";
 
 export const ENGINE_IDS = ["claude", "kimi", "grok", "codex", "pi", "omp", "dsh"] as const;
 export type EngineId = (typeof ENGINE_IDS)[number];
+/** Official docs per engine — the CLI 管理 header "官方文档" link. */
+export const ENGINE_DOCS_URLS: Record<EngineId, string> = {
+  claude: "https://code.claude.com/docs/en/cli-reference",
+  kimi: "https://www.kimi.com/code/docs/en/",
+  grok: "https://x.ai/cli",
+  codex: "https://learn.chatgpt.com/docs/codex/cli",
+  pi: "https://pi.dev/docs/latest/usage",
+  omp: "https://omp.sh",
+  dsh: "https://github.com/deepseek-ai/dsh",
+};
 
 export const PSEUDO_LOCAL = "__local_settings_json__";
 export const PSEUDO_DISABLED = "__disabled__";

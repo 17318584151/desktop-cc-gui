@@ -676,7 +676,7 @@ pub struct EngineInfo {
     pub permissions: Vec<String>,
 }
 
-fn engine_bin(settings: &crate::settings::AppSettings, engine_id: &str) -> String {
+pub(crate) fn engine_bin(settings: &crate::settings::AppSettings, engine_id: &str) -> String {
     if let Some(custom) = settings.bin_override(engine_id) {
         let trimmed = custom.trim();
         if !trimmed.is_empty() {

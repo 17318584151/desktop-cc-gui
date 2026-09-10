@@ -8,7 +8,8 @@ import {
 } from "@/components/application/settings/settings-modal";
 import { pluginIdFromRegistryKey, settingsRegistry, useRegistry } from "@ccgui/plugin-sdk";
 import { PluginBoundary } from "@/features/plugins/boundary/PluginBoundary";
-import { ENGINE_IDS } from "./providers";
+import { ENGINE_IDS, type EngineId } from "./providers";
+import { CliHeaderActions } from "./CliHeaderActions";
 // Side-effect import: registers all builtin sections into settingsRegistry.
 import "./sections";
 
@@ -40,6 +41,13 @@ const renderPage = (key: string) => {
     );
   }
   return <Component />;
+};
+/** CLI 管理 pages get the docs/version/update cluster next to the title. */
+const renderHeaderActions = (key: string) => {
+  if (!key.startsWith("cli:")) return null;
+  const engine = key.slice("cli:".length);
+  if (!(ENGINE_IDS as readonly string[]).includes(engine)) return null;
+  return <CliHeaderActions engine={engine as EngineId} />;
 };
 
 /**
@@ -103,6 +111,7 @@ export default function SettingsPage() {
       groups={groups}
       titles={titles}
       renderPage={renderPage}
+      renderHeaderActions={renderHeaderActions}
     />
   );
 }

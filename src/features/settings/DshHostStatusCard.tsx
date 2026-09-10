@@ -107,7 +107,7 @@ function HostActions({
       return (
         <>
           <Button size="small" disabled={actionBusy} onClick={() => void updateCli()}>
-            {updating ? t("settings.dshUpdating") : t("settings.dshInstall")}
+            {updating ? t("settings.cliUpdating") : t("settings.cliInstall")}
           </Button>
           {recheck}
         </>
