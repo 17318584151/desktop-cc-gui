@@ -286,6 +286,9 @@ async fn serve(
     // One client: keep-alive to the local bridge is worth reusing, and the
     // pool dies with the connection.
     let client = reqwest::Client::builder()
+        // A pipe, not a browser: following a redirect would swallow the
+        // status and any Set-Cookie the phone needs to see.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 

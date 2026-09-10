@@ -209,6 +209,14 @@ export interface AppSettings {
   systemProxyEnabled: boolean;
   /** Proxy URL (http/https/socks5); null = unset. */
   systemProxyUrl: string | null;
+  /** Require a pairing key before the bridge serves a browser. */
+  webAuthEnabled?: boolean | null;
+  /** 8-character pairing key, minted when the switch is turned on. */
+  webAuthKey?: string | null;
+  /** Relay worker base URL (设置 → 远程访问 → 外网访问); null = unset. */
+  webRelayUrl?: string | null;
+  /** Shared relay key; also the phone URL's path segment. */
+  webRelayKey?: string | null;
 }
 
 export interface DirEntry {
@@ -297,6 +305,24 @@ export interface AppMetrics {
   /** CPU usage since the previous poll, percent of one core. */
   cpuPercent: number;
 }
+/** The outbound relay: the phone reaches the app through a Worker. */
+export interface RelayInfo {
+  /** Address to open on the phone (key already in the path). */
+  url: string;
+  agentUrl: string;
+  connected: boolean;
+  error: string | null;
+}
+
+/** A browser that reached the LAN bridge; approved devices may use it. */
+export interface WebDevice {
+  id: string;
+  userAgent: string;
+  createdAt: number;
+  lastSeenAt: number;
+  approvedAt: number | null;
+}
+
 export interface WebAccessInfo {
   /** Full URL including the auth token — shareable as-is or as a QR code. */
   url: string;
@@ -625,6 +651,12 @@ export const ipc = {
   pluginStorageDelete: (id: string, key: string) =>
     invoke<void>("plugin_storage_delete", { id, key }),
   // web access (start/stop are desktop-only; the bridge answers status too)
+  webDevices: () => invoke<WebDevice[]>("web_devices"),
+  webDeviceApprove: (id: string) => invoke<boolean>("web_device_approve", { id }),
+  webDeviceRevoke: (id: string) => invoke<boolean>("web_device_revoke", { id }),
+  webRelayStatus: () => invoke<RelayInfo | null>("web_relay_status"),
+  webRelayStart: (url: string, key: string) => invoke<RelayInfo>("web_relay_start", { url, key }),
+  webRelayStop: () => invoke<void>("web_relay_stop"),
   webAccessStart: () => invoke<WebAccessInfo>("web_access_start"),
   webAccessStop: () => invoke<void>("web_access_stop"),
   webAccessStatus: () => invoke<WebAccessInfo | null>("web_access_status"),

@@ -37,6 +37,16 @@ export interface ScanProgress {
   finished: boolean;
 }
 
+/** The outbound relay's connection state changed. */
+export function listenRelay(cb: () => void): Promise<UnlistenFn> {
+  return listen("web://relay", () => cb());
+}
+
+/** The LAN bridge's device list changed (new pending device, approve, revoke). */
+export function listenWebDevices(cb: () => void): Promise<UnlistenFn> {
+  return listen("web://devices", () => cb());
+}
+
 /** History-scan progress, throttled by the scanner (~50 updates per run). */
 export function listenScanProgress(cb: (p: ScanProgress) => void): Promise<UnlistenFn> {
   return listen<ScanProgress>("scan://progress", (e) => cb(e.payload));
