@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod codex;
+mod codex_provider_env;
 pub mod dsh;
 pub mod grok;
 pub mod images;
@@ -1291,6 +1292,9 @@ pub async fn send_message(
     )?;
 
     let mut command = launch.built.command;
+    if engine == "codex" {
+        codex_provider_env::apply(&mut command).await;
+    }
     command
         .stdin(if launch.built.stdin_payload.is_some() {
             std::process::Stdio::piped()

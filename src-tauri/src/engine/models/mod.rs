@@ -272,22 +272,26 @@ fn claude_catalog() -> EngineCatalog {
 async fn pi_family_catalog(engine: &str) -> EngineCatalog {
     let settings = crate::settings::read_settings().unwrap_or_default();
     let bin = super::engine_bin(&settings, engine);
+    let configured = pi::configured_models(engine).unwrap_or_default();
     if let Ok(models) = pi::run_models_json(&bin).await {
         if !models.is_empty() {
-            return EngineCatalog::authoritative(models);
+            return EngineCatalog::authoritative(pi::merge_configured_models(models, configured));
         }
     }
     // Fresh binaries skip extension boot; old ones fall back to a bare run.
     for extra in [&["--no-extensions"][..], &[][..]] {
         if let Ok(models) = pi::run_list_models(&bin, extra).await {
             if !models.is_empty() {
-                return EngineCatalog::authoritative(models);
+                return EngineCatalog::authoritative(pi::merge_configured_models(
+                    models,
+                    configured,
+                ));
             }
         }
     }
     // A missing/broken CLI is not an error here: the picker falls back to
     // provider-config models.
-    EngineCatalog::authoritative(Vec::new())
+    EngineCatalog::authoritative(configured)
 }
 
 /// Top-level `key = "…"` only: stop at the first `[table]` header so a
