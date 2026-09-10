@@ -160,6 +160,35 @@ function PanelTopCloseIcon() {
   );
 }
 
+export function BreathingDot({
+  active = true,
+  className,
+}: {
+  active?: boolean;
+  className?: string;
+}) {
+  if (!active) {
+    return (
+      <span
+        aria-hidden="true"
+        className={cx("inline-flex size-2.5 shrink-0 items-center justify-center", className)}
+      >
+        <span className="size-1.5 rounded-full bg-[var(--color-status-unseen)]" />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      aria-hidden="true"
+      className={cx("relative inline-flex size-2.5 shrink-0 items-center justify-center", className)}
+    >
+      <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-75 duration-1000" />
+      <span className="relative inline-flex size-1.5 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.9)]" />
+    </span>
+  );
+}
+
 function Pill({
   selected,
   running,
@@ -193,9 +222,7 @@ function Pill({
           : "border-border-button-default text-text-secondary hover:bg-background-tertiary-default/60",
       )}
     >
-      {running && (
-        <span className="size-[5px] shrink-0 animate-pulse rounded-full bg-foreground-icon-secondary" />
-      )}
+      {running && <BreathingDot active={true} className="mr-0.5" />}
       {icon}
       <span>{label}</span>
       {count ? <span className="tabular-nums text-text-tertiary">{count}</span> : null}
@@ -227,7 +254,7 @@ function TodoRows({ items }: { items: TodoItem[] }) {
             </svg>
           ) : item.status === "active" ? (
             <span className="grid size-3.5 place-items-center">
-              <span className="size-1.5 animate-pulse rounded-full bg-foreground-icon-secondary" />
+              <BreathingDot active={true} />
             </span>
           ) : item.status === "blocked" ? (
             <span className="grid size-3.5 place-items-center">
@@ -252,7 +279,9 @@ function TodoRows({ items }: { items: TodoItem[] }) {
                 ? "text-[var(--color-status-unseen)]"
                 : item.status === "blocked"
                   ? "text-text-error-primary"
-                  : "text-text-secondary",
+                  : item.status === "active"
+                    ? "text-blue-500 font-medium"
+                    : "text-text-secondary",
             )}
           >
             {statusText[item.status]}
@@ -272,23 +301,33 @@ function SubagentRows({ steps }: { steps: AgentTaskStep[] }) {
         return (
           <li
             key={step.key}
-            className="grid grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-2 rounded px-2 py-1.5"
+            className="grid grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-2 rounded px-2 py-1.5 transition-colors hover:bg-background-tertiary-default/50"
           >
-            <span
-              className={cx(
-                "size-1.5 rounded-full",
-                complete
-                  ? "bg-[var(--color-status-unseen)]"
-                  : "animate-pulse bg-foreground-icon-secondary",
+            <div className="flex items-center justify-center">
+              <BreathingDot active={!complete} />
+            </div>
+            <div className="flex min-w-0 items-center gap-1.5">
+              {step.subagentType && (
+                <span className="shrink-0 rounded border border-border-button-default bg-background-tertiary-default px-1.5 py-0.5 text-[11px] font-medium text-text-secondary">
+                  {step.subagentType}
+                </span>
               )}
-            />
-            <span className="truncate text-caption-1-medium text-text-primary" title={step.label}>
-              {step.label}
-            </span>
+              <span
+                className={cx(
+                  "truncate text-caption-1-medium",
+                  complete ? "text-text-secondary" : "text-text-primary",
+                )}
+                title={step.detail ? `${step.label}\n${step.detail}` : step.label}
+              >
+                {step.label}
+              </span>
+            </div>
             <span
               className={cx(
-                "text-caption-2-medium",
-                complete ? "text-[var(--color-status-unseen)]" : "text-text-secondary",
+                "text-caption-2-medium shrink-0 flex items-center gap-1",
+                complete
+                  ? "text-[var(--color-status-unseen)]"
+                  : "text-blue-500 font-medium",
               )}
             >
               {complete ? t("chat.agentStatusDone") : t("chat.agentStatusRunning")}

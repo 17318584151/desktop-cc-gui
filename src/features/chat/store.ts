@@ -260,6 +260,10 @@ export interface ChatStore {
     sessionId: string,
     title: string,
   ) => Promise<void>;
+  /** Send /compact to compress conversation context. */
+  compactContext: (key?: string) => Promise<void>;
+  /** Re-fetch the latest token usage from session history for the current session. */
+  refreshSessionUsage: (key?: string) => Promise<void>;
 }
 
 /** Persist one app-settings patch; callers have already applied the in-memory
@@ -405,6 +409,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         error: null,
         interrupted: false,
         turnStartedAt: Date.now(),
+        activeModel: (tab.model ?? get().models[engine]) || null,
+        activeEffort: tab.effort ?? get().efforts[engine] ?? null,
       },
     );
     try {
@@ -591,6 +597,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
               drainQueue,
               markUnseenIfBackground,
               upsertSessionMeta: (meta) => upsertSessionMetaInto(set, meta),
+              refreshSessionUsage: (k) => get().refreshSessionUsage(k),
             }),
           ),
         ),
@@ -1342,6 +1349,130 @@ export const useChatStore = create<ChatStore>((set, get) => {
         set({ actionError: null });
       } catch (error) {
         set({ actionError: errorText(error) });
+      }
+    },
+
+    compactContext: async (key?: string) => {
+      const { active, streamingByKey, openTabs } = get();
+      const targetKey =
+        key ??
+        (active
+          ? sessionKey(active.engine, active.sessionId, active.workspacePath)
+          : "");
+      if (!targetKey) return;
+      if (streamingByKey[targetKey]) return;
+      const targetTab =
+        openTabs.find(
+          (t) =>
+            sessionKey(t.engine, t.sessionId, t.workspacePath) === targetKey,
+        ) ?? active;
+      if (!targetTab) return;
+
+      // Track the compaction turn completion so callers (and UI) can await it.
+      let cleanup: (() => void) | undefined;
+      const completionPromise = new Promise<void>((resolve) => {
+        let started = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const unsub = useChatStore.subscribe(() => {
+          const currentStreaming = get().streamingByKey;
+          const isStreaming = Boolean(
+            currentStreaming[targetKey] ||
+              (targetTab.sessionId &&
+                currentStreaming[
+                  sessionKey(
+                    targetTab.engine,
+                    targetTab.sessionId,
+                    targetTab.workspacePath,
+                  )
+                ]),
+          );
+          if (isStreaming) {
+            started = true;
+          } else if (started) {
+            done();
+          }
+        });
+
+        const done = () => {
+          if (timeoutId) clearTimeout(timeoutId);
+          unsub();
+          resolve();
+        };
+
+        timeoutId = setTimeout(done, 120_000);
+        cleanup = () => {
+          if (timeoutId) clearTimeout(timeoutId);
+          unsub();
+        };
+      });
+
+      try {
+        await sendPrompt(targetTab, "/compact", []);
+      } catch (error) {
+        cleanup?.();
+        throw error;
+      }
+
+      await completionPromise;
+      // After compaction turn finishes, wait briefly for engine to persist session file,
+      // then refresh session usage snapshot.
+      await new Promise((r) => setTimeout(r, 400));
+      const latestTab =
+        get().openTabs.find(
+          (t) =>
+            sessionKey(t.engine, t.sessionId, t.workspacePath) === targetKey,
+        ) ?? get().active;
+      const finalKey = latestTab
+        ? sessionKey(
+            latestTab.engine,
+            latestTab.sessionId,
+            latestTab.workspacePath,
+          )
+        : targetKey;
+      await get().refreshSessionUsage(finalKey);
+    },
+
+    refreshSessionUsage: async (key?: string) => {
+      const { active, openTabs } = get();
+      const targetKey =
+        key ??
+        (active
+          ? sessionKey(active.engine, active.sessionId, active.workspacePath)
+          : "");
+      if (!targetKey) return;
+      const targetTab =
+        openTabs.find(
+          (t) =>
+            sessionKey(t.engine, t.sessionId, t.workspacePath) === targetKey,
+        ) ?? active;
+
+      let engine = targetTab?.engine;
+      let sessionId = targetTab?.sessionId;
+      if (
+        !sessionId &&
+        targetKey.includes("/") &&
+        !targetKey.startsWith("new:")
+      ) {
+        const slashIdx = targetKey.indexOf("/");
+        engine = targetKey.slice(0, slashIdx);
+        sessionId = targetKey.slice(slashIdx + 1);
+      }
+      if (!engine || !sessionId) return;
+
+      try {
+        const page = await ipc.loadSessionPage(
+          engine,
+          sessionId,
+          100,
+        );
+        const latestUsage =
+          [...page.messages].reverse().find((m) => m.usage)?.usage ?? null;
+        if (latestUsage) {
+          patchSession(set, targetKey, { usage: latestUsage });
+        }
+        void ipc.rescanSessions();
+      } catch (error) {
+        console.error("Failed to refresh session usage:", error);
       }
     },
   };

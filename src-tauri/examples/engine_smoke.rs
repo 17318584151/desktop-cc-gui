@@ -114,6 +114,7 @@ async fn run_one(engine_id: &str, workspace: &PathBuf) -> Result<(), String> {
                     println!("  session: {id}");
                     session_id = Some(id);
                 }
+                EngineEvent::Model(m) => println!("  model: {m}"),
                 EngineEvent::Usage(u) => println!("  usage: {u}"),
                 EngineEvent::Error(e) => println!("  ERROR: {e}"),
                 EngineEvent::Warn(e) => println!("  warn: {e}"),

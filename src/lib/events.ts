@@ -15,7 +15,8 @@ export interface EngineEventPayload {
     | "error"
     | "warn"
     | "permission_denied"
-    | "done";
+    | "done"
+    | "model";
   data: unknown;
 }
 

@@ -302,6 +302,34 @@ export const MessageTimeline = memo(function MessageTimeline({
     onLoadEarlier,
   });
 
+  const activeModel = useMemo(() => {
+    if (session.activeModel) return session.activeModel;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].model) return items[i].model;
+    }
+    return null;
+  }, [session.activeModel, items]);
+
+  const activeEffort = useMemo(() => {
+    if (session.activeEffort) return session.activeEffort;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].effort) return items[i].effort;
+    }
+    return null;
+  }, [session.activeEffort, items]);
+
+  const activeModelFormatted = useMemo(() => {
+    return activeModel ? t("chat.metaModel", { model: activeModel }) : null;
+  }, [activeModel, t]);
+
+  const activeEffortFormatted = useMemo(() => {
+    if (!activeEffort) return null;
+    const key = `chat.effort${activeEffort.charAt(0).toUpperCase() + activeEffort.slice(1).toLowerCase()}`;
+    const translated = t(key);
+    const effortVal = translated && translated !== key ? translated : activeEffort;
+    return t("chat.metaEffort", { effort: effortVal });
+  }, [activeEffort, t]);
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <MessageAnchorRail
@@ -350,6 +378,9 @@ export const MessageTimeline = memo(function MessageTimeline({
                     label={t("chat.thinking")}
                     className="py-2"
                     startedAt={session.turnStartedAt ?? undefined}
+                    durationFormatter={(d) => t("chat.metaDuration", { duration: d })}
+                    model={activeModelFormatted}
+                    effort={activeEffortFormatted}
                   />
                 ) : (
                   <TimelineRowView

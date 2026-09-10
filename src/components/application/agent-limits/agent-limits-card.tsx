@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import ChevronDown from "lucide-react/dist/esm/icons/chevron-down";
 import ArrowRight from "lucide-react/dist/esm/icons/arrow-right";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
+import Minimize2 from "lucide-react/dist/esm/icons/minimize-2";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import { Collapsible } from "@/components/application/collapsible/collapsible";
 import { cx } from "@/utils/cx";
 import { formatTokens } from "./format-tokens";
@@ -91,7 +93,18 @@ export interface AgentLimitsCardProps {
     planUsageLimits: string;
     /** aria-label for the plan link arrow (rendered only with `planHref`). */
     managePlan: string;
+    compactContext?: string;
+    compactContextTooltip?: string;
+    compacting?: string;
+    refreshUsage?: string;
+    refreshUsageTooltip?: string;
+    refreshing?: string;
   };
+  onCompact?: () => void;
+  onRefresh?: () => void;
+  compacting?: boolean;
+  refreshing?: boolean;
+  canCompact?: boolean;
   className?: string;
 }
 
@@ -112,6 +125,11 @@ export function AgentLimitsCard({
   defaultExpanded = false,
   onExpandedChange,
   text,
+  onCompact,
+  onRefresh,
+  compacting = false,
+  refreshing = false,
+  canCompact = true,
   className,
 }: AgentLimitsCardProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -261,6 +279,55 @@ export function AgentLimitsCard({
               )}
             </div>
       </Collapsible>
+
+      {/* ---------------------------------------------- actions: compact & refresh */}
+      {(onCompact || onRefresh) && (
+        <div className="mt-2.5 flex items-center justify-end gap-2 border-t border-border-button-default/40 pt-2.5">
+          {onCompact && (
+            <button
+              type="button"
+              data-testid="compact-context-btn"
+              disabled={!canCompact || compacting}
+              onClick={onCompact}
+              title={text.compactContextTooltip ?? text.compactContext}
+              className={cx(
+                "inline-flex h-6 items-center gap-1.5 rounded-md border border-border-button-default bg-background-primary-default px-2 text-caption-1-medium transition-colors duration-150",
+                !canCompact || compacting
+                  ? "cursor-not-allowed opacity-50 text-text-tertiary"
+                  : "cursor-pointer text-text-secondary hover:bg-background-secondary-hover hover:text-text-primary active:bg-background-tertiary-default",
+              )}
+            >
+              <Minimize2
+                className={cx("size-3 shrink-0", compacting && "animate-pulse text-blue-500")}
+                aria-hidden
+              />
+              <span>{compacting ? (text.compacting ?? "压缩中…") : (text.compactContext ?? "压缩上下文")}</span>
+            </button>
+          )}
+
+          {onRefresh && (
+            <button
+              type="button"
+              data-testid="refresh-usage-btn"
+              disabled={refreshing}
+              onClick={onRefresh}
+              title={text.refreshUsageTooltip ?? text.refreshUsage}
+              className={cx(
+                "inline-flex h-6 items-center gap-1.5 rounded-md border border-border-button-default bg-background-primary-default px-2 text-caption-1-medium transition-colors duration-150",
+                refreshing
+                  ? "cursor-not-allowed opacity-50 text-text-tertiary"
+                  : "cursor-pointer text-text-secondary hover:bg-background-secondary-hover hover:text-text-primary active:bg-background-tertiary-default",
+              )}
+            >
+              <RefreshCw
+                className={cx("size-3 shrink-0", refreshing && "animate-spin text-blue-500")}
+                aria-hidden
+              />
+              <span>{refreshing ? (text.refreshing ?? "刷新中…") : (text.refreshUsage ?? "刷新用量")}</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ------------------------------------------------- plan limits */}
       {limits.length > 0 && (

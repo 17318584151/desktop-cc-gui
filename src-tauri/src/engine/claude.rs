@@ -134,9 +134,18 @@ impl Engine for ClaudeEngine {
                 parse_stream_event(&self.pending_tool_json, &self.tool_names, &value, out)
             }
             "assistant" => {
-                // Full message snapshot; only used as session-id source when
-                // partial deltas are active (frontend renders the delta tail).
+                // Full message snapshot; used as session-id and actual model source.
                 push_session_id(&value, "session_id", out);
+                if let Some(model) = value
+                    .get("message")
+                    .and_then(|m| m.get("model"))
+                    .or_else(|| value.get("model"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    out.push(EngineEvent::Model(model.to_string()));
+                }
             }
             "user" => {
                 // tool_result blocks carry permission denials as is_error

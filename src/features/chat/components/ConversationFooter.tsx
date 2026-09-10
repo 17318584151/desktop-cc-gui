@@ -113,6 +113,31 @@ export function ConversationFooter({
   // The quick-switch folder chip mirrors the sidebar: archived workspaces
   // stay hidden until unarchived.
   const archivedWorkspaces = useChatStore((s) => s.archivedWorkspaces);
+  const compactContext = useChatStore((s) => s.compactContext);
+  const refreshSessionUsage = useChatStore((s) => s.refreshSessionUsage);
+  const [compacting, setCompacting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleCompact = useCallback(async () => {
+    if (!active || streaming || compacting) return;
+    setCompacting(true);
+    try {
+      await compactContext();
+    } finally {
+      setCompacting(false);
+    }
+  }, [active, streaming, compacting, compactContext]);
+
+  const handleRefresh = useCallback(async () => {
+    if (!active || refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshSessionUsage();
+    } finally {
+      setTimeout(() => setRefreshing(false), 400);
+    }
+  }, [active, refreshing, refreshSessionUsage]);
+
   const visibleWorkspaces = useMemo(
     () => {
       const archivedIds = new Set(archivedWorkspaces);
@@ -252,6 +277,11 @@ export function ConversationFooter({
             usagePct={usage?.pct}
             contextMax={contextMax}
             contextSegments={contextSegments}
+            onCompactContext={handleCompact}
+            onRefreshUsage={handleRefresh}
+            compacting={compacting}
+            refreshing={refreshing}
+            canCompact={Boolean(active) && !streaming && !compacting}
           />
         </div>
       </div>

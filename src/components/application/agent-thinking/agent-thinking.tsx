@@ -38,6 +38,12 @@ export interface AgentThinkingProps {
    * counting instead of restarting from 0. */
   startedAt?: number;
   className?: string;
+  /** Optional custom formatter for the elapsed timer string (e.g. "耗时 2m2s"). */
+  durationFormatter?: (elapsed: string) => string;
+  /** Pre-localized model label (e.g. "模型 gemini-3.8-flash"). */
+  model?: string | null;
+  /** Pre-localized reasoning effort label (e.g. "推理档位 high"). */
+  effort?: string | null;
 }
 
 const TONE_COLORS: Record<AgentThinkingTone, string> = {
@@ -100,7 +106,12 @@ function DotsIndicator({ variant }: { variant: "wave" | "spin" }) {
   const [opacities, setOpacities] = useState<number[]>(DOTS_SEED);
 
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
     let phase = 0;
     const id = window.setInterval(() => {
       phase = (phase + DOTS_PHASE_STEP) % 1;
@@ -237,7 +248,13 @@ function formatElapsed(seconds: number): string {
   return `${Math.floor(m / 60)}h${m % 60}m`;
 }
 
-function ElapsedTimer({ startedAt }: { startedAt?: number }) {
+function ElapsedTimer({
+  startedAt,
+  formatter,
+}: {
+  startedAt?: number;
+  formatter?: (elapsed: string) => string;
+}) {
   const [elapsed, setElapsed] = useState(() =>
     startedAt ? Math.max(0, (Date.now() - startedAt) / 1000) : 0,
   );
@@ -258,9 +275,10 @@ function ElapsedTimer({ startedAt }: { startedAt?: number }) {
     return () => window.clearInterval(id);
   }, [startedAt]);
 
+  const raw = formatElapsed(elapsed);
   return (
     <span className="font-mono text-caption-1-regular text-text-tertiary tabular-nums">
-      {formatElapsed(elapsed)}
+      {formatter ? formatter(raw) : raw}
     </span>
   );
 }
@@ -275,6 +293,9 @@ export function AgentThinking({
   showTimer = true,
   startedAt,
   className,
+  durationFormatter,
+  model,
+  effort,
 }: AgentThinkingProps) {
   const color = TONE_COLORS[tone ?? VARIANT_TONE[variant]];
 
@@ -293,7 +314,28 @@ export function AgentThinking({
       >
         {label}
       </span>
-      {showTimer && <ElapsedTimer startedAt={startedAt} />}
+      {(showTimer || model || effort) && (
+        <div className="flex items-center gap-1.5 text-caption-1-regular text-text-tertiary tabular-nums">
+          {showTimer && (
+            <ElapsedTimer
+              startedAt={startedAt}
+              formatter={durationFormatter}
+            />
+          )}
+          {model && (
+            <>
+              <span aria-hidden className="text-text-tertiary">·</span>
+              <span>{model}</span>
+            </>
+          )}
+          {effort && (
+            <>
+              <span aria-hidden className="text-text-tertiary">·</span>
+              <span>{effort}</span>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
