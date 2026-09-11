@@ -7,11 +7,12 @@
 //! route reject anything without it. The token rides in the URL (?token=…)
 //! because <img> tags cannot set auth headers.
 
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{Query, State as AxumState, WebSocketUpgrade};
+use axum::extract::{ConnectInfo, Query, State as AxumState, WebSocketUpgrade};
 use axum::http::{header, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -145,11 +146,16 @@ pub async fn web_access_start(app: tauri::AppHandle) -> Result<WebAccessInfo, St
     };
     let router = build_router(ctx);
     tokio::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async {
-                let _ = shutdown_rx.await;
-            })
-            .await;
+        // Connect info is what tells a genuine relay hop (loopback) from a LAN
+        // browser that merely wrote the header — see `relayed`.
+        let _ = axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = shutdown_rx.await;
+        })
+        .await;
     });
 
     let lan_ip = lan_ip().unwrap_or_else(|| "127.0.0.1".to_string());
@@ -245,14 +251,23 @@ fn auth_config() -> (bool, String) {
     (guard.1, guard.2.clone())
 }
 
+/// Did this request actually come through the relay? The desktop's relay
+/// client is the only thing that dials the bridge on loopback and tags the hop
+/// — so both have to hold. Trusting the header alone let any LAN browser claim
+/// to be tunneled and skip the token, and the LAN is supposed to stay on
+/// upstream's token-only model.
+fn relayed(headers: &axum::http::HeaderMap, peer: SocketAddr) -> bool {
+    peer.ip().is_loopback()
+        && headers
+            .get(crate::relay::VIA_HEADER)
+            .is_some_and(|value| value == "relay")
+}
+
 /// Is the `?token=` still needed? On the LAN it always is (upstream's model).
 /// Through the relay the pairing key takes over — but only while the switch
 /// is on; otherwise a tokenless tunnel would be wide open.
-fn token_required(headers: &axum::http::HeaderMap, auth_enabled: bool) -> bool {
-    let relayed = headers
-        .get(crate::relay::VIA_HEADER)
-        .is_some_and(|value| value == "relay");
-    !(relayed && auth_enabled)
+fn token_required(headers: &axum::http::HeaderMap, auth_enabled: bool, peer: SocketAddr) -> bool {
+    !(relayed(headers, peer) && auth_enabled)
 }
 
 /// Does this request have to unlock first? The pairing key guards the relay
@@ -274,12 +289,10 @@ enum Gate {
 /// LAN behaves as it always did (the token URL is the only thing needed);
 /// with it on, an unknown browser gets the key page and is remembered once
 /// it types the key in.
-fn gate(ctx: &WebCtx, headers: &axum::http::HeaderMap) -> Gate {
+fn gate(ctx: &WebCtx, headers: &axum::http::HeaderMap, peer: SocketAddr) -> Gate {
     let db = ctx.app.state::<crate::AppState>().db.clone();
     let (enabled, _) = auth_config();
-    let relayed = headers
-        .get(crate::relay::VIA_HEADER)
-        .is_some_and(|value| value == "relay");
+    let relayed = relayed(headers, peer);
     let now = now_ms();
     let device = cookie_value(headers).and_then(|id| db.web_device_get(&id).ok().flatten());
 
@@ -361,12 +374,14 @@ button{{width:100%;padding:10px;border:0;border-radius:10px;background:#3b82f6;c
 
 /// Page shown after a correct pairing key, until the desktop approves the
 /// device. It reloads itself, so the approval lands without the user doing
-/// anything on the phone.
+/// anything on the phone — and it must reload `/`, not the current URL: this
+/// document is the answer to `POST /unlock`, so a bare refresh would ask for
+/// that path again and drop the phone into the SPA's fallback.
 fn waiting_page() -> String {
     r#"<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="2">
+<meta http-equiv="refresh" content="2; url=/">
 <title>CC GUI 等待授权</title>
 <style>
 :root{color-scheme:dark}
@@ -495,11 +510,18 @@ struct WebCtx {
 
 fn build_router(ctx: WebCtx) -> Router {
     Router::new()
-        .route("/unlock", post(unlock_handler))
+        .route("/unlock", post(unlock_handler).get(unlock_get))
         .route("/ws", get(ws_handler))
         .route("/file", get(file_handler))
         .fallback(get(static_handler))
         .with_state(ctx)
+}
+
+/// `GET /unlock` is what a phone asks for when it reloads the page the POST
+/// landed on, or opens it again from history. Send it to the root: the gate
+/// then decides between the pairing form, the waiting page and the app.
+async fn unlock_get() -> Response {
+    (StatusCode::SEE_OTHER, [(header::LOCATION, "/")], "").into_response()
 }
 
 /// Pushes the sink event stream into the broadcast channel as WS frames.
@@ -548,19 +570,27 @@ struct DeviceIdArgs {
 
 #[derive(Deserialize)]
 struct TokenQuery {
-    token: String,
+    /// Optional on purpose: through the relay the URL carries no token at all
+    /// (an approved device is the credential), and a required field makes the
+    /// extractor answer 400 before the handler gets to decide. That 400 was
+    /// what killed every relayed socket — the phone's `/ws` never came up, so
+    /// the web UI rendered with no data in it.
+    #[serde(default)]
+    token: Option<String>,
 }
 
 async fn ws_handler(
     AxumState(ctx): AxumState<WebCtx>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(q): Query<TokenQuery>,
     headers: axum::http::HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    match gate(&ctx, &headers) {
+    match gate(&ctx, &headers, peer) {
         Gate::Waiting(page) => return page,
         Gate::Allowed(device) => {
-            if token_required(&headers, auth_config().0) && q.token != *ctx.token {
+            let supplied = q.token.as_deref().unwrap_or_default();
+            if token_required(&headers, auth_config().0, peer) && supplied != &*ctx.token {
                 return StatusCode::FORBIDDEN.into_response();
             }
             ws.on_upgrade(move |socket| handle_socket(ctx, socket, device))
@@ -677,10 +707,11 @@ fn load_static(app: &tauri::AppHandle, rel: &str) -> Option<(Vec<u8>, String)> {
 
 async fn static_handler(
     AxumState(ctx): AxumState<WebCtx>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
     uri: Uri,
 ) -> Response {
-    if let Gate::Waiting(page) = gate(&ctx, &headers) {
+    if let Gate::Waiting(page) = gate(&ctx, &headers, peer) {
         return page;
     }
     let rel = uri.path().trim_start_matches('/');
@@ -725,18 +756,24 @@ fn content_type(path: &str) -> &'static str {
 #[derive(Deserialize)]
 struct FileQuery {
     path: String,
-    token: String,
+    /// Optional for the same reason as `TokenQuery`: relayed requests carry no
+    /// token, and a missing field here would 400 an image the phone is loading
+    /// before the gate below could allow it.
+    #[serde(default)]
+    token: Option<String>,
 }
 
 async fn file_handler(
     AxumState(ctx): AxumState<WebCtx>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
     Query(q): Query<FileQuery>,
 ) -> Response {
-    if let Gate::Waiting(page) = gate(&ctx, &headers) {
+    if let Gate::Waiting(page) = gate(&ctx, &headers, peer) {
         return page;
     }
-    if token_required(&headers, auth_config().0) && q.token != *ctx.token {
+    let supplied = q.token.as_deref().unwrap_or_default();
+    if token_required(&headers, auth_config().0, peer) && supplied != &*ctx.token {
         return StatusCode::FORBIDDEN.into_response();
     }
     match read_scoped_file(Path::new(&q.path)) {
@@ -1526,15 +1563,24 @@ mod tests {
 
     /// The relay swaps the token for the pairing key, and only while the
     /// switch is on: a tokenless tunnel with no key would be wide open.
+    ///
+    /// The peer address is half the test: only the desktop's own relay client
+    /// dials the bridge on loopback, so a LAN browser writing the header
+    /// itself must not be able to opt out of the token.
     #[test]
     fn token_is_waived_only_for_relayed_traffic_with_auth_on() {
-        let lan = |headers: &axum::http::HeaderMap, on: bool| token_required(headers, on);
+        let check = |headers: &axum::http::HeaderMap, on: bool, peer: &str| {
+            token_required(headers, on, format!("{peer}:1234").parse().unwrap())
+        };
         // Switch off: the token stays mandatory everywhere.
-        assert!(lan(&axum::http::HeaderMap::new(), false));
-        assert!(lan(&relay_headers(), false));
+        assert!(check(&axum::http::HeaderMap::new(), false, "127.0.0.1"));
+        assert!(check(&relay_headers(), false, "127.0.0.1"));
+        assert!(check(&relay_headers(), false, "192.168.1.6"));
         // Switch on: relayed traffic may come without it, the LAN may not.
-        assert!(lan(&axum::http::HeaderMap::new(), true));
-        assert!(!lan(&relay_headers(), true));
+        assert!(check(&axum::http::HeaderMap::new(), true, "127.0.0.1"));
+        assert!(check(&axum::http::HeaderMap::new(), true, "192.168.1.6"));
+        assert!(check(&relay_headers(), true, "192.168.1.6"));
+        assert!(!check(&relay_headers(), true, "127.0.0.1"));
     }
 
     fn relay_headers() -> axum::http::HeaderMap {

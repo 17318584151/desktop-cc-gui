@@ -56,7 +56,13 @@ Bun.serve({
     const id = nextId++;
 
     if (request.headers.get("upgrade") === "websocket") {
-      if (!server.upgrade(request, { data: { id, path: appPath + url.search } })) {
+      // Carry the browser's headers, the Worker does the same: the bridge's
+      // gate reads the cookie to recognise an approved device.
+      if (
+        !server.upgrade(request, {
+          data: { id, path: appPath, headers: Object.fromEntries(request.headers.entries()) },
+        })
+      ) {
         return new Response("upgrade failed", { status: 400 });
       }
       return;
@@ -129,7 +135,9 @@ Bun.serve({
         end: () => socket.close(1012),
         fail: () => socket.close(1012),
       });
-      send({ t: "open", id: data.id, ws: true, path: data.path, headers: {} });
+      // Forward the browser's headers, cookie included: the bridge's gate
+      // needs them to recognise an approved device (matches the Worker).
+      send({ t: "open", id: data.id, ws: true, path: data.path, headers: data.headers ?? {} });
     },
     message(socket, message) {
       const data = socket.data;
