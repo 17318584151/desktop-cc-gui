@@ -235,6 +235,14 @@ pub fn web_relay_status(app: tauri::AppHandle) -> Option<RelayInfo> {
     guard.as_ref().map(|r| r.info.clone())
 }
 
+/// The Cloudflare Worker a user deploys on their own account, embedded at
+/// build time so the settings page can hand it over without shipping the
+/// repo next to the app (the deploy/ tree is not part of any bundle).
+#[tauri::command]
+pub fn relay_worker_source() -> &'static str {
+    include_str!("../../deploy/worker/src/index.js")
+}
+
 /// Keeps one agent socket alive: reconnect with backoff until stopped.
 async fn run_agent(app: tauri::AppHandle, agent: String, port: u16, mut stop: watch::Receiver<bool>) {
     let mut attempt = 0usize;

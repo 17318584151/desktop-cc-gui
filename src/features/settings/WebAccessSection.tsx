@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QRCodeSVG } from "qrcode.react";
+import CircleAlert from "lucide-react/dist/esm/icons/circle-alert";
 import Copy from "lucide-react/dist/esm/icons/copy";
 import Smartphone from "lucide-react/dist/esm/icons/smartphone";
 import Check from "lucide-react/dist/esm/icons/check";
 import { Button } from "@/components/base/buttons/button";
+import { InfoTip } from "@/components/base/tooltip/tooltip";
 import {
   SettingsCard,
   SettingsRow,
-  SettingsSectionLabel,
 } from "@/components/application/settings/settings-rows";
 import { ipc, type RelayInfo, type WebAccessInfo, type WebDevice } from "@/lib/ipc";
 import { Input } from "@/components/base/input/input";
@@ -62,6 +63,7 @@ export function WebAccessSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [sourceCopied, setSourceCopied] = useState(false);
   const [devices, setDevices] = useState<WebDevice[]>([]);
   const [relay, setRelay] = useState<RelayInfo | null>(null);
   const [relayUrl, setRelayUrl] = useState("");
@@ -230,9 +232,21 @@ export function WebAccessSection() {
     });
   }, [info]);
 
+  /** Hand the user the Worker they deploy themselves; the source ships inside
+   *  the binary, so this never depends on the repo being next to the app. */
+  const copyWorkerSource = useCallback(() => {
+    void ipc
+      .relayWorkerSource()
+      .then((source) => navigator.clipboard.writeText(source))
+      .then(() => {
+        setSourceCopied(true);
+        setTimeout(() => setSourceCopied(false), 1500);
+      })
+      .catch(() => undefined);
+  }, []);
+
   return (
     <div className="flex w-full flex-col gap-2">
-      <SettingsSectionLabel>{t("settings.webAccess")}</SettingsSectionLabel>
       <div className="flex w-fit items-center gap-1 rounded-full bg-background-tertiary-default p-1">
         {(["lan", "wan"] as const).map((id) => (
           <button
@@ -316,11 +330,24 @@ export function WebAccessSection() {
       )}
       {pane === "wan" && (
         <>
+        <div className="flex w-full items-stretch gap-2">
+        {/* 中转服务 */}
+        <div className="flex min-w-0 flex-[2]">
         <SettingsCard>
           <SettingsRow
             label={t("settings.webRelay")}
+            labelAdornment={<InfoTip label={t("settings.webRelayHint")} icon={CircleAlert} />}
           >
-            {(
+            <div className="flex items-center gap-2">
+              <Button
+                size="small"
+                variant="secondary"
+                leadingIcon={sourceCopied ? Check : undefined}
+                title={sourceCopied ? t("common.copied") : t("settings.webRelayCopySource")}
+                onClick={copyWorkerSource}
+              >
+                {sourceCopied ? t("common.copied") : t("settings.webRelayCopySource")}
+              </Button>
               <Button
                 size="small"
                 variant={relay ? "secondary" : "primary"}
@@ -329,9 +356,9 @@ export function WebAccessSection() {
               >
                 {relay ? t("settings.webRelayStop") : t("settings.webRelayStart")}
               </Button>
-            )}
+            </div>
           </SettingsRow>
-          <div className="flex w-full flex-col gap-2 px-3 pt-1 pb-3">
+          <div className="flex w-full flex-col gap-2 pt-3 pr-3 pb-3">
             <Input
               aria-label={t("settings.webRelayUrl")}
               size="small"
@@ -362,13 +389,20 @@ export function WebAccessSection() {
             )}
           </div>
         </SettingsCard>
-        {/* The auth switch, pairing key and device list are settings-level:
-            they belong to the relay, not to the LAN bridge's runtime — and
-            hiding them whenever the bridge was stopped read as the whole
-            feature having disappeared. */}
+        </div>
+        {/* The auth switch and pairing key are settings-level: they belong to
+            the relay, not to the LAN bridge's runtime — and hiding them
+            whenever the bridge was stopped read as the whole feature having
+            disappeared. */}
+        <div className="flex min-w-0 flex-1">
         <SettingsCard>
           <SettingsRow
             label={t("settings.webAuth")}
+            labelAdornment={
+              authEnabled && authKey ? (
+                <InfoTip label={t("settings.webAuthKeyHint")} icon={CircleAlert} />
+              ) : undefined
+            }
           >
             <Button
               size="small"
@@ -380,14 +414,12 @@ export function WebAccessSection() {
             </Button>
           </SettingsRow>
           {authEnabled && authKey && (
-            <div className="flex w-full flex-col gap-2 px-3 pt-1 pb-3">
-              <span className="text-body-2-regular text-text-secondary">
-                {t("settings.webAuthKeyHint")}
-              </span>
-              <div className="flex h-9 w-52 items-center gap-1 rounded-2lg bg-background-tertiary-default pr-1 pl-3">
-                <span className="flex-1 font-mono text-title-3 tracking-[0.18em] text-text-primary">
+            <div className="flex w-full flex-1 items-center justify-center pt-3 pr-3 pb-3">
+              <div className="flex h-9 w-fit items-center rounded-2lg bg-background-tertiary-default pr-1 pl-3">
+                <span className="font-mono text-title-3 tracking-[0.18em] text-text-primary">
                   {authKey}
                 </span>
+                <span aria-hidden className="mx-2 h-4 w-px shrink-0 bg-separator-border-strong" />
                 <button
                   type="button"
                   aria-label={t("settings.webAuthCopy")}
@@ -400,11 +432,16 @@ export function WebAccessSection() {
               </div>
             </div>
           )}
+        </SettingsCard>
+        </div>
+        </div>
+        {/* 已授权设备：独立功能区 */}
+        <SettingsCard>
           <SettingsRow
             label={t("settings.webDevices")}
           />
           {devices.length === 0 ? (
-            <p className="px-3 pb-3 text-body-2-regular text-text-secondary">
+            <p className="pt-3 pr-3 pb-3 text-body-2-regular text-text-secondary">
               {t("settings.webDevicesEmpty")}
             </p>
           ) : (
@@ -412,7 +449,7 @@ export function WebAccessSection() {
               {devices.map((device) => (
                 <div
                   key={device.id}
-                  className="flex w-full items-center gap-3 border-t border-separator-border px-3 py-2.5"
+                  className="flex w-full items-center gap-3 border-t border-separator-border py-2.5 pr-3"
                 >
                   <Smartphone className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
                   <div className="flex min-w-0 flex-1 flex-col">

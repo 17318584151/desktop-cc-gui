@@ -1308,6 +1308,7 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
             ser(crate::relay::web_relay_start(app.clone(), a.url, a.key).await)
         }
         "web_relay_stop" => ser(crate::relay::web_relay_stop(app.clone())),
+        "relay_worker_source" => ser(Ok(crate::relay::relay_worker_source())),
         // Device approval is the one management action a phone may take: it
         // is already device-scoped, and the desktop page would otherwise be
         // the only way to approve a browser the user is holding.

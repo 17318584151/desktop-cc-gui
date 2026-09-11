@@ -1,4 +1,16 @@
 /**
+ * CC GUI 中继（Cloudflare Worker）——让手机在外网访问本机 CC GUI，而无需在
+ * 本机开放任何入站端口。
+ *
+ * 桌面端主动外连 /agent?key=<secret> 并保持一条 WebSocket；此后每个进来的请求
+ * 都成为这条连接上的一条流，因此「谁能进来」仍然只由桌面端自己的桥接决定：URL
+ * 里的 token 与逐设备授权都在应用内完成。本 Worker 只校验 key 并搬运字节。
+ *
+ * 流是具名且多路复用的，每个 key 一个 Durable Object 持有 agent socket，所以
+ * 重连的桌面端永远不会和自己交错。
+ *
+ * ---
+ *
  * CC GUI relay: lets a phone reach the desktop app without opening any
  * inbound port on the desktop.
  *

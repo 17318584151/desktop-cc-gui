@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ComponentType, type ReactNode } from "react";
 import Info from "lucide-react/dist/esm/icons/info";
 import {
   Focusable,
@@ -78,8 +78,16 @@ export function TooltipContent({
  * clicking the icon used to do nothing and felt dead. InfoTip additionally
  * pins the tip open on click: it stays visible while the pointer moves away
  * and closes on outside press, Escape, or a second click.
+ *
+ * `icon` swaps the default ⓘ for a note that reads as a caution instead.
  */
-export function InfoTip({ label }: { label: string }) {
+export function InfoTip({
+  label,
+  icon: Icon = Info,
+}: {
+  label: string;
+  icon?: ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
+}) {
   const [hoverOpen, setHoverOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -120,10 +128,10 @@ export function InfoTip({ label }: { label: string }) {
           }}
           className="inline-flex shrink-0 cursor-help items-center justify-center text-foreground-icon-quaternary transition-colors hover:text-text-secondary"
         >
-          <Info className="size-3.5" aria-hidden />
+          <Icon className="size-3.5" aria-hidden />
         </button>
       </Focusable>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent className="max-w-[320px]">{label}</TooltipContent>
     </Tooltip>
   );
 }

@@ -289,7 +289,7 @@ export const en: Messages = {
     webAuthEnable: "Turn on",
     webAuthDisable: "Turn off",
     webAuthCopy: "Copy key",
-    webAuthKeyHint: "Each key pairs one device: it is replaced as soon as it is used, and every ten minutes",
+    webAuthKeyHint: "Each key pairs one device and is replaced once it is used",
     webDevices: "Approved devices",
     webDevicesEmpty: "No approved devices yet.",
     webDeviceAnonymous: "Unknown browser",
@@ -300,6 +300,9 @@ export const en: Messages = {
     webDeviceDeny: "Deny",
     webDeviceRevoke: "Revoke",
     webRelay: "Relay",
+    webRelayHint:
+      "Outbound access runs through one of your Cloudflare Workers: copy the source, deploy it to your own Worker, then fill in the fields below.",
+    webRelayCopySource: "Copy source",
     webRelayStart: "Connect relay",
     webRelayStop: "Disconnect relay",
     webRelayUrl: "Relay address",

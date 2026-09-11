@@ -704,6 +704,9 @@ export const ipc = {
   webRelayStatus: () => invoke<RelayInfo | null>("web_relay_status"),
   webRelayStart: (url: string, key: string) => invoke<RelayInfo>("web_relay_start", { url, key }),
   webRelayStop: () => invoke<void>("web_relay_stop"),
+  /** The Cloudflare Worker's source, embedded in the binary: the user deploys
+   *  it on their own account, so the settings page hands it over verbatim. */
+  relayWorkerSource: () => invoke<string>("relay_worker_source"),
   webAccessStart: () => invoke<WebAccessInfo>("web_access_start"),
   webAccessStop: () => invoke<void>("web_access_stop"),
   webAccessStatus: () => invoke<WebAccessInfo | null>("web_access_status"),
