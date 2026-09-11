@@ -277,6 +277,7 @@ export const zh = {
     webAuthDisable: "关闭授权",
     webAuthCopy: "复制密钥",
     webAuthRotate: "更换密钥",
+    webRemoteActive: "远程控制中",
     webAuthKeyHint: "每串密钥只能配对一台设备，配对成功后自动更换",
     webDevices: "授权列表",
     webDevicesEmpty: "暂无设备。网页端填写配对密钥后会出现在这里，点「授权」才放行。",

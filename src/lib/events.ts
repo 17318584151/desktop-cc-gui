@@ -58,6 +58,17 @@ export function listenRelay(cb: (error: string | null) => void): Promise<Unliste
   );
 }
 
+/**
+ * A remote (relayed) browser started or stopped driving this machine. Fired
+ * with the current state, so the badge is right even if the socket opened
+ * before the window did.
+ */
+export function listenRemoteControl(cb: (active: boolean) => void): Promise<UnlistenFn> {
+  return listen<{ active?: boolean } | null>("web://remote", (event) =>
+    cb(Boolean(event.payload?.active)),
+  );
+}
+
 /** The LAN bridge's device list changed (new pending device, approve, revoke). */
 export function listenWebDevices(cb: () => void): Promise<UnlistenFn> {
   return listen("web://devices", () => cb());

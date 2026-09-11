@@ -719,6 +719,8 @@ export const ipc = {
   webRelayStatus: () => invoke<RelayInfo | null>("web_relay_status"),
   webRelayStart: (url: string, key: string) => invoke<RelayInfo>("web_relay_start", { url, key }),
   webRelayStop: () => invoke<void>("web_relay_stop"),
+  /** Is a browser driving this machine through the relay right now? */
+  remoteControlActive: () => invoke<boolean>("remote_control_active"),
   /** Replace the pairing key now instead of waiting for the automatic
    *  rotation. Desktop-only — a phone rotating it would lock others out. */
   rotateWebPairKey: () => invoke<string>("rotate_web_pair_key"),

@@ -74,6 +74,62 @@ pub struct WebDevice {
     pub name: Option<String>,
 }
 
+/// A relayed socket is the only thing that means "someone is driving this
+/// machine from outside": LAN browsers and the desktop's own UI are local, and
+/// the relay being connected on its own says nothing — the tunnel idles open.
+static REMOTE_SESSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Tells the UI to show the 远程控制中 badge the moment the first remote
+/// socket arrives, and to drop it when the last one leaves.
+fn notify_remote(app: &tauri::AppHandle, active: bool) {
+    use crate::event_sink::Emit;
+    let payload = serde_json::json!({ "active": active }).to_string();
+    let _ = app
+        .state::<crate::AppState>()
+        .emitters
+        .emit_json("web://remote", &payload);
+}
+
+/// Counts one remote socket: increments on the way in, decrements (and fires
+/// the event on the 0→1 / 1→0 edges) on the way out, whatever path it takes.
+struct RemoteSession {
+    app: tauri::AppHandle,
+    counted: bool,
+}
+
+impl RemoteSession {
+    fn enter(app: &tauri::AppHandle, relayed: bool) -> Self {
+        let counted = relayed;
+        if counted {
+            let now = REMOTE_SESSIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if now == 0 {
+                notify_remote(app, true);
+            }
+        }
+        Self {
+            app: app.clone(),
+            counted,
+        }
+    }
+}
+
+impl Drop for RemoteSession {
+    fn drop(&mut self) {
+        if !self.counted {
+            return;
+        }
+        if REMOTE_SESSIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            notify_remote(&self.app, false);
+        }
+    }
+}
+
+/// Is anyone driving this machine from outside right now?
+#[tauri::command]
+pub fn remote_control_active() -> bool {
+    REMOTE_SESSIONS.load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
 /// Tell every attached UI (webview and phones) that the device list moved.
 /// Plain `app.emit` would only reach the webview: the bridge forwards what
 /// goes through the sink.
@@ -607,7 +663,7 @@ async fn ws_handler(
             if token_required(&headers, auth_config().0, peer) && supplied != &*ctx.token {
                 return StatusCode::FORBIDDEN.into_response();
             }
-            ws.on_upgrade(move |socket| handle_socket(ctx, socket, device))
+            ws.on_upgrade(move |socket| handle_socket(ctx, socket, device, relayed(&headers, peer)))
         }
     }
 }
@@ -622,7 +678,9 @@ struct InvokeReq {
     args: Value,
 }
 
-async fn handle_socket(ctx: WebCtx, socket: WebSocket, device: String) {
+async fn handle_socket(ctx: WebCtx, socket: WebSocket, device: String, remote: bool) {
+    // Counted for as long as this socket lives, however it ends.
+    let _remote_session = RemoteSession::enter(&ctx.app, remote);
     let (mut ws_tx, mut ws_rx) = socket.split();
     let hello = json!({"type": "hello", "version": env!("CARGO_PKG_VERSION")}).to_string();
     if ws_tx.send(Message::Text(hello.into())).await.is_err() {
