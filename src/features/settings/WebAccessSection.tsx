@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { QRCodeSVG } from "qrcode.react";
 import CircleAlert from "lucide-react/dist/esm/icons/circle-alert";
 import Copy from "lucide-react/dist/esm/icons/copy";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import Smartphone from "lucide-react/dist/esm/icons/smartphone";
 import Check from "lucide-react/dist/esm/icons/check";
 import { Button } from "@/components/base/buttons/button";
@@ -182,6 +183,20 @@ export function WebAccessSection() {
     },
     [refreshAuth],
   );
+
+  /** Mint a new pairing key on demand — for the "that key has been seen by
+   *  someone else" moment. The backend rotates it after every pairing and on a
+   *  timer anyway; this just brings that forward. */
+  const rotateKey = useCallback(() => {
+    setAuthBusy(true);
+    void ipc
+      .rotateWebPairKey()
+      .then((key) => {
+        if (key) setAuthKey(key);
+      })
+      .catch(() => {})
+      .finally(() => setAuthBusy(false));
+  }, []);
 
   const saveRelayFields = useCallback(async (url: string, key: string) => {
     const latest = await ipc.getAppSettings();
@@ -577,7 +592,20 @@ export function WebAccessSection() {
             const canCopyKey = authEnabled && Boolean(authKey);
             return (
               <div className="flex w-full flex-1 items-center justify-center pt-3 pr-3 pb-3">
-                <div className="flex h-9 w-fit items-center rounded-2lg bg-background-tertiary-default pr-1 pl-3">
+                <div className="flex h-9 w-fit items-center rounded-2lg bg-background-tertiary-default pr-1 pl-1">
+                  {/* Refresh mirrors the copy button: same size, same hover,
+                      one separator on each side of the key. */}
+                  <button
+                    type="button"
+                    aria-label={t("settings.webAuthRotate")}
+                    title={t("settings.webAuthRotate")}
+                    disabled={!canCopyKey || authBusy}
+                    onClick={rotateKey}
+                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary disabled:cursor-default disabled:text-foreground-icon-quaternary disabled:hover:bg-transparent"
+                  >
+                    <RefreshCw className="size-4" aria-hidden />
+                  </button>
+                  <span aria-hidden className="mx-2 h-4 w-px shrink-0 bg-separator-border-strong" />
                   <span className="font-mono text-title-3 tracking-[0.18em] text-text-primary">
                     {canCopyKey ? authKey : "--------"}
                   </span>

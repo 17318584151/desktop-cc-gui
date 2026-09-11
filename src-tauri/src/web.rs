@@ -81,15 +81,20 @@ pub fn notify_devices(app: &tauri::AppHandle) {
         .emit_json("web://devices", "null");
 }
 
-/// Short, human-matching form of a device id (shown in the phone page and the
-/// settings list so the user can tell which row to approve).
-pub fn device_code(id: &str) -> String {
-    id.chars().take(8).collect::<String>().to_uppercase()
-}
-
 #[tauri::command]
 pub fn web_devices(app: tauri::AppHandle) -> Result<Vec<WebDevice>, String> {
     app.state::<crate::AppState>().db.web_devices()
+}
+
+/// Mint a fresh pairing key on demand — the same path the automatic rotation
+/// takes (one-time use, then a timer). Desktop-only: a phone that could rotate
+/// the key would lock every other device out.
+#[tauri::command]
+pub fn rotate_web_pair_key(app: tauri::AppHandle) -> Result<String, String> {
+    crate::settings::rotate_web_auth_key(&app)?;
+    Ok(crate::settings::get_app_settings()?
+        .web_auth_key
+        .unwrap_or_default())
 }
 
 #[tauri::command]
@@ -323,19 +328,16 @@ fn gate(ctx: &WebCtx, headers: &axum::http::HeaderMap, peer: SocketAddr) -> Gate
     // the key form again would read as the pairing having failed.
     let html = match device {
         Some(_) => waiting_page(),
-        None => unlock_page(&id, None),
+        None => unlock_page(None),
     };
     Gate::Waiting(unlock_response(html, &id, first_seen))
 }
 
 /// Key page: entered once per browser, then that browser is remembered.
-fn unlock_page(device: &str, error: Option<&str>) -> String {
-    let (code, message) = match error {
-        Some(text) => (String::new(), format!("<p class=\"err\">{text}</p>")),
-        None => (
-            format!("<div>配对码 <code>{}</code></div>", device_code(device)),
-            String::new(),
-        ),
+fn unlock_page(error: Option<&str>) -> String {
+    let message = match error {
+        Some(text) => format!("<p class=\"err\">{text}</p>"),
+        None => String::new(),
     };
     format!(
         r#"<!doctype html>
@@ -361,7 +363,6 @@ button{{width:100%;padding:10px;border:0;border-radius:10px;background:#3b82f6;c
 </style></head>
 <body><div class="card">
 <h1>输入配对密钥</h1>
-{code}
 <form method="post" action="/unlock">
 <input name="key" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="8 位密钥" autofocus>
 <button type="submit">配对</button>
@@ -439,7 +440,7 @@ async fn unlock_handler(
     let device = match cookie_value(&headers) {
         Some(id) => id,
         None => {
-            return unlock_response(unlock_page("", Some("浏览器没有拿到设备标识，请重新打开链接")), "", true)
+            return unlock_response(unlock_page(Some("浏览器没有拿到设备标识，请重新打开链接")), "", true)
         }
     };
     let submitted = form_field(&body, "key").unwrap_or_default().to_uppercase();
@@ -447,10 +448,10 @@ async fn unlock_handler(
     // configured must never admit anyone: the UI shows `--------` in that
     // state, and a placeholder must not be able to look like a pairing.
     if !enabled {
-        return unlock_response(unlock_page(&device, Some("未启用授权")), &device, false);
+        return unlock_response(unlock_page(Some("未启用授权")), &device, false);
     }
     if !pairing_key_matches(&expected, &submitted) {
-        return unlock_response(unlock_page(&device, Some("密钥不正确")), &device, false);
+        return unlock_response(unlock_page(Some("密钥不正确")), &device, false);
     }
 
     // Correct key: file a pairing request. The device is remembered but NOT

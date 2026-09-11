@@ -291,6 +291,7 @@ export const en: Messages = {
     webAuthEnable: "Turn on",
     webAuthDisable: "Turn off",
     webAuthCopy: "Copy key",
+    webAuthRotate: "New key",
     webAuthKeyHint: "Each key pairs one device and is replaced once it is used",
     webDevices: "Device access",
     webDevicesEmpty:

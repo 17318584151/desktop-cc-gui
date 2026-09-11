@@ -275,6 +275,9 @@ pub fn run() {
             web::web_devices,
             web::web_device_approve,
             web::web_device_revoke,
+            // Key rotation stays desktop-only: a phone rotating it would lock
+            // every other device out.
+            web::rotate_web_pair_key,
             relay::web_relay_start,
             relay::web_relay_stop,
             relay::web_relay_status,
