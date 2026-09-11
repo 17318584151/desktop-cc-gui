@@ -21,6 +21,12 @@ pub struct GitStatus {
     pub staged: Vec<GitFileEntry>,
     pub unstaged: Vec<GitFileEntry>,
     pub untracked: Vec<GitFileEntry>,
+    /// Commits the branch is ahead of / behind its upstream; `None` when the
+    /// branch has no upstream (or HEAD is detached/unborn).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<usize>,
 }
 
 /// Compact status for a directory that is itself a Git worktree root,
@@ -400,9 +406,22 @@ fn fill_line_stats(
     }
 }
 
+/// Ahead/behind counts vs the branch's upstream. Cheap: two ref lookups plus
+/// one commit-graph walk. Returns `None` when there is no upstream to compare
+/// against — the UI hides the indicator rather than showing a misleading 0/0.
+fn ahead_behind(repo: &Repository) -> Option<(usize, usize)> {
+    let head = repo.head().ok()?;
+    let local_oid = head.target()?;
+    let upstream_name = repo.branch_upstream_name(head.name()?).ok()?;
+    let upstream_ref = repo.find_reference(upstream_name.as_str()?).ok()?;
+    let upstream_oid = upstream_ref.target()?;
+    repo.graph_ahead_behind(local_oid, upstream_oid).ok()
+}
+
 /// Sync body of `git_status` — libgit2 walks can touch thousands of files,
 /// far too heavy for the IPC main thread.
 fn git_status_blocking(path: &str) -> Result<GitStatus, String> {
+
     let repo = open_repo(path)?;
     let branch = repo
         .head()
@@ -414,11 +433,14 @@ fn git_status_blocking(path: &str) -> Result<GitStatus, String> {
     let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
     let (mut staged, mut unstaged, mut untracked) = collect_status_entries(&statuses);
     fill_line_stats(&repo, &mut staged, &mut unstaged, &mut untracked);
+    let (ahead, behind) = ahead_behind(&repo).unzip();
     Ok(GitStatus {
         branch,
         staged,
         unstaged,
         untracked,
+        ahead,
+        behind,
     })
 }
 
@@ -978,5 +1000,43 @@ mod tests {
             Some(&"repository"),
             "colors={colors:?}"
         );
+    }
+
+    #[test]
+    fn status_reports_ahead_behind_vs_upstream() {
+        let scratch = Scratch::new();
+        let origin_path = scratch.0.join("origin");
+        let origin = Repository::init(&origin_path).unwrap();
+        commit_file(&origin, "a.txt", "a\n");
+
+        let local_path = scratch.0.join("local");
+        let local =
+            Repository::clone(origin_path.to_str().unwrap(), &local_path).unwrap();
+
+        // One local-only commit → ahead 1; one origin-only commit → behind 1
+        // once the local repo has fetched it.
+        commit_file(&local, "b.txt", "b\n");
+        commit_file(&origin, "c.txt", "c\n");
+        local
+            .find_remote("origin")
+            .unwrap()
+            .fetch(&["refs/heads/*:refs/remotes/origin/*"], None, None)
+            .unwrap();
+
+        let status = git_status_blocking(local_path.to_str().unwrap()).unwrap();
+        assert_eq!(status.ahead, Some(1), "status={status:?}");
+        assert_eq!(status.behind, Some(1), "status={status:?}");
+    }
+
+    #[test]
+    fn status_omits_ahead_behind_without_upstream() {
+        let scratch = Scratch::new();
+        let repo_path = scratch.0.join("plain");
+        let repo = Repository::init(&repo_path).unwrap();
+        commit_file(&repo, "a.txt", "a\n");
+
+        let status = git_status_blocking(repo_path.to_str().unwrap()).unwrap();
+        assert_eq!(status.ahead, None, "status={status:?}");
+        assert_eq!(status.behind, None, "status={status:?}");
     }
 }

@@ -270,6 +270,9 @@ export interface GitFileEntry {
 
 export interface GitStatus {
   branch: string;
+  /** Commits ahead of / behind the upstream; absent when there is none. */
+  ahead?: number;
+  behind?: number;
   staged: GitFileEntry[];
   unstaged: GitFileEntry[];
   untracked: GitFileEntry[];
