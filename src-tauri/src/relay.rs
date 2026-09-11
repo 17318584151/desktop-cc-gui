@@ -475,7 +475,7 @@ async fn cf_json(response: reqwest::Response, what: &str) -> Result<serde_json::
 /// that sends people chasing permissions they already granted. Name the real
 /// problem instead.
 const ACCOUNT_TOKEN_NEEDS_ID: &str =
-    "这个 Token 是账号令牌（cfat_ 开头），Cloudflare 不允许它列出账号：请在下方填写 Account ID（在 Cloudflare 控制台右侧栏可复制），或改用用户令牌（My Profile → API Tokens 里创建）";
+    "这个 Token 是账户令牌（cfat_ 开头），Cloudflare 不允许它列出账户：请在下方填写 Account ID（在 Cloudflare 控制台右侧栏可复制），或改用用户令牌（My Profile → API Tokens 里创建）";
 
 /// Resolve the account to deploy into. An id the caller typed wins outright:
 /// account-owned tokens can only ever address `/accounts/{id}/…`, so there is

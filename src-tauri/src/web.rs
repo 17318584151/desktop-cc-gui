@@ -99,6 +99,17 @@ pub fn web_device_revoke(app: tauri::AppHandle, id: String) -> Result<bool, Stri
     Ok(ok)
 }
 
+/// Let a paired device in. The pairing request created the row; this is the
+/// only thing that flips it to approved, so a key without a human on the
+/// desktop never grants access.
+#[tauri::command]
+pub fn web_device_approve(app: tauri::AppHandle, id: String) -> Result<bool, String> {
+    let state = app.state::<crate::AppState>();
+    let ok = state.db.web_device_approve(&id, now_ms())?;
+    notify_devices(&app);
+    Ok(ok)
+}
+
 #[tauri::command]
 pub async fn web_access_start(app: tauri::AppHandle) -> Result<WebAccessInfo, String> {
     let state = app.state::<crate::AppState>();
@@ -294,7 +305,14 @@ fn gate(ctx: &WebCtx, headers: &axum::http::HeaderMap) -> Gate {
     if stale {
         let _ = db.web_device_touch(&id, "", now);
     }
-    Gate::Waiting(unlock_response(unlock_page(&id, None), &id, first_seen))
+    // A row only exists once this browser submitted a correct key, so its
+    // presence means "paired, waiting for the desktop to approve" — showing
+    // the key form again would read as the pairing having failed.
+    let html = match device {
+        Some(_) => waiting_page(),
+        None => unlock_page(&id, None),
+    };
+    Gate::Waiting(unlock_response(html, &id, first_seen))
 }
 
 /// Key page: entered once per browser, then that browser is remembered.
@@ -332,13 +350,42 @@ button{{width:100%;padding:10px;border:0;border-radius:10px;background:#3b82f6;c
 {code}
 <form method="post" action="/unlock">
 <input name="key" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="8 位密钥" autofocus>
-<button type="submit">授权此设备</button>
+<button type="submit">配对</button>
 </form>
 {message}
-<p>密钥在电脑上的「设置 → 远程访问」里显示：每串密钥只能配对一台设备，配对成功后自动更换。本设备授权后不再询问。</p>
+<p>密钥在电脑上的「设置 → 远程访问」里显示：每串密钥只能配对一台设备，配对成功后自动更换。配对后还需在电脑上点一次「授权」，本设备才能进入。</p>
 </div>
 </body></html>"#
     )
+}
+
+/// Page shown after a correct pairing key, until the desktop approves the
+/// device. It reloads itself, so the approval lands without the user doing
+/// anything on the phone.
+fn waiting_page() -> String {
+    r#"<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="2">
+<title>CC GUI 等待授权</title>
+<style>
+:root{color-scheme:dark}
+body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
+background:#141414;color:#ebebeb;font:15px/1.6 -apple-system,system-ui,"Segoe UI",sans-serif}
+.card{width:320px;padding:26px 24px;border:1px solid #2c2c2c;border-radius:16px;background:#1b1b1b}
+h1{margin:0 0 10px;font-size:17px;font-weight:600}
+p{margin:10px 0 0;color:#a3a3a3;font-size:13.5px}
+.dot{display:inline-block;width:8px;height:8px;margin-right:8px;border-radius:50%;
+background:#a7e05f;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+</style></head>
+<body><div class="card">
+<h1><span class="dot"></span>等待电脑端授权</h1>
+<p>密钥已提交。请在电脑的「设置 → 远程访问 → 授权访问」里找到这台设备，点「授权」。</p>
+<p>授权后本页会自动进入，无需操作。</p>
+</div>
+</body></html>"#
+    .to_string()
 }
 
 /// Page + cookie for a device that still has to unlock.
@@ -389,19 +436,15 @@ async fn unlock_handler(
         return unlock_response(unlock_page(&device, Some("密钥不正确")), &device, false);
     }
 
+    // Correct key: file a pairing request. The device is remembered but NOT
+    // approved — only the desktop's 授权 does that, which is the whole point of
+    // the switch: holding the key alone never lets a browser in.
     let _ = db.web_device_touch(&device, &user_agent(&headers), now_ms());
-    let _ = db.web_device_approve(&device, now_ms());
     // One-time code: the moment a device pairs with it, a fresh one takes
     // over, so the same key can never pair a second device.
     let _ = crate::settings::rotate_web_auth_key(&ctx.app);
     notify_devices(&ctx.app);
-    // Back to the app; the cookie is already in the browser.
-    (
-        StatusCode::SEE_OTHER,
-        [(header::LOCATION, "/")],
-        "".to_string(),
-    )
-        .into_response()
+    unlock_response(waiting_page(), &device, false)
 }
 
 /// `application/x-www-form-urlencoded` field lookup.
@@ -1352,6 +1395,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         // is already device-scoped, and the desktop page would otherwise be
         // the only way to approve a browser the user is holding.
         "web_devices" => ser(web_devices(app.clone())),
+        "web_device_approve" => {
+            let a: DeviceIdArgs = parse_args(&raw)?;
+            ser(web_device_approve(app.clone(), a.id))
+        }
         "web_device_revoke" => {
             let a: DeviceIdArgs = parse_args(&raw)?;
             ser(web_device_revoke(app.clone(), a.id))

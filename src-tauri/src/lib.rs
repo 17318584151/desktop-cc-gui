@@ -269,6 +269,12 @@ pub fn run() {
             web::web_access_start,
             web::web_access_stop,
             web::web_access_status,
+            // Device rows: the bridge already dispatched these for phones,
+            // but the desktop page invokes them over IPC too — without this
+            // registration its list silently stayed empty.
+            web::web_devices,
+            web::web_device_approve,
+            web::web_device_revoke,
             relay::web_relay_start,
             relay::web_relay_stop,
             relay::web_relay_status,

@@ -231,6 +231,18 @@ export function WebAccessSection() {
     [refreshDevices],
   );
 
+  // Approving is what actually lets a paired browser in — the key alone only
+  // files the request.
+  const approveDevice = useCallback(
+    (id: string) => {
+      void ipc
+        .webDeviceApprove(id)
+        .then(refreshDevices)
+        .catch(() => {});
+    },
+    [refreshDevices],
+  );
+
   const start = useCallback(async () => {
     setBusy(true);
     try {
@@ -589,36 +601,66 @@ export function WebAccessSection() {
         </SettingsCard>
         </div>
         </div>
-        {/* 已授权设备：独立功能区 */}
+        {/* 设备授权：配对后的浏览器先在这里等待，桌面上点「授权」才放行 */}
         <SettingsCard>
-          <SettingsRow
-            label={t("settings.webDevices")}
-          />
+          <SettingsRow label={t("settings.webDevices")} />
           {devices.length === 0 ? (
             <p className="pt-3 pr-3 pb-3 text-body-2-regular text-text-secondary">
               {t("settings.webDevicesEmpty")}
             </p>
           ) : (
             <div className="flex w-full flex-col">
-              {devices.map((device) => (
-                <div
-                  key={device.id}
-                  className="flex w-full items-center gap-3 border-t border-separator-border py-2.5 pr-3"
-                >
-                  <Smartphone className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-body-regular text-text-primary">
-                      {summarizeUa(device.userAgent) || t("settings.webDeviceAnonymous")}
-                    </span>
-                    <span className="text-body-2-regular text-text-secondary">
-                      {t("settings.webDeviceCode")} {deviceCode(device.id)}
-                    </span>
+              {devices.map((device) => {
+                const approved = device.approvedAt !== null;
+                return (
+                  <div
+                    key={device.id}
+                    className="flex w-full items-center gap-3 border-t border-separator-border py-2.5 pr-3"
+                  >
+                    <Smartphone
+                      className="size-4 shrink-0 text-foreground-icon-tertiary"
+                      aria-hidden
+                    />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-body-regular text-text-primary">
+                        {summarizeUa(device.userAgent) || t("settings.webDeviceAnonymous")}
+                      </span>
+                      <span className="text-body-2-regular text-text-secondary">
+                        {deviceCode(device.id)} ·{" "}
+                        {approved
+                          ? t("settings.webDeviceApproved")
+                          : t("settings.webDevicePending")}
+                      </span>
+                    </div>
+                    {approved ? (
+                      <Button
+                        size="small"
+                        variant="secondary"
+                        onClick={() => revoke(device.id)}
+                      >
+                        {t("settings.webDeviceRevoke")}
+                      </Button>
+                    ) : (
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button
+                          size="small"
+                          variant="secondary"
+                          onClick={() => revoke(device.id)}
+                        >
+                          {t("settings.webDeviceCancel")}
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="primary"
+                          onClick={() => approveDevice(device.id)}
+                        >
+                          {t("settings.webDeviceApprove")}
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                  <Button size="small" variant="secondary" onClick={() => revoke(device.id)}>
-                    {t("settings.webDeviceRevoke")}
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </SettingsCard>
