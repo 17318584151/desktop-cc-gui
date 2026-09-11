@@ -154,21 +154,6 @@ pub(crate) fn parse_tool_args_value(value: &Value) -> Option<Value> {
     }
 }
 
-/// Check if a tool name is a dedicated task/todo management tool.
-#[allow(dead_code)]
-pub(crate) fn is_todo_tool(name: &str) -> bool {
-    let lower = name.trim().to_ascii_lowercase();
-    lower == "todowrite"
-        || lower == "todo_write"
-        || lower == "todo"
-        || lower == "todos"
-        || lower == "taskcreate"
-        || lower == "task_create"
-        || lower == "taskupdate"
-        || lower == "task_update"
-        || lower == "task"
-}
-
 /// Tool-call start: name plus parsed args (path / todos derived from args).
 pub(crate) fn tool_call_message(name: impl Into<String>, args: Option<&Value>) -> EngineEvent {
     let name = name.into();
