@@ -70,6 +70,8 @@ pub struct WebDevice {
     pub created_at: i64,
     pub last_seen_at: i64,
     pub approved_at: Option<i64>,
+    /// Name the user gave this device; empty falls back to the user agent.
+    pub name: Option<String>,
 }
 
 /// Tell every attached UI (webview and phones) that the device list moved.
@@ -95,6 +97,15 @@ pub fn rotate_web_pair_key(app: tauri::AppHandle) -> Result<String, String> {
     Ok(crate::settings::get_app_settings()?
         .web_auth_key
         .unwrap_or_default())
+}
+
+/// Give a paired device a name the user will recognise in the list.
+#[tauri::command]
+pub fn web_device_rename(app: tauri::AppHandle, id: String, name: String) -> Result<bool, String> {
+    let state = app.state::<crate::AppState>();
+    let ok = state.db.web_device_set_name(&id, &name)?;
+    notify_devices(&app);
+    Ok(ok)
 }
 
 #[tauri::command]
@@ -1538,6 +1549,7 @@ mod tests {
             created_at: 0,
             last_seen_at: 0,
             approved_at,
+            name: None,
         }
     }
 

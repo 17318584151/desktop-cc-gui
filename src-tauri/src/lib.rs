@@ -274,6 +274,7 @@ pub fn run() {
             // registration its list silently stayed empty.
             web::web_devices,
             web::web_device_approve,
+            web::web_device_rename,
             web::web_device_revoke,
             // Key rotation stays desktop-only: a phone rotating it would lock
             // every other device out.

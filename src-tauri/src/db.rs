@@ -102,7 +102,7 @@ impl Db {
         let conn = self.0.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT id, user_agent, created_at, last_seen_at, approved_at
+                "SELECT id, user_agent, created_at, last_seen_at, approved_at, name
                  FROM web_devices ORDER BY COALESCE(approved_at, 0) DESC, last_seen_at DESC",
             )
             .map_err(|e| e.to_string())?;
@@ -114,6 +114,7 @@ impl Db {
                     created_at: r.get(2)?,
                     last_seen_at: r.get(3)?,
                     approved_at: r.get(4)?,
+                    name: r.get(5)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -125,7 +126,7 @@ impl Db {
     pub fn web_device_get(&self, id: &str) -> Result<Option<crate::web::WebDevice>, String> {
         let conn = self.0.lock();
         conn.query_row(
-            "SELECT id, user_agent, created_at, last_seen_at, approved_at
+            "SELECT id, user_agent, created_at, last_seen_at, approved_at, name
              FROM web_devices WHERE id=?1",
             rusqlite::params![id],
             |r| {
@@ -135,6 +136,7 @@ impl Db {
                     created_at: r.get(2)?,
                     last_seen_at: r.get(3)?,
                     approved_at: r.get(4)?,
+                    name: r.get(5)?,
                 })
             },
         )
@@ -165,6 +167,20 @@ impl Db {
             .execute(
                 "UPDATE web_devices SET approved_at=?2 WHERE id=?1",
                 rusqlite::params![id, now],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(changed > 0)
+    }
+
+    /// Remember a name for a paired device. An empty name clears it, so the row
+    /// falls back to the user-agent summary on its own.
+    pub fn web_device_set_name(&self, id: &str, name: &str) -> Result<bool, String> {
+        let conn = self.0.lock();
+        let trimmed = name.trim();
+        let changed = conn
+            .execute(
+                "UPDATE web_devices SET name=?2 WHERE id=?1",
+                rusqlite::params![id, (!trimmed.is_empty()).then_some(trimmed)],
             )
             .map_err(|e| e.to_string())?;
         Ok(changed > 0)
@@ -403,7 +419,8 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             user_agent TEXT NOT NULL DEFAULT '',
             created_at INTEGER NOT NULL,
             last_seen_at INTEGER NOT NULL,
-            approved_at INTEGER
+            approved_at INTEGER,
+            name TEXT
         );
         CREATE TABLE IF NOT EXISTS usage_ledger(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -442,6 +459,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             [],
         )?;
     }
+    // Additive migration: a name the user gave a paired device, shown instead
+    // of the user-agent summary.
+    let has_device_name = conn
+        .prepare("PRAGMA table_info(web_devices)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .flatten()
+        .any(|name| name == "name");
+    if !has_device_name {
+        conn.execute("ALTER TABLE web_devices ADD COLUMN name TEXT", [])?;
+    }
+
     // Additive migration: user-defined workspace order (drag reorder).
     let has_sort_order = conn
         .prepare("PRAGMA table_info(workspaces)")?

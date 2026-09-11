@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { QRCodeSVG } from "qrcode.react";
 import CircleAlert from "lucide-react/dist/esm/icons/circle-alert";
 import Copy from "lucide-react/dist/esm/icons/copy";
+import Pencil from "lucide-react/dist/esm/icons/pencil";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
 import Smartphone from "lucide-react/dist/esm/icons/smartphone";
 import Check from "lucide-react/dist/esm/icons/check";
@@ -244,6 +245,21 @@ export function WebAccessSection() {
         .catch(() => {});
     },
     [refreshDevices],
+  );
+
+  /** Id of the row being renamed, and the value in its field. */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const saveRename = useCallback(
+    (id: string) => {
+      setRenaming(null);
+      void ipc
+        .webDeviceRename(id, renameValue.trim())
+        .then(refreshDevices)
+        .catch(() => {});
+    },
+    [renameValue, refreshDevices],
   );
 
   // Approving is what actually lets a paired browser in — the key alone only
@@ -649,25 +665,62 @@ export function WebAccessSection() {
                       className="size-4 shrink-0 text-foreground-icon-tertiary"
                       aria-hidden
                     />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-body-regular text-text-primary">
-                        {summarizeUa(device.userAgent) || t("settings.webDeviceAnonymous")}
-                      </span>
-                      <span className="text-body-2-regular text-text-secondary">
-                        {deviceCode(device.id)} ·{" "}
-                        {approved
-                          ? t("settings.webDeviceApproved")
-                          : t("settings.webDevicePending")}
-                      </span>
-                    </div>
-                    {approved ? (
-                      <Button
+                    {renaming === device.id ? (
+                      <Input
+                        autoFocus
                         size="small"
-                        variant="secondary"
-                        onClick={() => revoke(device.id)}
-                      >
-                        {t("settings.webDeviceRevoke")}
-                      </Button>
+                        aria-label={t("settings.webDeviceRename")}
+                        placeholder={summarizeUa(device.userAgent)}
+                        value={renameValue}
+                        onChange={setRenameValue}
+                        className="min-w-0 flex-1"
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") saveRename(device.id);
+                          if (event.key === "Escape") setRenaming(null);
+                        }}
+                        onBlur={() => {
+                          // Enter already saved and cleared `renaming`; a second
+                          // call would just repeat the same write.
+                          if (renaming === device.id) saveRename(device.id);
+                        }}
+                      />
+                    ) : (
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-body-regular text-text-primary">
+                          {device.name ||
+                            summarizeUa(device.userAgent) ||
+                            t("settings.webDeviceAnonymous")}
+                        </span>
+                        <span className="truncate text-body-2-regular text-text-secondary">
+                          {deviceCode(device.id)} ·{" "}
+                          {approved
+                            ? t("settings.webDeviceApproved")
+                            : t("settings.webDevicePending")}
+                        </span>
+                      </div>
+                    )}
+                    {approved ? (
+                      <>
+                        <button
+                          type="button"
+                          aria-label={t("settings.webDeviceRename")}
+                          title={t("settings.webDeviceRename")}
+                          onClick={() => {
+                            setRenameValue(device.name ?? "");
+                            setRenaming(device.id);
+                          }}
+                          className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
+                        >
+                          <Pencil className="size-4" aria-hidden />
+                        </button>
+                        <Button
+                          size="small"
+                          variant="secondary"
+                          onClick={() => revoke(device.id)}
+                        >
+                          {t("settings.webDeviceRevoke")}
+                        </Button>
+                      </>
                     ) : (
                       <div className="flex shrink-0 items-center gap-2">
                         <Button

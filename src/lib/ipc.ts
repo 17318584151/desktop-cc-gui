@@ -332,6 +332,8 @@ export interface WebDevice {
   createdAt: number;
   lastSeenAt: number;
   approvedAt: number | null;
+  /** Name the user gave it; empty falls back to the user-agent summary. */
+  name: string | null;
 }
 
 export interface WebAccessInfo {
@@ -712,6 +714,8 @@ export const ipc = {
   webDevices: () => invoke<WebDevice[]>("web_devices"),
   webDeviceApprove: (id: string) => invoke<boolean>("web_device_approve", { id }),
   webDeviceRevoke: (id: string) => invoke<boolean>("web_device_revoke", { id }),
+  webDeviceRename: (id: string, name: string) =>
+    invoke<boolean>("web_device_rename", { id, name }),
   webRelayStatus: () => invoke<RelayInfo | null>("web_relay_status"),
   webRelayStart: (url: string, key: string) => invoke<RelayInfo>("web_relay_start", { url, key }),
   webRelayStop: () => invoke<void>("web_relay_stop"),
