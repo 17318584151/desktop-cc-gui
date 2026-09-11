@@ -359,73 +359,75 @@ export function WebAccessSection() {
             )}
           </div>
         </SettingsCard>
-        {info && (
-          <SettingsCard>
-            <SettingsRow
-              label={t("settings.webAuth")}
+        {/* The auth switch, pairing key and device list are settings-level:
+            they belong to the relay, not to the LAN bridge's runtime — and
+            hiding them whenever the bridge was stopped read as the whole
+            feature having disappeared. */}
+        <SettingsCard>
+          <SettingsRow
+            label={t("settings.webAuth")}
+          >
+            <Button
+              size="small"
+              variant={authEnabled ? "secondary" : "primary"}
+              disabled={authBusy}
+              onClick={() => void setAuth(!authEnabled)}
             >
-              <Button
-                size="small"
-                variant={authEnabled ? "secondary" : "primary"}
-                disabled={authBusy}
-                onClick={() => void setAuth(!authEnabled)}
-              >
-                {authEnabled ? t("settings.webAuthDisable") : t("settings.webAuthEnable")}
-              </Button>
-            </SettingsRow>
-            {authEnabled && authKey && (
-              <div className="flex w-full flex-col gap-2 px-3 pt-1 pb-3">
-                <span className="text-body-2-regular text-text-secondary">
-                  {t("settings.webAuthKeyHint")}
+              {authEnabled ? t("settings.webAuthDisable") : t("settings.webAuthEnable")}
+            </Button>
+          </SettingsRow>
+          {authEnabled && authKey && (
+            <div className="flex w-full flex-col gap-2 px-3 pt-1 pb-3">
+              <span className="text-body-2-regular text-text-secondary">
+                {t("settings.webAuthKeyHint")}
+              </span>
+              <div className="flex h-9 w-52 items-center gap-1 rounded-2lg bg-background-tertiary-default pr-1 pl-3">
+                <span className="flex-1 font-mono text-title-3 tracking-[0.18em] text-text-primary">
+                  {authKey}
                 </span>
-                <div className="flex h-9 w-52 items-center gap-1 rounded-2lg bg-background-tertiary-default pr-1 pl-3">
-                  <span className="flex-1 font-mono text-title-3 tracking-[0.18em] text-text-primary">
-                    {authKey}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={t("settings.webAuthCopy")}
-                    title={t("settings.webAuthCopy")}
-                    onClick={() => void navigator.clipboard.writeText(authKey)}
-                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
-                  >
-                    <Copy className="size-4" aria-hidden />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  aria-label={t("settings.webAuthCopy")}
+                  title={t("settings.webAuthCopy")}
+                  onClick={() => void navigator.clipboard.writeText(authKey)}
+                  className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
+                >
+                  <Copy className="size-4" aria-hidden />
+                </button>
               </div>
-            )}
-            <SettingsRow
-              label={t("settings.webDevices")}
-            />
-            {devices.length === 0 ? (
-              <p className="px-3 pb-3 text-body-2-regular text-text-secondary">
-                {t("settings.webDevicesEmpty")}
-              </p>
-            ) : (
-              <div className="flex w-full flex-col">
-                {devices.map((device) => (
-                  <div
-                    key={device.id}
-                    className="flex w-full items-center gap-3 border-t border-separator-border px-3 py-2.5"
-                  >
-                    <Smartphone className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-body-regular text-text-primary">
-                        {summarizeUa(device.userAgent) || t("settings.webDeviceAnonymous")}
-                      </span>
-                      <span className="text-body-2-regular text-text-secondary">
-                        {t("settings.webDeviceCode")} {deviceCode(device.id)}
-                      </span>
-                    </div>
-                    <Button size="small" variant="secondary" onClick={() => revoke(device.id)}>
-                      {t("settings.webDeviceRevoke")}
-                    </Button>
+            </div>
+          )}
+          <SettingsRow
+            label={t("settings.webDevices")}
+          />
+          {devices.length === 0 ? (
+            <p className="px-3 pb-3 text-body-2-regular text-text-secondary">
+              {t("settings.webDevicesEmpty")}
+            </p>
+          ) : (
+            <div className="flex w-full flex-col">
+              {devices.map((device) => (
+                <div
+                  key={device.id}
+                  className="flex w-full items-center gap-3 border-t border-separator-border px-3 py-2.5"
+                >
+                  <Smartphone className="size-4 shrink-0 text-foreground-icon-tertiary" aria-hidden />
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-body-regular text-text-primary">
+                      {summarizeUa(device.userAgent) || t("settings.webDeviceAnonymous")}
+                    </span>
+                    <span className="text-body-2-regular text-text-secondary">
+                      {t("settings.webDeviceCode")} {deviceCode(device.id)}
+                    </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </SettingsCard>
-        )}
+                  <Button size="small" variant="secondary" onClick={() => revoke(device.id)}>
+                    {t("settings.webDeviceRevoke")}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </SettingsCard>
         </>
       )}
     </div>
