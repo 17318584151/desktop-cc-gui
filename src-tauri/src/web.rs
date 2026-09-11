@@ -488,8 +488,13 @@ struct RelayDeployPackArgs {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RelayDeployArgs {
     token: String,
+    /// Absent for user tokens, which can list their accounts; required in
+    /// practice for account-owned ones (`cfat_…`).
+    #[serde(default)]
+    account_id: Option<String>,
     key: Option<String>,
 }
 
@@ -1341,7 +1346,7 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         }
         "relay_deploy" => {
             let a: RelayDeployArgs = parse_args(&raw)?;
-            ser(crate::relay::relay_deploy(a.token, a.key).await)
+            ser(crate::relay::relay_deploy(a.token, a.account_id, a.key).await)
         }
         // Device approval is the one management action a phone may take: it
         // is already device-scoped, and the desktop page would otherwise be

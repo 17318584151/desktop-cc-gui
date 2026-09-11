@@ -68,6 +68,11 @@ export function WebAccessSection() {
    *  deploying is a once-per-user action, so storing a credential that can
    *  edit the whole account buys nothing. */
   const [apiToken, setApiToken] = useState("");
+  /** Cloudflare Account ID, for account-owned tokens (`cfat_…`): those may not
+   *  list accounts, so the id has to come from the user. Left blank with a user
+   *  token, the backend reads the account by itself. Not a credential, but it
+   *  lives next to the token and is only useful while one is in the field. */
+  const [accountId, setAccountId] = useState("");
   const [deployBusy, setDeployBusy] = useState(false);
   const [deployStatus, setDeployStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [devices, setDevices] = useState<WebDevice[]>([]);
@@ -268,16 +273,21 @@ export function WebAccessSection() {
       setDeployBusy(true);
       setDeployStatus(null);
       try {
-        const result = await ipc.relayDeploy(apiToken.trim(), relayKey.trim() || null);
+        const result = await ipc.relayDeploy(
+          apiToken.trim(),
+          accountId.trim() || null,
+          relayKey.trim() || null,
+        );
         setRelayUrl(result.url);
         setRelayKey(result.key);
         // Persist right away: the key is uploaded as a Cloudflare secret, so
         // Cloudflare never shows it back — losing it here would mean the
         // Worker can only be used by deploying (and re-keying) again.
         await saveRelayFields(result.url, result.key);
-        // The token is a one-shot credential: drop it the moment the deploy
-        // lands, so it cannot sit in a running window.
+        // Both fields are one-shot for this action: the token is a secret that
+        // has just done its job, and the id is only meaningful next to one.
         setApiToken("");
+        setAccountId("");
         setDeployStatus({
           ok: true,
           text: t("settings.webRelayDeployed", { account: result.accountName }),
@@ -291,7 +301,7 @@ export function WebAccessSection() {
         setDeployBusy(false);
       }
     })();
-  }, [apiToken, relayKey, saveRelayFields, t]);
+  }, [apiToken, accountId, relayKey, saveRelayFields, t]);
 
   /** Write the whole wrangler project (source + config + this key) to disk, so
    *  the user can read it and `npx wrangler deploy` it themselves. */
@@ -429,19 +439,39 @@ export function WebAccessSection() {
           <SettingsRow
             label={t("settings.webRelayDeploy")}
             labelAdornment={
-              <InfoTip label={t("settings.webRelayDeployHint")} icon={CircleAlert} />
+              // One trigger for both jobs: the hint before anything happened,
+              // the Cloudflare answer afterwards — red when the deploy failed,
+              // green when it landed. A second icon would have squeezed the
+              // label onto two lines in a three-column row.
+              <InfoTip
+                label={deployStatus ? deployStatus.text : t("settings.webRelayDeployHint")}
+                icon={CircleAlert}
+                tone={deployStatus ? (deployStatus.ok ? "success" : "error") : "hint"}
+              />
             }
           >
-            <Button
-              size="small"
-              variant="primary"
-              disabled={deployBusy || !apiToken.trim()}
-              onClick={deployRelay}
-            >
-              {t("settings.webRelayDeployNow")}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="small" variant="secondary" onClick={exportDeployPack}>
+                {t("settings.webRelayExportSource")}
+              </Button>
+              <Button
+                size="small"
+                variant="primary"
+                disabled={deployBusy || !apiToken.trim()}
+                onClick={deployRelay}
+              >
+                {t("settings.webRelayDeployNow")}
+              </Button>
+            </div>
           </SettingsRow>
           <div className="flex w-full flex-col gap-2 pt-3 pr-3 pb-3">
+            <Input
+              aria-label={t("settings.webRelayAccountId")}
+              size="small"
+              placeholder={t("settings.webRelayAccountIdPlaceholder")}
+              value={accountId}
+              onChange={setAccountId}
+            />
             <Input
               aria-label={t("settings.webRelayApiKey")}
               type="password"
@@ -450,36 +480,6 @@ export function WebAccessSection() {
               value={apiToken}
               onChange={setApiToken}
             />
-            <div className="flex items-center gap-2">
-              <Button size="small" variant="secondary" onClick={exportDeployPack}>
-                {t("settings.webRelayExportSource")}
-              </Button>
-              {deployStatus && (
-                // Icon only (the message can be long); hovering it reveals the
-                // whole Cloudflare answer, so the row keeps its shape.
-                <Tooltip delay={150}>
-                  <Focusable>
-                    <button
-                      type="button"
-                      aria-label={deployStatus.text}
-                      className={cx(
-                        "flex size-5 shrink-0 cursor-help items-center justify-center",
-                        deployStatus.ok
-                          ? "text-notification-success-foreground"
-                          : "text-text-error-primary",
-                      )}
-                    >
-                      {deployStatus.ok ? (
-                        <Check className="size-4" aria-hidden />
-                      ) : (
-                        <CircleAlert className="size-4" aria-hidden />
-                      )}
-                    </button>
-                  </Focusable>
-                  <TooltipContent className="max-w-[320px]">{deployStatus.text}</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
           </div>
         </SettingsCard>
         </div>

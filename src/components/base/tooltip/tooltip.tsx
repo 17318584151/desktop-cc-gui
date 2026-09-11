@@ -84,9 +84,13 @@ export function TooltipContent({
 export function InfoTip({
   label,
   icon: Icon = Info,
+  tone = "hint",
 }: {
   label: string;
   icon?: ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
+  /** Lets the trigger double as a status light: red while something failed,
+   *  green once it went through. "hint" is the ordinary muted ⓘ. */
+  tone?: "hint" | "error" | "success";
 }) {
   const [hoverOpen, setHoverOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -126,7 +130,14 @@ export function InfoTip({
             e.stopPropagation();
             setPinned((p) => !p);
           }}
-          className="inline-flex shrink-0 cursor-help items-center justify-center text-foreground-icon-quaternary transition-colors hover:text-text-secondary"
+          className={cx(
+            "inline-flex shrink-0 cursor-help items-center justify-center transition-colors",
+            tone === "error"
+              ? "text-text-error-primary"
+              : tone === "success"
+                ? "text-notification-success-foreground"
+                : "text-foreground-icon-quaternary hover:text-text-secondary",
+          )}
         >
           <Icon className="size-3.5" aria-hidden />
         </button>

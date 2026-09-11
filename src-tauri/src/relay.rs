@@ -470,7 +470,28 @@ async fn cf_json(response: reqwest::Response, what: &str) -> Result<serde_json::
     Err(format!("{what}失败（HTTP {status}）：{detail}"))
 }
 
-async fn cf_account(client: &reqwest::Client, token: &str) -> Result<(String, String), String> {
+/// Account-owned tokens (`cfat_…`) cannot call user-level endpoints at all, so
+/// Cloudflare answers `GET /accounts` with "Invalid access token" — a message
+/// that sends people chasing permissions they already granted. Name the real
+/// problem instead.
+const ACCOUNT_TOKEN_NEEDS_ID: &str =
+    "这个 Token 是账号令牌（cfat_ 开头），Cloudflare 不允许它列出账号：请在下方填写 Account ID（在 Cloudflare 控制台右侧栏可复制），或改用用户令牌（My Profile → API Tokens 里创建）";
+
+/// Resolve the account to deploy into. An id the caller typed wins outright:
+/// account-owned tokens can only ever address `/accounts/{id}/…`, so there is
+/// nothing to discover. Without one we ask Cloudflare which accounts the token
+/// can see — the user-token path, one field and zero typing.
+async fn cf_account(
+    client: &reqwest::Client,
+    token: &str,
+    account_id: Option<&str>,
+) -> Result<(String, String), String> {
+    if let Some(id) = account_id.map(str::trim).filter(|id| !id.is_empty()) {
+        return Ok((id.to_string(), cf_account_name(client, token, id).await));
+    }
+    if token.starts_with("cfat_") {
+        return Err(ACCOUNT_TOKEN_NEEDS_ID.to_string());
+    }
     let response = client
         .get(format!("{API_BASE}/accounts"))
         .bearer_auth(token)
@@ -497,6 +518,30 @@ async fn cf_account(client: &reqwest::Client, token: &str) -> Result<(String, St
         .unwrap_or_default()
         .to_string();
     Ok((id, name))
+}
+
+/// Name for the deploy result line. Purely cosmetic: a token scoped to Workers
+/// and nothing else may not be allowed to read it, and that must never fail a
+/// deploy that would otherwise work.
+async fn cf_account_name(client: &reqwest::Client, token: &str, id: &str) -> String {
+    let Ok(response) = client
+        .get(format!("{API_BASE}/accounts/{id}"))
+        .bearer_auth(token)
+        .send()
+        .await
+    else {
+        return id.to_string();
+    };
+    let Ok(value) = cf_json(response, "读取账号").await else {
+        return id.to_string();
+    };
+    value
+        .get("result")
+        .and_then(|result| result.get("name"))
+        .and_then(|v| v.as_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(id)
+        .to_string()
 }
 
 async fn cf_subdomain(
@@ -530,12 +575,23 @@ async fn cf_subdomain(
 /// class (via `migrations`), its binding, and the relay key all ride along in
 /// the upload metadata, which is why nobody has to run wrangler. The relay URL
 /// is only reported back — the settings page decides whether to fill it.
+///
+/// `account_id` is optional: user tokens can list their accounts, account-owned
+/// ones (which Cloudflare now hands out as `cfat_…`) cannot, so for those the
+/// page asks for the id instead.
 #[tauri::command]
-pub async fn relay_deploy(token: String, key: Option<String>) -> Result<RelayDeployResult, String> {
+pub async fn relay_deploy(
+    token: String,
+    account_id: Option<String>,
+    key: Option<String>,
+) -> Result<RelayDeployResult, String> {
     let token = token.trim().to_string();
     if token.is_empty() {
         return Err("缺少 Cloudflare API Token".to_string());
     }
+    let account_id = account_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let key = key
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -546,10 +602,24 @@ pub async fn relay_deploy(token: String, key: Option<String>) -> Result<RelayDep
         .build()
         .map_err(|error| error.to_string())?;
 
-    let (account_id, account_name) = cf_account(&client, &token).await?;
+    let (account_id, account_name) = cf_account(&client, &token, account_id.as_deref()).await?;
     let subdomain = cf_subdomain(&client, &token, &account_id).await?;
 
-    let metadata = serde_json::json!({
+    // A fresh script needs the Durable Object class declared in the upload's
+    // migrations; an existing one already owns it, and Cloudflare rejects a
+    // migration tag it has seen (old_tag verifies the live tag, and we do not
+    // track it here). So: declare only when creating.
+    let exists = client
+        .get(format!(
+            "{API_BASE}/accounts/{account_id}/workers/scripts/{SCRIPT_NAME}"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false);
+
+    let mut metadata = serde_json::json!({
         "main_module": "index.js",
         "compatibility_date": "2025-01-01",
         "bindings": [
@@ -557,8 +627,15 @@ pub async fn relay_deploy(token: String, key: Option<String>) -> Result<RelayDep
             // secret_text: the dashboard never shows the value back.
             { "type": "secret_text", "name": "RELAY_KEY", "text": key.clone() },
         ],
-        "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Relay"] }],
     });
+    if !exists {
+        // An object, not the array wrangler.toml shows: the API unmarshals it
+        // into ActorMigrations ({new_tag, old_tag?, steps[]}).
+        metadata["migrations"] = serde_json::json!({
+            "new_tag": "v1",
+            "steps": [{ "new_sqlite_classes": ["Relay"] }],
+        });
+    }
     let form = reqwest::multipart::Form::new()
         .part(
             "metadata",
@@ -568,7 +645,10 @@ pub async fn relay_deploy(token: String, key: Option<String>) -> Result<RelayDep
         )
         .part(
             "index.js",
+            // Cloudflare matches the part by filename as well as field name;
+            // a filename-less part reads as "No such module: index.js".
             reqwest::multipart::Part::text(WORKER_SOURCE)
+                .file_name("index.js")
                 .mime_str("application/javascript+module")
                 .map_err(|error| error.to_string())?,
         );
