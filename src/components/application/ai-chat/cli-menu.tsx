@@ -1,8 +1,9 @@
 import { OmpSpeedSection } from "./omp-speed-section";
+import { filterModels, groupModelsByProvider, type ModelGroup } from "./model-list";
 import { supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Ref, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import Check from "lucide-react/dist/esm/icons/check";
@@ -212,14 +213,14 @@ function EngineRow({
   selected,
   flyoutOpen,
   onSelect,
-  onHover,
 }: {
   option: MenuOption;
   selected: boolean;
   /** This engine's flyout is currently open. */
   flyoutOpen: boolean;
+  /** Row click: show this engine's model list (the engine itself switches
+   *  when a model is picked there). */
   onSelect: () => void;
-  onHover: () => void;
 }) {
   return (
     <button
@@ -228,8 +229,6 @@ function EngineRow({
       title={option.disabled ? option.disabledReason : undefined}
       aria-pressed={selected}
       onClick={onSelect}
-      onMouseEnter={onHover}
-      onFocus={onHover}
       className={cx(
         "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 outline-none transition-colors",
         selected || flyoutOpen
@@ -318,32 +317,6 @@ function ModelRow({
 
 /** The flyout's effort section: label with a keyed blur-in value, the
  *  faster/smarter captions, and the five-stop slider. */
-interface ModelGroup {
-  /** Provider id, "" for rows with no provider. */
-  key: string;
-  rows: ModelOption[];
-}
-
-/** Bucket rows by provider, first-appearance order. Returns a single
- *  keyless group when fewer than two providers are present — layering only
- *  earns its headers when it actually separates sources. */
-function groupModelsByProvider(models: ModelOption[]): ModelGroup[] {
-  const groups: ModelGroup[] = [];
-  const byKey = new Map<string, ModelGroup>();
-  for (const model of models) {
-    const key = model.provider ?? "";
-    let group = byKey.get(key);
-    if (!group) {
-      group = { key, rows: [] };
-      byKey.set(key, group);
-      groups.push(group);
-    }
-    group.rows.push(model);
-  }
-  const labeled = groups.filter((g) => g.key !== "");
-  return labeled.length > 1 ? groups : [{ key: "", rows: models }];
-}
-
 function FlyoutEffortSection({
   effort,
   onChange,
@@ -381,18 +354,6 @@ function FlyoutEffortSection({
         <EffortSlider value={effort} onChange={onChange} />
       </div>
     </div>
-  );
-}
-
-/** Case-insensitive label/id/description match; an empty query passes the
- * catalog through untouched (identity, so memoized groups stay stable). */
-function filterModels(models: ModelOption[], normalizedQuery: string): ModelOption[] {
-  if (!normalizedQuery) return models;
-  return models.filter(
-    (m) =>
-      m.label.toLowerCase().includes(normalizedQuery) ||
-      m.id.toLowerCase().includes(normalizedQuery) ||
-      (m.description ?? "").toLowerCase().includes(normalizedQuery),
   );
 }
 
@@ -450,17 +411,21 @@ function PanelActions({
   );
 }
 
-/** The scrollable radio-group model list: provider-sectioned when layered,
- * flat otherwise; an exhausted search shows the no-match hint. */
+/** The scrollable radio-group model list: provider-sectioned (search
+ * included) when the catalog mixes sources, flat otherwise; an exhausted
+ * search shows the no-match hint. */
 function ModelGroupList({
   groups,
   empty,
+  loading,
   selectedModelId,
   engineId,
   onPickModel,
 }: {
   groups: ModelGroup[];
   empty: boolean;
+  /** Catalog probe still running: the list on screen may be incomplete. */
+  loading?: boolean;
   selectedModelId: string;
   engineId: string;
   onPickModel: (engine: string, id: string) => void;
@@ -490,6 +455,11 @@ function ModelGroupList({
           ))}
         </div>
       ))}
+      {loading && !empty && (
+        <span className="px-2 pt-1 pb-2 text-body-2-regular text-text-tertiary">
+          {t("chat.modelsLoading")}
+        </span>
+      )}
       {empty && (
         <span className="p-2 text-body-medium text-text-tertiary">
           {t("chat.noMatchingModels")}
@@ -521,6 +491,7 @@ function EngineModelPanel({
   onCodexServiceTierChange,
   onRefresh,
   onClose,
+  loading,
 }: {
   option: MenuOption;
   models: ModelOption[];
@@ -537,23 +508,28 @@ function EngineModelPanel({
   /** Re-probe provider configs and model catalogs without an app restart. */
   onRefresh?: () => void | Promise<void>;
   onClose?: () => void;
+  /** This engine's catalog probe is still running. */
+  loading?: boolean;
 }) {
   const { t } = useTranslation();
   const normalizedQuery = query.trim().toLowerCase();
   const filteredModels = filterModels(models, normalizedQuery);
-  // Provider sections layer the list when the engine's catalog mixes sources
-  // (OMP serving several relays). Pinning the active row to the top would
-  // tear it out of its section, so grouped lists keep the catalog order and
-  // mark the pick in place; flat and searched lists keep the pin.
+  // Provider sections layer the list whenever the engine's catalog mixes
+  // sources (OMP serving several relays) — including while filtering, so the
+  // results keep naming their origin instead of collapsing into identical
+  // rows. Pinning the active row to the top would tear it out of its section,
+  // so a grouped list keeps the catalog order and marks the pick in place;
+  // only a flat single-source list reorders to surface the pick.
   const groups = useMemo(() => groupModelsByProvider(filteredModels), [filteredModels]);
-  const layered = !normalizedQuery && groups.length > 1;
-  const orderedModels =
-    normalizedQuery || layered
-      ? filteredModels
-      : [...filteredModels].sort(
-          (a, b) =>
-            Number(b.id === selectedModelId) - Number(a.id === selectedModelId),
-        );
+  // Sectioned whenever the grouping carried keys — a single provider still
+  // gets its header (the group is keyless only when no provider is known).
+  const layered = groups.length > 0 && groups[0].key !== "";
+  const orderedModels = layered
+    ? filteredModels
+    : [...filteredModels].sort(
+        (a, b) =>
+          Number(b.id === selectedModelId) - Number(a.id === selectedModelId),
+      );
   // The section holding the current pick leads so the selection is never
   // scrolled out of view; within sections the catalog order stands.
   const visibleGroups = layered
@@ -595,6 +571,7 @@ function EngineModelPanel({
       <ModelGroupList
         groups={visibleGroups ?? [{ key: "", rows: orderedModels }]}
         empty={orderedModels.length === 0}
+        loading={loading}
         selectedModelId={selectedModelId}
         engineId={option.id}
         onPickModel={onPickModel}
@@ -742,7 +719,6 @@ function EngineMenuBody({
   onQueryChange,
   isMobile,
   onSelectEngine,
-  onHoverEngine,
   onPickModel,
   onEffortChange,
   ompServiceTier,
@@ -750,8 +726,7 @@ function EngineMenuBody({
   codexServiceTier,
   onCodexServiceTierChange,
   onRefreshModels,
-  onFlyoutEnter,
-  onFlyoutLeave,
+  loadingEngines,
 }: {
   options: MenuOption[];
   value: string;
@@ -764,7 +739,6 @@ function EngineMenuBody({
   onQueryChange: (value: string) => void;
   isMobile: boolean;
   onSelectEngine: (option: MenuOption) => void;
-  onHoverEngine: (option: MenuOption) => void;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
@@ -772,17 +746,13 @@ function EngineMenuBody({
   codexServiceTier: OmpServiceTier;
   onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   onRefreshModels?: () => void | Promise<void>;
-  onFlyoutEnter: () => void;
-  onFlyoutLeave: () => void;
+  /** Engine ids whose catalog probe has not returned yet. */
+  loadingEngines?: readonly string[];
 }) {
   const flyoutOption = options.find((o) => o.id === openEngine);
   return (
     <div className="flex w-full flex-col">
-      <div
-        className="relative"
-        onMouseEnter={onFlyoutEnter}
-        onMouseLeave={onFlyoutLeave}
-      >
+      <div className="relative">
         <div className="flex w-full flex-col">
           {options.map((option, index) => (
             <Fragment key={option.id}>
@@ -792,14 +762,13 @@ function EngineMenuBody({
                   className="-mx-1 my-1 border-t border-separator-border"
                 />
               )}
-              {/* Not `disabled`: that attribute would swallow hover
-                  events and leave a stale flyout on the prior engine. */}
+              {/* Not `disabled`: that attribute would swallow the click
+                  that switches the panel. */}
               <EngineRow
                 option={option}
                 selected={option.id === value}
                 flyoutOpen={option.id === openEngine}
                 onSelect={() => onSelectEngine(option)}
-                onHover={() => onHoverEngine(option)}
               />
             </Fragment>
           ))}
@@ -807,19 +776,20 @@ function EngineMenuBody({
 
         {!isMobile && flyoutOption && (
           <EngineFlyout
-            option={flyoutOption}
-            models={modelsByEngine[flyoutOption.id] ?? []}
-            selectedModelId={models[flyoutOption.id] ?? ""}
-            query={query}
-            onQueryChange={onQueryChange}
-            effort={efforts[flyoutOption.id] ?? "medium"}
-            onPickModel={onPickModel}
-            onEffortChange={onEffortChange}
-            ompServiceTier={ompServiceTier}
-            onOmpServiceTierChange={onOmpServiceTierChange}
-            codexServiceTier={codexServiceTier}
-            onCodexServiceTierChange={onCodexServiceTierChange}
+              option={flyoutOption}
+              models={modelsByEngine[flyoutOption.id] ?? []}
+              selectedModelId={models[flyoutOption.id] ?? ""}
+              query={query}
+              onQueryChange={onQueryChange}
+              effort={efforts[flyoutOption.id] ?? "medium"}
+              onPickModel={onPickModel}
+              onEffortChange={onEffortChange}
+              ompServiceTier={ompServiceTier}
+              onOmpServiceTierChange={onOmpServiceTierChange}
+              codexServiceTier={codexServiceTier}
+              onCodexServiceTierChange={onCodexServiceTierChange}
             onRefresh={onRefreshModels}
+            loading={loadingEngines?.includes(flyoutOption.id)}
           />
         )}
       </div>
@@ -909,6 +879,7 @@ export function CliMenu({
   codexServiceTier,
   onCodexServiceTierChange,
   onRefreshModels,
+  loadingEngines,
 }: {
   options: MenuOption[];
   value: string;
@@ -927,6 +898,8 @@ export function CliMenu({
   onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs (flyout refresh button). */
   onRefreshModels?: () => void | Promise<void>;
+  /** Engine ids whose catalog probe has not returned yet (loading hint). */
+  loadingEngines?: readonly string[];
 }) {
   const { t } = useTranslation();
   const { isOpen, triggerRef, popoverRef, close, setOpen } = usePopoverState();
@@ -948,22 +921,12 @@ export function CliMenu({
   const isMobile = useMediaQuery(MOBILE_MEDIA);
   const [dialogEngine, setDialogEngine] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const closeTimer = useRef<number | null>(null);
-  const cancelFlyoutClose = () => {
-    if (closeTimer.current !== null) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  };
-  // Brief grace period so the pointer can cross the gap into the flyout.
-  const scheduleFlyoutClose = () => {
-    cancelFlyoutClose();
-    closeTimer.current = window.setTimeout(() => setOpenEngine(null), 150);
-  };
+
+  // The filter belongs to the search, not to one engine: switching the flyout
+  // must not wipe what the user typed.
   useEffect(() => {
     setQuery("");
-  }, [openEngine, dialogEngine]);
-  useEffect(() => () => cancelFlyoutClose(), []);
+  }, [dialogEngine]);
 
   const handleOpenChange = (o: boolean) => {
     if (!setOpen(o)) return;
@@ -993,15 +956,21 @@ export function CliMenu({
       return;
     }
     if (option.disabled) return;
-    onChange(option.id);
-    close();
-  };
-
-  const hoverEngine = (option: MenuOption) => {
-    if (isMobile) return;
-    cancelFlyoutClose();
+    // Desktop: the row switches WHICH model list is shown, nothing more. The
+    // engine itself changes when a model is picked from that list (see
+    // pickModel), so browsing another CLI can never yank the panel away
+    // mid-search — a pointer crossing the column does nothing at all.
+    // An engine with no catalog has nothing to browse: keep the old
+    // behaviour of switching outright.
+    if ((modelsByEngine[option.id] ?? []).length === 0) {
+      onChange(option.id);
+      close();
+      return;
+    }
     setOpenEngine(option.id);
   };
+
+
 
   return (
     <>
@@ -1037,7 +1006,6 @@ export function CliMenu({
             onQueryChange={setQuery}
             isMobile={isMobile}
             onSelectEngine={selectEngine}
-            onHoverEngine={hoverEngine}
             onPickModel={pickModel}
             onEffortChange={onEffortChange}
             ompServiceTier={ompServiceTier}
@@ -1045,8 +1013,7 @@ export function CliMenu({
             codexServiceTier={codexServiceTier}
             onCodexServiceTierChange={onCodexServiceTierChange}
             onRefreshModels={onRefreshModels}
-            onFlyoutEnter={cancelFlyoutClose}
-            onFlyoutLeave={scheduleFlyoutClose}
+            loadingEngines={loadingEngines}
           />
         </AriaDialog>
       </AriaPopover>

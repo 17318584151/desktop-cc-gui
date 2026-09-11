@@ -30,11 +30,21 @@ export function listenEngineEvents(
 export function listenSessionsChanged(cb: () => void): Promise<UnlistenFn> {
   return listen("sessions://changed", () => cb());
 }
+
+/** Fired after a turn lands in the usage ledger; the page re-reads on it. */
+export function listenUsageChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("usage://changed", () => cb());
+}
 export interface ScanProgress {
   done: number;
   total: number;
   /** True on the last event of a scan run. */
   finished: boolean;
+}
+
+/** App settings were persisted (any page, any surface). */
+export function listenSettingsChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("settings://changed", () => cb());
 }
 
 /** History-scan progress, throttled by the scanner (~50 updates per run). */
