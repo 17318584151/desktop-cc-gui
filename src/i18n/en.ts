@@ -3,6 +3,8 @@ import type { Messages } from "./zh";
 export const en: Messages = {
   common: {
     confirm: "Confirm",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
     create: "Create",
     save: "Save",
     delete: "Delete",
@@ -300,10 +302,18 @@ export const en: Messages = {
     webDeviceDeny: "Deny",
     webDeviceRevoke: "Revoke",
     webRelay: "Relay",
-    webRelayHint:
-      "Outbound access runs through one of your Cloudflare Workers: copy the source, deploy it to your own Worker, then fill in the fields below.",
-    webRelayCopySource: "Copy source",
+    webRelayDeploy: "Deploy relay",
+    webRelayDeployHint:
+      "Outbound access runs through your own Cloudflare Worker. Paste a Cloudflare API Token to deploy in one click — the Worker, its Durable Object and the relay key are created in your account.\nThe Edit Cloudflare Workers token template is enough. It is used once, is never stored (the field is cleared as soon as the deploy succeeds), and a short TTL — a day, say — is recommended so you can delete it in the dashboard right after.\nYou can also click Export source for the full deploy pack (source, wrangler config and a how-to) and deploy it yourself.\nThe relay URL and key below stay editable: if *.workers.dev is unreachable where you are, bind a custom domain and enter it there.",
+    webRelayApiKey: "Cloudflare API Token",
+    webRelayApiKeyPlaceholder: "Paste an API token",
+    webRelayDeployNow: "Deploy",
+    webRelayExportSource: "Export source",
+    webRelayDeployed: "Deployed to {{account}}",
     webRelayStart: "Connect relay",
+    webRelayStateIdle: "Not connected",
+    webRelayStateLive: "Connected",
+    webRelayStateFailed: "Connection failed",
     webRelayStop: "Disconnect relay",
     webRelayUrl: "Relay address",
     webRelayKey: "Relay key",

@@ -272,7 +272,8 @@ pub fn run() {
             relay::web_relay_start,
             relay::web_relay_stop,
             relay::web_relay_status,
-            relay::relay_worker_source,
+            relay::relay_deploy_pack,
+            relay::relay_deploy,
             // dsh host + managed-CLI lifecycle
             dsh_host::dsh_host_status,
             dsh_host::dsh_host_start,

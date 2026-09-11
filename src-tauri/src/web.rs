@@ -355,6 +355,15 @@ fn unlock_response(html: String, device: &str, set_cookie: bool) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// A submitted pairing key is accepted only when one is configured and the two
+/// match, case-insensitively (the form field is normalised before comparison).
+/// Extracted from the handler so the cases that must never pass — no key
+/// configured, an empty submission, the `--------` the UI shows while
+/// authorization is off — are pinned by a test.
+fn pairing_key_matches(expected: &str, submitted: &str) -> bool {
+    !expected.is_empty() && !submitted.is_empty() && submitted.eq_ignore_ascii_case(expected)
+}
+
 /// `POST /unlock`: check the key, remember the device, send it into the app.
 async fn unlock_handler(
     AxumState(ctx): AxumState<WebCtx>,
@@ -370,7 +379,13 @@ async fn unlock_handler(
         }
     };
     let submitted = form_field(&body, "key").unwrap_or_default().to_uppercase();
-    if enabled && (expected.is_empty() || submitted != expected.to_uppercase()) {
+    // With the switch off there is nothing to unlock, and a key that was never
+    // configured must never admit anyone: the UI shows `--------` in that
+    // state, and a placeholder must not be able to look like a pairing.
+    if !enabled {
+        return unlock_response(unlock_page(&device, Some("未启用授权")), &device, false);
+    }
+    if !pairing_key_matches(&expected, &submitted) {
         return unlock_response(unlock_page(&device, Some("密钥不正确")), &device, false);
     }
 
@@ -464,6 +479,18 @@ impl Emit for WsEmit {
 struct RelayArgs {
     url: String,
     key: String,
+}
+
+#[derive(Deserialize)]
+struct RelayDeployPackArgs {
+    path: String,
+    key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RelayDeployArgs {
+    token: String,
+    key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1308,7 +1335,14 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
             ser(crate::relay::web_relay_start(app.clone(), a.url, a.key).await)
         }
         "web_relay_stop" => ser(crate::relay::web_relay_stop(app.clone())),
-        "relay_worker_source" => ser(Ok(crate::relay::relay_worker_source())),
+        "relay_deploy_pack" => {
+            let a: RelayDeployPackArgs = parse_args(&raw)?;
+            ser(crate::relay::relay_deploy_pack(a.path, a.key))
+        }
+        "relay_deploy" => {
+            let a: RelayDeployArgs = parse_args(&raw)?;
+            ser(crate::relay::relay_deploy(a.token, a.key).await)
+        }
         // Device approval is the one management action a phone may take: it
         // is already device-scoped, and the desktop page would otherwise be
         // the only way to approve a browser the user is holding.
@@ -1468,5 +1502,17 @@ mod tests {
         );
         assert_eq!(form_field("key=a+b%2C", "key").as_deref(), Some("a b,"));
         assert_eq!(form_field("other=1", "key"), None);
+    }
+
+    /// The key box shows `--------` while authorization is off; a placeholder
+    /// (or an empty field, or no configured key at all) must never pair.
+    #[test]
+    fn pairing_key_rejects_placeholders() {
+        assert!(pairing_key_matches("BCDF2345", "bcdf2345"));
+        assert!(!pairing_key_matches("BCDF2345", "--------"));
+        assert!(!pairing_key_matches("BCDF2345", ""));
+        assert!(!pairing_key_matches("", "--------"));
+        assert!(!pairing_key_matches("", ""));
+        assert!(!pairing_key_matches("BCDF2345", "BCDF2346"));
     }
 }

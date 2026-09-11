@@ -314,6 +314,17 @@ export interface RelayInfo {
   error: string | null;
 }
 
+/** Outcome of a one-click relay deploy (mirrors Rust `RelayDeployResult`). */
+export interface RelayDeployResult {
+  /** `https://ccgui-relay.<subdomain>.workers.dev` — a suggestion, not a lock:
+   *  the URL field stays editable so a custom domain can replace it. */
+  url: string;
+  /** The relay key that was uploaded with the Worker. */
+  key: string;
+  accountId: string;
+  accountName: string;
+}
+
 /** A browser that reached the LAN bridge; approved devices may use it. */
 export interface WebDevice {
   id: string;
@@ -704,9 +715,14 @@ export const ipc = {
   webRelayStatus: () => invoke<RelayInfo | null>("web_relay_status"),
   webRelayStart: (url: string, key: string) => invoke<RelayInfo>("web_relay_start", { url, key }),
   webRelayStop: () => invoke<void>("web_relay_stop"),
-  /** The Cloudflare Worker's source, embedded in the binary: the user deploys
-   *  it on their own account, so the settings page hands it over verbatim. */
-  relayWorkerSource: () => invoke<string>("relay_worker_source"),
+  /** Write the deploy pack (source + wrangler project + how-to) to `path` as a
+   *  STORE-only zip; resolves with the relay key baked into it. */
+  relayDeployPack: (path: string, key: string | null) =>
+    invoke<string>("relay_deploy_pack", { path, key }),
+  /** Deploy the relay Worker into the token's account: creates the Durable
+   *  Object class, its binding and the key in one upload. */
+  relayDeploy: (token: string, key: string | null) =>
+    invoke<RelayDeployResult>("relay_deploy", { token, key }),
   webAccessStart: () => invoke<WebAccessInfo>("web_access_start"),
   webAccessStop: () => invoke<void>("web_access_stop"),
   webAccessStatus: () => invoke<WebAccessInfo | null>("web_access_status"),

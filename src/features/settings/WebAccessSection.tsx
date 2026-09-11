@@ -6,7 +6,8 @@ import Copy from "lucide-react/dist/esm/icons/copy";
 import Smartphone from "lucide-react/dist/esm/icons/smartphone";
 import Check from "lucide-react/dist/esm/icons/check";
 import { Button } from "@/components/base/buttons/button";
-import { InfoTip } from "@/components/base/tooltip/tooltip";
+import { InfoTip, Tooltip, TooltipContent } from "@/components/base/tooltip/tooltip";
+import { Focusable } from "react-aria-components";
 import {
   SettingsCard,
   SettingsRow,
@@ -15,7 +16,7 @@ import { ipc, type RelayInfo, type WebAccessInfo, type WebDevice } from "@/lib/i
 import { Input } from "@/components/base/input/input";
 import { listenRelay, listenSettingsChanged, listenWebDevices } from "@/lib/events";
 import { useTauriEvent } from "@/hooks/use-tauri-event";
-import { isWeb } from "@/lib/platform";
+import { isWeb, pickSavePath } from "@/lib/platform";
 import { cx } from "@/utils/cx";
 
 /** Matches the code the phone shows while it waits for approval. */
@@ -63,7 +64,12 @@ export function WebAccessSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [sourceCopied, setSourceCopied] = useState(false);
+  /** Cloudflare API Token for the one-click deploy; kept in memory only —
+   *  deploying is a once-per-user action, so storing a credential that can
+   *  edit the whole account buys nothing. */
+  const [apiToken, setApiToken] = useState("");
+  const [deployBusy, setDeployBusy] = useState(false);
+  const [deployStatus, setDeployStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [devices, setDevices] = useState<WebDevice[]>([]);
   const [relay, setRelay] = useState<RelayInfo | null>(null);
   const [relayUrl, setRelayUrl] = useState("");
@@ -103,9 +109,19 @@ export function WebAccessSection() {
   useTauriEvent(() => listenSettingsChanged(refreshAuth));
 
   const refreshRelay = useCallback(() => {
-    void ipc.webRelayStatus().then(setRelay).catch(() => {});
+    void ipc
+      .webRelayStatus()
+      .then((status) => {
+        setRelay(status);
+        // A healthy backend clears any local error text: the connected event
+        // and the failure text describe the same thing.
+        if (status && !status.error) setRelayError(null);
+      })
+      .catch(() => {});
   }, []);
 
+  // The status is event-driven while the page is open; the mount effect below
+  // fetches it once so reopening settings shows the real state, not idle grey.
   useEffect(() => {
     refreshRelay();
     void ipc
@@ -232,18 +248,69 @@ export function WebAccessSection() {
     });
   }, [info]);
 
-  /** Hand the user the Worker they deploy themselves; the source ships inside
-   *  the binary, so this never depends on the repo being next to the app. */
-  const copyWorkerSource = useCallback(() => {
-    void ipc
-      .relayWorkerSource()
-      .then((source) => navigator.clipboard.writeText(source))
-      .then(() => {
-        setSourceCopied(true);
-        setTimeout(() => setSourceCopied(false), 1500);
-      })
-      .catch(() => undefined);
-  }, []);
+  /** Deploy the Worker into the user's account and fill both fields from the
+   *  result, so the relay is usable without typing anything. The URL stays a
+   *  plain input: whoever needs a custom domain (some regions cannot reach
+   *  *.workers.dev) just edits it afterwards. */
+  const deployRelay = useCallback(() => {
+    void (async () => {
+      setDeployBusy(true);
+      setDeployStatus(null);
+      try {
+        const result = await ipc.relayDeploy(apiToken.trim(), relayKey.trim() || null);
+        setRelayUrl(result.url);
+        setRelayKey(result.key);
+        // Persist right away: the key is uploaded as a Cloudflare secret, so
+        // Cloudflare never shows it back — losing it here would mean the
+        // Worker can only be used by deploying (and re-keying) again.
+        await saveRelayFields(result.url, result.key);
+        // The token is a one-shot credential: drop it the moment the deploy
+        // lands, so it cannot sit in a running window.
+        setApiToken("");
+        setDeployStatus({
+          ok: true,
+          text: t("settings.webRelayDeployed", { account: result.accountName }),
+        });
+      } catch (error) {
+        setDeployStatus({
+          ok: false,
+          text: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setDeployBusy(false);
+      }
+    })();
+  }, [apiToken, relayKey, saveRelayFields, t]);
+
+  /** Write the whole wrangler project (source + config + this key) to disk, so
+   *  the user can read it and `npx wrangler deploy` it themselves. */
+  const exportDeployPack = useCallback(() => {
+    void (async () => {
+      const path = await pickSavePath(t("settings.webRelayExportSource"), "ccgui-relay.zip");
+      if (!path) return;
+      try {
+        const key = await ipc.relayDeployPack(path, relayKey.trim() || null);
+        // The pack carries a key; adopt it when the field was still empty so
+        // GUI and pack never disagree.
+        if (!relayKey.trim()) setRelayKey(key);
+        setDeployStatus(null);
+      } catch (error) {
+        setDeployStatus({
+          ok: false,
+          text: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+  }, [relayKey, t]);
+
+  // Relay state dot: driven by the backend's own state, so a reconnect clears
+  // it by itself. (`relayError` is a local, sticky flag — folding it in here
+  // kept the dot red long after the relay had reconnected.)
+  const relayState = relay?.error
+    ? { dot: "bg-text-error-primary", label: t("settings.webRelayStateFailed") }
+    : relay?.connected
+      ? { dot: "bg-[var(--color-status-unseen)]", label: t("settings.webRelayStateLive") }
+      : { dot: "bg-foreground-icon-tertiary", label: t("settings.webRelayStateIdle") };
 
   return (
     <div className="flex w-full flex-col gap-2">
@@ -331,32 +398,90 @@ export function WebAccessSection() {
       {pane === "wan" && (
         <>
         <div className="flex w-full items-stretch gap-2">
-        {/* 中转服务 */}
-        <div className="flex min-w-0 flex-[2]">
+        {/* 部署中转 */}
+        <div className="flex min-w-0 flex-1">
+        <SettingsCard>
+          <SettingsRow
+            label={t("settings.webRelayDeploy")}
+            labelAdornment={
+              <InfoTip label={t("settings.webRelayDeployHint")} icon={CircleAlert} />
+            }
+          >
+            <Button
+              size="small"
+              variant="primary"
+              disabled={deployBusy || !apiToken.trim()}
+              onClick={deployRelay}
+            >
+              {t("settings.webRelayDeployNow")}
+            </Button>
+          </SettingsRow>
+          <div className="flex w-full flex-col gap-2 pt-3 pr-3 pb-3">
+            <Input
+              aria-label={t("settings.webRelayApiKey")}
+              type="password"
+              size="small"
+              placeholder={t("settings.webRelayApiKeyPlaceholder")}
+              value={apiToken}
+              onChange={setApiToken}
+            />
+            <div className="flex items-center gap-2">
+              <Button size="small" variant="secondary" onClick={exportDeployPack}>
+                {t("settings.webRelayExportSource")}
+              </Button>
+              {deployStatus && (
+                // Icon only (the message can be long); hovering it reveals the
+                // whole Cloudflare answer, so the row keeps its shape.
+                <Tooltip delay={150}>
+                  <Focusable>
+                    <button
+                      type="button"
+                      aria-label={deployStatus.text}
+                      className={cx(
+                        "flex size-5 shrink-0 cursor-help items-center justify-center",
+                        deployStatus.ok
+                          ? "text-notification-success-foreground"
+                          : "text-text-error-primary",
+                      )}
+                    >
+                      {deployStatus.ok ? (
+                        <Check className="size-4" aria-hidden />
+                      ) : (
+                        <CircleAlert className="size-4" aria-hidden />
+                      )}
+                    </button>
+                  </Focusable>
+                  <TooltipContent className="max-w-[320px]">{deployStatus.text}</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          </div>
+        </SettingsCard>
+        </div>
+        {/* 中转服务：地址与密钥始终可手填，挂自定义域名也在这里改 */}
+        <div className="flex min-w-0 flex-1">
         <SettingsCard>
           <SettingsRow
             label={t("settings.webRelay")}
-            labelAdornment={<InfoTip label={t("settings.webRelayHint")} icon={CircleAlert} />}
+            labelAdornment={
+              <span
+                role="status"
+                aria-label={relayState.label}
+                title={relayState.label}
+                className="flex size-3.5 shrink-0 items-center justify-center"
+              >
+                <span className={cx("size-2 rounded-full", relayState.dot)} />
+              </span>
+            }
           >
-            <div className="flex items-center gap-2">
-              <Button
-                size="small"
-                variant="secondary"
-                leadingIcon={sourceCopied ? Check : undefined}
-                title={sourceCopied ? t("common.copied") : t("settings.webRelayCopySource")}
-                onClick={copyWorkerSource}
-              >
-                {sourceCopied ? t("common.copied") : t("settings.webRelayCopySource")}
-              </Button>
-              <Button
-                size="small"
-                variant={relay ? "secondary" : "primary"}
-                disabled={relayBusy || (!relay && (!relayUrl.trim() || !relayKey.trim()))}
-                onClick={() => void (relay ? stopRelay() : startRelay())}
-              >
-                {relay ? t("settings.webRelayStop") : t("settings.webRelayStart")}
-              </Button>
-            </div>
+            <Button
+              size="small"
+              variant={relay ? "secondary" : "primary"}
+              disabled={relayBusy || (!relay && (!relayUrl.trim() || !relayKey.trim()))}
+              onClick={() => void (relay ? stopRelay() : startRelay())}
+            >
+              {relay ? t("settings.webRelayStop") : t("settings.webRelayStart")}
+            </Button>
           </SettingsRow>
           <div className="flex w-full flex-col gap-2 pt-3 pr-3 pb-3">
             <Input
@@ -368,6 +493,7 @@ export function WebAccessSection() {
             />
             <Input
               aria-label={t("settings.webRelayKey")}
+              type="password"
               size="small"
               placeholder={t("settings.webRelayKeyHint")}
               value={relayKey}
@@ -399,9 +525,7 @@ export function WebAccessSection() {
           <SettingsRow
             label={t("settings.webAuth")}
             labelAdornment={
-              authEnabled && authKey ? (
-                <InfoTip label={t("settings.webAuthKeyHint")} icon={CircleAlert} />
-              ) : undefined
+              <InfoTip label={t("settings.webAuthKeyHint")} icon={CircleAlert} />
             }
           >
             <Button
@@ -413,25 +537,35 @@ export function WebAccessSection() {
               {authEnabled ? t("settings.webAuthDisable") : t("settings.webAuthEnable")}
             </Button>
           </SettingsRow>
-          {authEnabled && authKey && (
-            <div className="flex w-full flex-1 items-center justify-center pt-3 pr-3 pb-3">
-              <div className="flex h-9 w-fit items-center rounded-2lg bg-background-tertiary-default pr-1 pl-3">
-                <span className="font-mono text-title-3 tracking-[0.18em] text-text-primary">
-                  {authKey}
-                </span>
-                <span aria-hidden className="mx-2 h-4 w-px shrink-0 bg-separator-border-strong" />
-                <button
-                  type="button"
-                  aria-label={t("settings.webAuthCopy")}
-                  title={t("settings.webAuthCopy")}
-                  onClick={() => void navigator.clipboard.writeText(authKey)}
-                  className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
-                >
-                  <Copy className="size-4" aria-hidden />
-                </button>
+          {(() => {
+            // The box is always there — with the switch off it shows a dash
+            // placeholder so the card keeps its shape and the reader sees that
+            // a key exists only while authorization is on. The copy button is
+            // disabled then, so the placeholder can never be copied out.
+            const canCopyKey = authEnabled && Boolean(authKey);
+            return (
+              <div className="flex w-full flex-1 items-center justify-center pt-3 pr-3 pb-3">
+                <div className="flex h-9 w-fit items-center rounded-2lg bg-background-tertiary-default pr-1 pl-3">
+                  <span className="font-mono text-title-3 tracking-[0.18em] text-text-primary">
+                    {canCopyKey ? authKey : "--------"}
+                  </span>
+                  <span aria-hidden className="mx-2 h-4 w-px shrink-0 bg-separator-border-strong" />
+                  <button
+                    type="button"
+                    aria-label={t("settings.webAuthCopy")}
+                    title={t("settings.webAuthCopy")}
+                    disabled={!canCopyKey}
+                    onClick={() => {
+                      if (canCopyKey) void navigator.clipboard.writeText(authKey);
+                    }}
+                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary disabled:cursor-default disabled:text-foreground-icon-quaternary disabled:hover:bg-transparent"
+                  >
+                    <Copy className="size-4" aria-hidden />
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </SettingsCard>
         </div>
         </div>

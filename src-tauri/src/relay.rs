@@ -238,9 +238,357 @@ pub fn web_relay_status(app: tauri::AppHandle) -> Option<RelayInfo> {
 /// The Cloudflare Worker a user deploys on their own account, embedded at
 /// build time so the settings page can hand it over without shipping the
 /// repo next to the app (the deploy/ tree is not part of any bundle).
+pub const WORKER_SOURCE: &str = include_str!("../../deploy/worker/src/index.js");
+
+/// A fresh relay secret: 32 chars from an unambiguous alphabet. It travels in
+/// the agent URL and seeds the Durable Object name, so it stays URL-safe and
+/// free of look-alike characters.
+fn new_relay_key() -> String {
+    const ALPHABET: &[u8] = b"23456789BCDFGHJKLMNPQRSTVWXZ";
+    const LEN: usize = 32;
+    let mut out = String::with_capacity(LEN);
+    while out.len() < LEN {
+        for byte in uuid::Uuid::new_v4().as_bytes() {
+            if out.len() == LEN {
+                break;
+            }
+            out.push(ALPHABET[*byte as usize % ALPHABET.len()] as char);
+        }
+    }
+    out
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+fn push_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+/// Minimal STORE-only (uncompressed) zip writer. Deliberately not a dependency:
+/// the pack is ~9 KB of text, and storing it verbatim means the bytes the user
+/// unpacks are exactly the bytes they deploy — nothing hidden in a compressor.
+fn zip_store(files: &[(&str, &[u8])]) -> Vec<u8> {
+    // Fixed timestamp (2025-01-01 00:00) keeps the pack byte-reproducible.
+    const DOS_DATE: u16 = (45 << 9) | (1 << 5) | 1;
+    const DOS_TIME: u16 = 0;
+
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in files {
+        let offset = out.len() as u32;
+        let crc = crc32(data);
+        let size = data.len() as u32;
+        let name_len = name.len() as u16;
+
+        push_u32(&mut out, 0x0403_4b50);
+        push_u16(&mut out, 20); // version needed
+        push_u16(&mut out, 0); // flags
+        push_u16(&mut out, 0); // method: store
+        push_u16(&mut out, DOS_TIME);
+        push_u16(&mut out, DOS_DATE);
+        push_u32(&mut out, crc);
+        push_u32(&mut out, size);
+        push_u32(&mut out, size);
+        push_u16(&mut out, name_len);
+        push_u16(&mut out, 0); // extra field length
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+
+        push_u32(&mut central, 0x0201_4b50);
+        push_u16(&mut central, 20); // version made by
+        push_u16(&mut central, 20); // version needed
+        push_u16(&mut central, 0);
+        push_u16(&mut central, 0);
+        push_u16(&mut central, DOS_TIME);
+        push_u16(&mut central, DOS_DATE);
+        push_u32(&mut central, crc);
+        push_u32(&mut central, size);
+        push_u32(&mut central, size);
+        push_u16(&mut central, name_len);
+        push_u16(&mut central, 0); // extra
+        push_u16(&mut central, 0); // comment
+        push_u16(&mut central, 0); // disk number
+        push_u16(&mut central, 0); // internal attributes
+        push_u32(&mut central, 0); // external attributes
+        push_u32(&mut central, offset);
+        central.extend_from_slice(name.as_bytes());
+    }
+
+    let central_offset = out.len() as u32;
+    let central_size = central.len() as u32;
+    out.extend_from_slice(&central);
+    push_u32(&mut out, 0x0605_4b50);
+    push_u16(&mut out, 0); // this disk
+    push_u16(&mut out, 0); // disk with central directory
+    push_u16(&mut out, files.len() as u16);
+    push_u16(&mut out, files.len() as u16);
+    push_u32(&mut out, central_size);
+    push_u32(&mut out, central_offset);
+    push_u16(&mut out, 0); // comment length
+    out
+}
+
+/// The deploy pack: Worker source + the wrangler project it belongs to, wired
+/// to `key`. The user can read every byte before deploying it.
+fn deploy_pack(key: &str) -> Vec<u8> {
+    let wrangler = format!(
+        r#"name = "ccgui-relay"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Durable Object: one instance per relay key owns the desktop's socket.
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "Relay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Relay"]
+
+[vars]
+# 与 CC GUI「中转密钥」保持一致 / must match the key field in CC GUI.
+# 部署后也可在控制台 Variables 里修改，改完无需重新部署。
+RELAY_KEY = "{key}"
+"#
+    );
+    let readme = r#"CC GUI 外网穿透 · 中继部署包
+CC GUI relay deploy pack
+
+【部署步骤 / Steps】
+1. 装 Node ≥ 16.17（只为拿 npx wrangler）。
+   Install Node ≥ 16.17 (only to get npx wrangler).
+2. npx wrangler login      # 浏览器授权一次 / authorize once in the browser
+3. npx wrangler deploy     # 输出 https://ccgui-relay.<你的子域>.workers.dev
+4. CC GUI → 设置 → 远程访问 → 外网访问：
+   中转地址 = 上一步的 URL，中转密钥 = 本包 wrangler.toml 里的 RELAY_KEY。
+   CC GUI → Settings → Remote access → Outbound: relay URL = the URL above,
+   relay key = RELAY_KEY from this pack's wrangler.toml.
+5. 点「连接中转」；手机打开该 URL → 授权页 → 输入 CC GUI 上的 8 位配对密钥。
+   Click Connect relay; open that URL on the phone → authorization page →
+   enter the 8-character pairing key shown in CC GUI.
+
+【包里有什么 / What's inside】
+- src/index.js    Worker 源码 / the Worker source
+- wrangler.toml   部署配置：Durable Object 绑定与 RELAY_KEY
+                  deploy config: the Durable Object binding and RELAY_KEY
+
+【说明 / Notes】
+- RELAY_KEY 是桌面端与 Worker 之间的共享密钥，请勿外传；它同时决定手机访问的
+  路径分片，换 key 后手机需重新配对。
+  RELAY_KEY is the shared secret between the desktop and the Worker — keep it
+  private. It also namespaces the phone's path, so a new key needs re-pairing.
+- 部分地区无法直连 *.workers.dev：给这个 Worker 绑定自定义域名
+  （Settings → Domains & Routes → Add custom domain），再把该域名填进 CC GUI 的
+  「中转地址」—— 地址栏始终可手改。
+  If *.workers.dev is unreachable where you are, bind a custom domain to this
+  Worker (Settings → Domains & Routes → Add custom domain) and use it as the
+  relay URL in CC GUI; that field stays editable.
+"#;
+    zip_store(&[
+        ("ccgui-relay/README.txt", readme.as_bytes()),
+        ("ccgui-relay/wrangler.toml", wrangler.as_bytes()),
+        ("ccgui-relay/src/index.js", WORKER_SOURCE.as_bytes()),
+    ])
+}
+
+/// Write the deploy pack to `path`; returns the relay key baked into it (a
+/// fresh one when the caller has none yet, so the pack and the GUI agree).
 #[tauri::command]
-pub fn relay_worker_source() -> &'static str {
-    include_str!("../../deploy/worker/src/index.js")
+pub fn relay_deploy_pack(path: String, key: Option<String>) -> Result<String, String> {
+    let key = key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(new_relay_key);
+    std::fs::write(&path, deploy_pack(&key))
+        .map_err(|error| format!("failed to write {path}: {error}"))?;
+    Ok(key)
+}
+
+const API_BASE: &str = "https://api.cloudflare.com/client/v4";
+const SCRIPT_NAME: &str = "ccgui-relay";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayDeployResult {
+    pub url: String,
+    pub key: String,
+    pub account_id: String,
+    pub account_name: String,
+}
+
+/// Cloudflare answers every REST call with `{success, errors[], result}`; fold
+/// a failure into one readable line instead of leaking a JSON blob.
+async fn cf_json(response: reqwest::Response, what: &str) -> Result<serde_json::Value, String> {
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let success = value
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(status.is_success());
+    if success && status.is_success() {
+        return Ok(value);
+    }
+    let detail = value
+        .get("errors")
+        .and_then(|errors| errors.as_array())
+        .map(|errors| {
+            errors
+                .iter()
+                .filter_map(|error| error.get("message").and_then(|m| m.as_str()))
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+        .filter(|joined| !joined.is_empty())
+        .unwrap_or_else(|| text.chars().take(200).collect());
+    Err(format!("{what}失败（HTTP {status}）：{detail}"))
+}
+
+async fn cf_account(client: &reqwest::Client, token: &str) -> Result<(String, String), String> {
+    let response = client
+        .get(format!("{API_BASE}/accounts"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| format!("读取账号失败：{error}"))?;
+    let value = cf_json(response, "读取账号").await?;
+    let account = value
+        .get("result")
+        .and_then(|result| result.as_array())
+        .and_then(|list| list.first())
+        .ok_or_else(|| "这个 Token 下没有可用的 Cloudflare 账号".to_string())?;
+    let id = account
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if id.is_empty() {
+        return Err("账号缺少 id".to_string());
+    }
+    let name = account
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Ok((id, name))
+}
+
+async fn cf_subdomain(
+    client: &reqwest::Client,
+    token: &str,
+    account_id: &str,
+) -> Result<String, String> {
+    let response = client
+        .get(format!("{API_BASE}/accounts/{account_id}/workers/subdomain"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| format!("读取 workers.dev 子域失败：{error}"))?;
+    let value = cf_json(response, "读取 workers.dev 子域").await?;
+    let subdomain = value
+        .get("result")
+        .and_then(|result| result.get("subdomain"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if subdomain.is_empty() {
+        return Err(
+            "这个账号还没有设置 workers.dev 子域：先到 Cloudflare 控制台 Workers & Pages 页面设置一次，再回来部署"
+                .to_string(),
+        );
+    }
+    Ok(subdomain)
+}
+
+/// Ship the Worker into the user's own account in one call: the Durable Object
+/// class (via `migrations`), its binding, and the relay key all ride along in
+/// the upload metadata, which is why nobody has to run wrangler. The relay URL
+/// is only reported back — the settings page decides whether to fill it.
+#[tauri::command]
+pub async fn relay_deploy(token: String, key: Option<String>) -> Result<RelayDeployResult, String> {
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err("缺少 Cloudflare API Token".to_string());
+    }
+    let key = key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(new_relay_key);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let (account_id, account_name) = cf_account(&client, &token).await?;
+    let subdomain = cf_subdomain(&client, &token, &account_id).await?;
+
+    let metadata = serde_json::json!({
+        "main_module": "index.js",
+        "compatibility_date": "2025-01-01",
+        "bindings": [
+            { "type": "durable_object_namespace", "name": "RELAY", "class_name": "Relay" },
+            // secret_text: the dashboard never shows the value back.
+            { "type": "secret_text", "name": "RELAY_KEY", "text": key.clone() },
+        ],
+        "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Relay"] }],
+    });
+    let form = reqwest::multipart::Form::new()
+        .part(
+            "metadata",
+            reqwest::multipart::Part::text(metadata.to_string())
+                .mime_str("application/json")
+                .map_err(|error| error.to_string())?,
+        )
+        .part(
+            "index.js",
+            reqwest::multipart::Part::text(WORKER_SOURCE)
+                .mime_str("application/javascript+module")
+                .map_err(|error| error.to_string())?,
+        );
+    let response = client
+        .put(format!(
+            "{API_BASE}/accounts/{account_id}/workers/scripts/{SCRIPT_NAME}"
+        ))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|error| format!("上传 Worker 失败：{error}"))?;
+    cf_json(response, "上传 Worker").await?;
+
+    // Make it reachable at <script>.<subdomain>.workers.dev. A failure here is
+    // not fatal: an existing route may already be enabled, and the user can
+    // always bind a custom domain instead.
+    let _ = client
+        .post(format!(
+            "{API_BASE}/accounts/{account_id}/workers/scripts/{SCRIPT_NAME}/subdomain"
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "enabled": true }))
+        .send()
+        .await;
+
+    Ok(RelayDeployResult {
+        url: format!("https://{SCRIPT_NAME}.{subdomain}.workers.dev"),
+        key,
+        account_id,
+        account_name,
+    })
 }
 
 /// Keeps one agent socket alive: reconnect with backoff until stopped.
@@ -621,4 +969,63 @@ fn broadcast_relay(app: &tauri::AppHandle) {
     app.state::<crate::AppState>()
         .emitters
         .emit_json("web://relay", "null");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pack must be a zip any unzipper accepts: correct per-entry CRC and
+    /// sizes are exactly what a wrong hand-rolled header gets wrong, and the
+    /// key has to be baked in or the deployed Worker rejects every agent.
+    #[test]
+    fn deploy_pack_is_a_valid_store_zip() {
+        let key = "TESTKEY23456789BCDFGHJKLMNPQRST";
+        let pack = deploy_pack(key);
+        assert_eq!(&pack[0..4], b"PK\x03\x04", "local file header");
+        let eocd = pack.len() - 22;
+        assert_eq!(&pack[eocd..eocd + 4], b"PK\x05\x06", "end of central directory");
+        assert_eq!(
+            u16::from_le_bytes([pack[eocd + 10], pack[eocd + 11]]),
+            3,
+            "entry count"
+        );
+
+        let mut offset = 0usize;
+        let mut names = Vec::new();
+        for _ in 0..3 {
+            let crc = u32::from_le_bytes(pack[offset + 14..offset + 18].try_into().unwrap());
+            let size =
+                u32::from_le_bytes(pack[offset + 18..offset + 22].try_into().unwrap()) as usize;
+            assert_eq!(
+                u16::from_le_bytes(pack[offset + 8..offset + 10].try_into().unwrap()),
+                0,
+                "method must be store"
+            );
+            let name_len =
+                u16::from_le_bytes(pack[offset + 26..offset + 28].try_into().unwrap()) as usize;
+            let data_start = offset + 30 + name_len;
+            let name = String::from_utf8_lossy(&pack[offset + 30..data_start]).to_string();
+            let data = &pack[data_start..data_start + size];
+            assert_eq!(crc32(data), crc, "crc mismatch for {name}");
+            names.push(name);
+            offset = data_start + size;
+        }
+        assert_eq!(
+            names,
+            [
+                "ccgui-relay/README.txt",
+                "ccgui-relay/wrangler.toml",
+                "ccgui-relay/src/index.js",
+            ]
+        );
+        assert!(String::from_utf8_lossy(&pack).contains(key), "key baked in");
+    }
+
+    #[test]
+    fn relay_key_is_url_safe_and_long() {
+        let key = new_relay_key();
+        assert_eq!(key.len(), 32);
+        assert!(key.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
 }

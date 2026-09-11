@@ -131,7 +131,7 @@ export function InfoTip({
           <Icon className="size-3.5" aria-hidden />
         </button>
       </Focusable>
-      <TooltipContent className="max-w-[320px]">{label}</TooltipContent>
+      <TooltipContent className="max-w-[320px] whitespace-pre-line">{label}</TooltipContent>
     </Tooltip>
   );
 }

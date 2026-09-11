@@ -1,6 +1,8 @@
 export const zh = {
   common: {
     confirm: "确认",
+    showPassword: "显示明文",
+    hidePassword: "隐藏明文",
     create: "创建",
     save: "保存",
     delete: "删除",
@@ -285,10 +287,18 @@ export const zh = {
     webDeviceDeny: "拒绝",
     webDeviceRevoke: "撤销",
     webRelay: "中转服务",
-    webRelayHint:
-      "经由 Cloudflare Worker 中转实现外网访问，点击「复制源码」将其内容部署到自己的 Cloudflare Worker 上，填写下方信息。",
-    webRelayCopySource: "复制源码",
+    webRelayDeploy: "部署中转",
+    webRelayDeployHint:
+      "经由 Cloudflare Worker 中转实现外网访问。填 Cloudflare API Token 可一键部署：自动在你的账号里创建 Worker、Durable Object 与中转密钥。\nToken 用「Edit Cloudflare Workers」模板即可；它在部署时只用一次、程序不会保存（成功后会立刻清空输入框），建议创建时把有效期（TTL）设短——例如 1 天——部署完就能去控制台把它删掉。\n也可以点「导出源码」拿到完整部署包（含源码、wrangler 配置与部署说明）自行部署。\n下方「中转服务」的地址与密钥始终可手改：部分地区无法直连 *.workers.dev，挂自定义域名后填在这里即可。",
+    webRelayApiKey: "Cloudflare API Token",
+    webRelayApiKeyPlaceholder: "粘贴 API Token",
+    webRelayDeployNow: "一键部署",
+    webRelayExportSource: "导出源码",
+    webRelayDeployed: "已部署到 {{account}}",
     webRelayStart: "连接中转",
+    webRelayStateIdle: "未连接",
+    webRelayStateLive: "已连接",
+    webRelayStateFailed: "连接失败",
     webRelayStop: "断开中转",
     webRelayUrl: "中转地址",
     webRelayKey: "中转密钥",
