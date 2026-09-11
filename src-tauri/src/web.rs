@@ -348,7 +348,7 @@ button{{width:100%;padding:10px;border:0;border-radius:10px;background:#3b82f6;c
 <button type="submit">授权此设备</button>
 </form>
 {message}
-<p>密钥在电脑上的「设置 → 远程访问」里显示。此设备授权后不再询问。</p>
+<p>密钥在电脑上的「设置 → 远程访问」里显示：每串密钥只能配对一台设备，配对成功后自动更换。本设备授权后不再询问。</p>
 </div>
 </body></html>"#
     )

@@ -56,7 +56,7 @@ export class Relay {
 
     if (!this.agent || this.agent.readyState !== WebSocket.OPEN) {
       return new Response(
-        "CC GUI 桌面端未连接到中继。请在电脑上打开 CC GUI → 设置 → 手机访问，启动外网访问。",
+        "CC GUI 桌面端未连接到中继。请在电脑上打开 CC GUI → 设置 → 远程访问 → 外网访问，启动中转。",
         { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } },
       );
     }
