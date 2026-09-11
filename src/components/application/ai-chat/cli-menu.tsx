@@ -19,10 +19,10 @@ import { MOBILE_MEDIA, useMediaQuery } from "@/hooks/use-media-query";
 import { cx } from "@/utils/cx";
 import { usePopoverState } from "@/utils/use-dismiss-on-outside-press";
 import { EFFORT_LEVELS } from "./effort-levels";
-import { EFFORT_LABEL_KEYS, type EffortLevel } from "./effort-slider";
+import { EFFORT_LABEL_KEYS, type EffortLevel } from "./effort-levels";
 import { EngineFlyout, EngineModelPanel } from "./engine-model-panel";
 
-export type { EffortLevel } from "./effort-slider";
+export type { EffortLevel } from "./effort-levels";
 
 /**
  * Board UI → "ai_chat" dropdowns (nodes 4035:6313 / 4035:6925), adapted to

@@ -43,6 +43,7 @@ import {
   insertTextAtCaret,
   mentionToken,
   renderFileTags,
+  sanitizeEditableHtml,
   setCaretOffset,
 } from "@/components/application/ai-chat/file-tags";
 import { FileMentionMenu } from "@/components/application/ai-chat/file-mention-menu";
@@ -195,11 +196,11 @@ export function Composer({
       if (!trigger) {
         insertTextAtCaret(el, token);
       } else {
-        el.innerHTML = htmlFromText(
+        const next =
           text.slice(0, trigger.start) +
-            token +
-            text.slice(trigger.start + 1 + trigger.query.length),
-        );
+          token +
+          text.slice(trigger.start + 1 + trigger.query.length);
+        el.innerHTML = sanitizeEditableHtml(htmlFromText(next));
         setCaretOffset(el, trigger.start + token.length);
       }
       emitChange();
@@ -225,11 +226,11 @@ export function Composer({
       if (!trigger) {
         insertTextAtCaret(el, token);
       } else {
-        el.innerHTML = htmlFromText(
+        const next =
           text.slice(0, trigger.start) +
-            token +
-            text.slice(trigger.start + 1 + trigger.query.length),
-        );
+          token +
+          text.slice(trigger.start + 1 + trigger.query.length);
+        el.innerHTML = sanitizeEditableHtml(htmlFromText(next));
         setCaretOffset(el, trigger.start + token.length);
       }
       emitChange();
@@ -247,7 +248,7 @@ export function Composer({
     (text: string) => {
       const el = editableRef.current;
       if (!el) return;
-      el.innerHTML = htmlFromText(text);
+      el.innerHTML = sanitizeEditableHtml(htmlFromText(text));
       setCaretOffset(el, text.length);
       emitChange();
       syncTags();
@@ -270,7 +271,7 @@ export function Composer({
     if (v === lastEmittedRef.current) return;
     lastEmittedRef.current = v;
     const el = editableRef.current;
-    if (el) el.innerHTML = htmlFromText(v);
+    if (el) el.innerHTML = sanitizeEditableHtml(htmlFromText(v));
   }, [value]);
 
   // Expose the field handle (focus + mention insertion from the file tree).
