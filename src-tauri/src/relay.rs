@@ -176,11 +176,19 @@ pub async fn web_relay_start(
     key: String,
 ) -> Result<RelayInfo, String> {
     let state = app.state::<crate::AppState>();
+    // The relay forwards every request through the local bridge, so connecting
+    // it turns the bridge on rather than bouncing the user back to 内网访问 to
+    // hunt for the switch. `web_access_start` is idempotent when it already
+    // runs, and a remote device only reaches this command *through* the
+    // bridge, so the auto-start can only ever happen on the desktop.
+    if state.web.bridge_target().is_none() {
+        crate::web::web_access_start(app.clone()).await?;
+    }
     let bridge_port = state
         .web
         .bridge_target()
         .map(|(port, _)| port)
-        .ok_or("先打开上面的「访问开关」：中继要经过本机服务，它没在运行")?;
+        .ok_or("本机服务启动失败：中继无法转发")?;
 
     let agent = agent_url(&url, &key)?;
     let info = RelayInfo {

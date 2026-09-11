@@ -165,6 +165,9 @@ export function WebAccessSection() {
       const info = await ipc.webRelayStart(relayUrl.trim(), relayKey.trim());
       await saveRelayFields(relayUrl.trim(), relayKey.trim());
       setRelay(info);
+      // Connecting the relay started the local bridge (it forwards through
+      // it): re-read the status so 内网访问 does not sit on a stale 已停止.
+      void ipc.webAccessStatus().then(setInfo).catch(() => {});
     } catch (e) {
       setRelayError(String(e));
     } finally {
