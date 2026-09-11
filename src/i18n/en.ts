@@ -166,6 +166,8 @@ export const en: Messages = {
     effortSmarter: "Smarter",
     proxyOn: "Proxy: on - click to turn off",
     proxyOff: "Proxy: off - click to turn on",
+    proxyTipOn: "Network proxy on: newly launched engines and terminals use the proxy. Click to turn off",
+    proxyTipOff: "Network proxy off. Click to enable — newly launched engines and terminals will use the proxy URL from Settings → Network proxy",
     contextWindow: "Context window",
     freeSpace: "Free space",
     usageInput: "Input",
