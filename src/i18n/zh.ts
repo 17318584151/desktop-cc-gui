@@ -273,7 +273,7 @@ export const zh = {
     webAuthEnable: "启用授权",
     webAuthDisable: "关闭授权",
     webAuthCopy: "复制密钥",
-    webAuthKeyHint: "每串密钥只能配对一台设备，配对成功后自动更换",
+    webAuthKeyHint: "每串密钥只能配对一台设备；配对成功后立即更换，并每 10 分钟自动更换",
     webDevices: "已授权设备",
     webDevicesEmpty: "暂无已授权设备。",
     webDeviceAnonymous: "未知浏览器",
