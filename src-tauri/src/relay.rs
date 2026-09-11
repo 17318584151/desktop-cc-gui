@@ -17,6 +17,7 @@
 //! the Worker holds no policy beyond the shared key.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures_util::{SinkExt, StreamExt};
@@ -26,9 +27,11 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tauri::Manager;
 
-/// Reconnect delays, doubling up to a minute: the relay is expected to be
-/// long-lived, so a dropped link must come back on its own.
-const BACKOFF_MS: [u64; 6] = [1_000, 2_000, 5_000, 10_000, 30_000, 60_000];
+/// Pause before the single redial that follows a dropped socket: long enough
+/// for the Worker to finish recycling the old connection, short enough that a
+/// phone reload barely notices. A dial that *fails* does not come back on its
+/// own — see `run_agent`.
+const REDIAL_DELAY_MS: u64 = 1_000;
 /// Marks traffic that arrived through the relay: the bridge requires the
 /// pairing key for those requests only, so the LAN keeps upstream's model.
 pub const VIA_HEADER: &str = "x-ccgui-via";
@@ -53,7 +56,14 @@ pub struct RelayState {
 struct Running {
     info: RelayInfo,
     stop: watch::Sender<bool>,
+    /// Identifies the agent task that owns this entry. A superseded task (the
+    /// user disconnected and reconnected while it sat in a dial) must neither
+    /// write into its successor's state nor tear it down.
+    generation: u64,
 }
+
+/// Hands every session a distinct id; see `Running::generation`.
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -198,6 +208,7 @@ pub async fn web_relay_start(
         error: None,
     };
     let (stop_tx, stop_rx) = watch::channel(false);
+    let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     {
         let mut guard = state.relay.inner.lock().map_err(|e| e.to_string())?;
         if let Some(previous) = guard.take() {
@@ -206,12 +217,13 @@ pub async fn web_relay_start(
         *guard = Some(Running {
             info: info.clone(),
             stop: stop_tx,
+            generation,
         });
     }
 
     let handle = app.clone();
     tokio::spawn(async move {
-        run_agent(handle, agent, bridge_port, stop_rx).await;
+        run_agent(handle, agent, bridge_port, stop_rx, generation).await;
     });
     Ok(info)
 }
@@ -591,9 +603,18 @@ pub async fn relay_deploy(token: String, key: Option<String>) -> Result<RelayDep
     })
 }
 
-/// Keeps one agent socket alive: reconnect with backoff until stopped.
-async fn run_agent(app: tauri::AppHandle, agent: String, port: u16, mut stop: watch::Receiver<bool>) {
-    let mut attempt = 0usize;
+/// Keeps the agent socket up. A socket that lived and then died is redialed —
+/// a blip on the desktop's uplink should not cost the phone its link. A dial
+/// that *cannot be established* ends the session instead: retrying forever
+/// leaves the relay switch reading 断开中转 for a Worker that is not answering,
+/// and only the user knows when the address/key deserves another try.
+async fn run_agent(
+    app: tauri::AppHandle,
+    agent: String,
+    port: u16,
+    mut stop: watch::Receiver<bool>,
+    generation: u64,
+) {
     loop {
         if *stop.borrow() {
             return;
@@ -601,27 +622,29 @@ async fn run_agent(app: tauri::AppHandle, agent: String, port: u16, mut stop: wa
         let request = match agent.clone().into_client_request() {
             Ok(r) => r,
             Err(e) => {
-                set_error(&app, format!("中继地址无效：{e}"));
+                give_up(&app, generation, format!("中继地址无效：{e}"));
                 return;
             }
         };
         match tokio_tungstenite::connect_async(request).await {
             Ok((socket, _)) => {
-                attempt = 0;
-                set_error(&app, String::new());
-                set_connected(&app, true);
+                set_error(&app, generation, String::new());
+                set_connected(&app, generation, true);
                 serve(socket, port, &mut stop).await;
-                set_connected(&app, false);
+                set_connected(&app, generation, false);
             }
-            Err(e) => set_error(&app, format!("连接中继失败：{e}")),
+            Err(e) => {
+                give_up(&app, generation, format!("连接中继失败：{e}"));
+                return;
+            }
         }
         if *stop.borrow() {
             return;
         }
-        let delay = BACKOFF_MS[attempt.min(BACKOFF_MS.len() - 1)];
-        attempt += 1;
+        // The pause is what keeps a Worker that accepts and immediately closes
+        // from turning this into a hot loop.
         tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => {}
+            _ = tokio::time::sleep(std::time::Duration::from_millis(REDIAL_DELAY_MS)) => {}
             _ = stop.changed() => return,
         }
     }
@@ -942,24 +965,48 @@ fn bytes_to_b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn set_connected(app: &tauri::AppHandle, connected: bool) {
+fn set_connected(app: &tauri::AppHandle, generation: u64, connected: bool) {
     let state = app.state::<crate::AppState>();
     if let Ok(mut guard) = state.relay.inner.lock() {
-        if let Some(running) = guard.as_mut() {
+        if let Some(running) = guard.as_mut().filter(|r| r.generation == generation) {
             running.info.connected = connected;
         }
     }
     broadcast_relay(app);
 }
 
-fn set_error(app: &tauri::AppHandle, message: String) {
+fn set_error(app: &tauri::AppHandle, generation: u64, message: String) {
     let state = app.state::<crate::AppState>();
     if let Ok(mut guard) = state.relay.inner.lock() {
-        if let Some(running) = guard.as_mut() {
+        if let Some(running) = guard.as_mut().filter(|r| r.generation == generation) {
             running.info.error = (!message.is_empty()).then_some(message);
         }
     }
     broadcast_relay(app);
+}
+
+/// Ends the session on a dial that will not come up and hands the reason to the
+/// UI. The entry is dropped, so the page's next status read returns null and the
+/// switch flips back to 连接中转; the message therefore has to ride the event —
+/// the state it would otherwise be read from no longer exists.
+fn give_up(app: &tauri::AppHandle, generation: u64, message: String) {
+    let state = app.state::<crate::AppState>();
+    match state.relay.inner.lock() {
+        Ok(mut guard) => {
+            match guard.as_ref() {
+                // Superseded: a newer session owns the switch, leave it alone.
+                Some(running) if running.generation != generation => return,
+                Some(_) => {
+                    guard.take();
+                }
+                None => return,
+            }
+        }
+        Err(_) => return,
+    }
+    use crate::event_sink::Emit;
+    let payload = serde_json::json!({ "error": message }).to_string();
+    let _ = state.emitters.emit_json("web://relay", &payload);
 }
 
 fn broadcast_relay(app: &tauri::AppHandle) {

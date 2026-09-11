@@ -103,7 +103,14 @@ export function WebAccessSection() {
 
   useEffect(() => refreshDevices(), [refreshDevices]);
   useTauriEvent(() => listenWebDevices(refreshDevices));
-  useTauriEvent(() => listenRelay(refreshRelay));
+  useTauriEvent(() =>
+    listenRelay((error) => {
+      // A give-up drops the session and carries the reason: keep it, so the
+      // dot can still explain itself once the switch is back to 连接中转.
+      if (error) setRelayError(error);
+      refreshRelay();
+    }),
+  );
   // The pairing key rotates by itself (after a pairing, and on a timer), so
   // this page re-reads settings whenever anything writes them.
   useTauriEvent(() => listenSettingsChanged(refreshAuth));
@@ -180,9 +187,13 @@ export function WebAccessSection() {
     setRelayBusy(true);
     setRelayError(null);
     try {
-      const info = await ipc.webRelayStart(relayUrl.trim(), relayKey.trim());
+      await ipc.webRelayStart(relayUrl.trim(), relayKey.trim());
       await saveRelayFields(relayUrl.trim(), relayKey.trim());
-      setRelay(info);
+      // Not the snapshot the command returned: the agent dials in milliseconds
+      // and pushes its `connected` event before that response lands, so
+      // writing the snapshot would paint 未连接 over a relay that is already
+      // up. The status read happens after both and is authoritative.
+      refreshRelay();
       // Connecting the relay started the local bridge (it forwards through
       // it): re-read the status so 内网访问 does not sit on a stale 已停止.
       void ipc.webAccessStatus().then(setInfo).catch(() => {});
@@ -191,7 +202,7 @@ export function WebAccessSection() {
     } finally {
       setRelayBusy(false);
     }
-  }, [relayUrl, relayKey, saveRelayFields]);
+  }, [relayUrl, relayKey, saveRelayFields, refreshRelay]);
 
   const stopRelay = useCallback(async () => {
     setRelayBusy(true);
@@ -304,9 +315,9 @@ export function WebAccessSection() {
   }, [relayKey, t]);
 
   // Relay state dot: driven by the backend's own state, so a reconnect clears
-  // it by itself. (`relayError` is a local, sticky flag — folding it into the
-  // colour kept the dot red long after the relay had reconnected; it only
-  // serves as fallback text now.)
+  // it by itself. The local message is the one a give-up hands over — by then
+  // the backend has already dropped the session, so this is the only thing
+  // left to explain the red dot on a switch that reads 连接中转 again.
   //
   // The dot doubles as the error surface: relay failures run long ("IO error:
   // 由于目标计算机积极拒绝，无法连接。 (os error 10061)") and an inline line
@@ -319,10 +330,12 @@ export function WebAccessSection() {
       }
     : relay?.connected
       ? { dot: "bg-[var(--color-status-unseen)]", text: t("settings.webRelayStateLive") }
-      : {
-          dot: "bg-foreground-icon-tertiary",
-          text: relayError || t("settings.webRelayStateIdle"),
-        };
+      : relayError
+        ? {
+            dot: "bg-text-error-primary",
+            text: `${t("settings.webRelayFailed")}: ${relayError}`,
+          }
+        : { dot: "bg-foreground-icon-tertiary", text: t("settings.webRelayStateIdle") };
 
   return (
     <div className="flex w-full flex-col gap-2">

@@ -47,9 +47,15 @@ export function listenSettingsChanged(cb: () => void): Promise<UnlistenFn> {
   return listen("settings://changed", () => cb());
 }
 
-/** The outbound relay's connection state changed. */
-export function listenRelay(cb: () => void): Promise<UnlistenFn> {
-  return listen("web://relay", () => cb());
+/**
+ * The outbound relay's connection state changed. `error` is set only when the
+ * backend gave up on a dial and dropped the session — the status it would
+ * otherwise be read from is gone by then.
+ */
+export function listenRelay(cb: (error: string | null) => void): Promise<UnlistenFn> {
+  return listen<{ error?: string } | null>("web://relay", (event) =>
+    cb(event.payload?.error ?? null),
+  );
 }
 
 /** The LAN bridge's device list changed (new pending device, approve, revoke). */
