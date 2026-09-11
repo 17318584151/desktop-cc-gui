@@ -270,6 +270,12 @@ export const zh = {
     webAccess: "远程访问",
     webLan: "内网访问",
     webWan: "外网访问",
+    webWanRiskTitle: "外网访问：请先了解风险",
+    webWanRiskBody:
+      "开启外网访问后，本机的 CC GUI 会通过中转服务暴露到公网。任何通过配对并被你「授权」的设备，都能读写你的文件、运行终端命令、消耗你的 API 额度——权限与你本人坐在这台电脑前完全相同，不受项目目录限制。",
+    webWanRiskPoints:
+      "请务必做到：只授权自己的设备；配对密钥不要转发给任何人；不用时断开中转；在「授权列表」里删除不再使用的设备。",
+    webWanRiskAccept: "我已了解并自行承担风险",
     webAccessDesc: "让同一网络下的设备通过浏览器使用 CC GUI",
     webAccessStart: "启动 Web 访问",
     webAccessStop: "停止",

@@ -16,10 +16,19 @@ import {
 } from "@/components/application/settings/settings-rows";
 import { ipc, type RelayInfo, type WebAccessInfo, type WebDevice } from "@/lib/ipc";
 import { Input } from "@/components/base/input/input";
+import { ModalShell } from "@/components/dialogs";
 import { listenRelay, listenSettingsChanged, listenWebDevices } from "@/lib/events";
 import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { isWeb, pickSavePath } from "@/lib/platform";
 import { cx } from "@/utils/cx";
+import { readStoredBool, writeStored } from "@/lib/storage";
+
+/**
+ * Set once the user has accepted the internet-exposure warning. Local to this
+ * machine on purpose: the risk is about *this* desktop being reachable, and a
+ * fresh install deserves to be told again.
+ */
+const WAN_RISK_ACK_KEY = "ccgui-next.webWanRiskAccepted";
 
 /** Matches the code the phone shows while it waits for approval. */
 function deviceCode(id: string): string {
@@ -87,6 +96,25 @@ export function WebAccessSection() {
   const [authKey, setAuthKey] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [pane, setPane] = useState<"lan" | "wan">("lan");
+  /** The 外网访问 tab stays behind a one-time warning: everything it enables
+   *  hands a remote browser the same reach the user has on this machine. */
+  const [wanRiskAccepted, setWanRiskAccepted] = useState(() =>
+    readStoredBool(WAN_RISK_ACK_KEY, false),
+  );
+  /** Which tab to reveal once the warning is accepted; null when no ask is
+   *  pending. Kept separate from `pane` so declining leaves 内网访问 showing. */
+  const [riskPrompt, setRiskPrompt] = useState<"wan" | null>(null);
+
+  /** Accepting reveals the tab and is remembered, so the warning is a
+   *  first-run gate rather than a toll on every visit. */
+  const acceptWanRisk = useCallback(() => {
+    setWanRiskAccepted(true);
+    writeStored(WAN_RISK_ACK_KEY, "1");
+    setRiskPrompt((pending) => {
+      if (pending) setPane(pending);
+      return null;
+    });
+  }, []);
 
   const refreshDevices = useCallback(() => {
     void ipc
@@ -398,7 +426,15 @@ export function WebAccessSection() {
             key={id}
             type="button"
             aria-pressed={pane === id}
-            onClick={() => setPane(id)}
+            onClick={() => {
+              // 内网访问 is upstream's LAN behaviour and needs no warning; the
+              // internet tab does, exactly once per machine.
+              if (id === "wan" && !wanRiskAccepted) {
+                setRiskPrompt("wan");
+                return;
+              }
+              setPane(id);
+            }}
             className={cx(
               "cursor-pointer rounded-full px-3 py-1 text-body-2-medium transition-colors",
               pane === id
@@ -746,6 +782,35 @@ export function WebAccessSection() {
           )}
         </SettingsCard>
         </>
+      )}
+      {riskPrompt && (
+        <ModalShell
+          onClose={() => setRiskPrompt(null)}
+          className="w-[420px]"
+          label={t("settings.webWanRiskTitle")}
+        >
+          <div className="flex flex-col gap-3">
+            <p className="text-body-medium text-text-error-primary">
+              {t("settings.webWanRiskTitle")}
+            </p>
+            <p className="text-body-2-regular text-text-primary">
+              {t("settings.webWanRiskBody")}
+            </p>
+            <p className="rounded-2lg border border-border-error-default p-3 text-body-2-regular text-text-primary">
+              {t("settings.webWanRiskPoints")}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="small" onClick={() => setRiskPrompt(null)}>
+                {t("common.cancel")}
+              </Button>
+              {/* Accepting is the deliberate act, so it is the danger-styled
+               *  button rather than a neutral confirm. */}
+              <Button variant="danger" size="small" onClick={acceptWanRisk}>
+                {t("settings.webWanRiskAccept")}
+              </Button>
+            </div>
+          </div>
+        </ModalShell>
       )}
     </div>
   );

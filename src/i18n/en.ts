@@ -285,6 +285,12 @@ export const en: Messages = {
     webAccess: "Remote access",
     webLan: "LAN",
     webWan: "Internet",
+    webWanRiskTitle: "Internet access: read this first",
+    webWanRiskBody:
+      "Turning on internet access exposes this machine's CC GUI to the public internet through the relay. Any device that pairs and that you then approve can read and write your files, run terminal commands, and spend your API quota — the same reach you have sitting at this computer, not limited to a project directory.",
+    webWanRiskPoints:
+      "So: approve only your own devices, never forward the pairing key, disconnect the relay when you are done, and remove devices you no longer use from the list.",
+    webWanRiskAccept: "I understand and accept the risk",
     webAccessDesc: "Let devices on the same network use CC GUI in a browser",
     webAccessStart: "Start web access",
     webAccessStop: "Stop",
