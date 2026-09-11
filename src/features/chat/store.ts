@@ -14,6 +14,8 @@ import {
 } from "@/lib/ipc";
 import type { EffortLevel } from "@/components/application/ai-chat/cli-menu";
 import type { ComposerPermission } from "@/components/application/ai-chat/permission-menu";
+import { pruneMentionIndex } from "@/components/application/ai-chat/mention-files";
+import { pruneSlashCommands } from "@/components/application/ai-chat/slash-commands";
 import { listenEngineEvents, listenSessionsChanged } from "@/lib/events";
 import { errorText } from "@/lib/errors";
 import { writeStored } from "@/lib/storage";
@@ -38,16 +40,20 @@ import {
   moveStreamingFlag,
   patchSession,
   resolveSessionModel,
+  routeRun,
   runRouting,
   setStreamingFlag,
   settleLiveRows,
+  untrackRun,
   type SessionState,
 } from "./store/stream";
 import {
+  dropRunUsage,
   firstLineTitle,
   handleEngineEvents,
   optimisticMeta,
   patchGrantBySeq,
+  settleOrphanedRuns,
   upsertSessionMetaInto,
 } from "./store/engine-events";
 
@@ -360,6 +366,47 @@ export const useChatStore = create<ChatStore>((set, get) => {
     });
   }
 
+  /** Reopen cache for closed tabs: keys whose bySession entry survives tab
+   * close so selectSession skips a backend reload, most-recently-closed
+   * last. Bounded — the oldest non-streaming entries beyond the cap are
+   * evicted, so the cache cannot grow forever. */
+  const CLOSED_CACHE_LIMIT = 10;
+  const closedTabCache: string[] = [];
+
+  function rememberClosedTab(key: string) {
+    const i = closedTabCache.indexOf(key);
+    if (i >= 0) closedTabCache.splice(i, 1);
+    closedTabCache.push(key);
+    // Keys whose tab is open again are not "closed" anymore.
+    const openKeys = new Set(
+      get().openTabs.map((t) =>
+        sessionKey(t.engine, t.sessionId, t.workspacePath),
+      ),
+    );
+    for (let j = closedTabCache.length - 1; j >= 0; j--) {
+      if (openKeys.has(closedTabCache[j])) closedTabCache.splice(j, 1);
+    }
+    let overflow = closedTabCache.length - CLOSED_CACHE_LIMIT;
+    if (overflow <= 0) return;
+    const evict: string[] = [];
+    for (const cached of closedTabCache) {
+      if (overflow <= 0) break;
+      // A streaming closed tab still receives events — never evict it.
+      if (get().streamingByKey[cached]) continue;
+      evict.push(cached);
+      overflow--;
+    }
+    if (evict.length === 0) return;
+    for (const cached of evict) {
+      closedTabCache.splice(closedTabCache.indexOf(cached), 1);
+    }
+    set((s) => {
+      const bySession = { ...s.bySession };
+      for (const cached of evict) delete bySession[cached];
+      return { bySession };
+    });
+  }
+
   /** Remove a tab; when it was active, fall back to its nearest neighbor. */
   function removeTab(
     engine: string,
@@ -373,6 +420,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     if (idx < 0) return;
     const openTabs = s.openTabs.filter((_, i) => i !== idx);
     set({ openTabs });
+    rememberClosedTab(sessionKey(engine, sessionId, workspacePath));
     if (s.active && sameTab(s.active, engine, sessionId, workspacePath)) {
       activateTab(openTabs[Math.min(idx, openTabs.length - 1)] ?? null);
     } else {
@@ -445,18 +493,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
       if (result.sessionId && !tab.sessionId) {
         // Preassigned native id (grok): adopt immediately.
+        const newKey = sessionKey(
+          engine,
+          result.sessionId,
+          tab.workspacePath,
+        );
+        settleOrphanedRuns(set, routeRun(result.runId, newKey));
         set((s) => {
-          const newKey = sessionKey(
-            engine,
-            result.sessionId,
-            tab.workspacePath,
-          );
           const bySession = { ...s.bySession };
           if (bySession[key]) {
             bySession[newKey] = bySession[key];
             if (newKey !== key) delete bySession[key];
           }
-          runRouting.set(result.runId, newKey);
           // Stamp only the tab that owns this run; blanketing every pending
           // tab of this engine+workspace would create duplicate session tabs.
           let stamped = false;
@@ -503,7 +551,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           ),
         );
       } else {
-        runRouting.set(result.runId, key);
+        settleOrphanedRuns(set, routeRun(result.runId, key));
       }
       // Stop pressed while this send was still in flight: interrupt() ran
       // before runRouting had this run (it is written above, after the
@@ -517,6 +565,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
           : key;
       if (get().bySession[liveKey]?.interrupted) {
         runRouting.delete(result.runId);
+        untrackRun(result.runId);
+        dropRunUsage(result.runId);
         await Promise.all([
           ipc.interruptSession(result.runId).catch(() => false),
           ...(result.sessionId
@@ -749,6 +799,44 @@ export const useChatStore = create<ChatStore>((set, get) => {
         await get().refreshWorkspaces();
         set({ actionError: null });
         if (!removedPath) return;
+        // The composer's per-root picker caches die with the workspace.
+        pruneMentionIndex(removedPath);
+        pruneSlashCommands(removedPath);
+        // Evict cached session state belonging to the removed workspace:
+        // real session keys come from the list cache, pending-chat keys
+        // carry the path in the key itself.
+        const dead = new Set<string>();
+        for (const sess of get().sessions) {
+          if (sess.workspacePath === removedPath) {
+            dead.add(sessionKey(sess.engine, sess.sessionId, ""));
+          }
+        }
+        const current = get();
+        for (const key of [
+          ...Object.keys(current.bySession),
+          ...Object.keys(current.drafts),
+          ...Object.keys(current.unseen),
+        ]) {
+          if (key.startsWith("new:") && key.endsWith(`:${removedPath}`)) {
+            dead.add(key);
+          }
+        }
+        if (dead.size > 0) {
+          for (let i = closedTabCache.length - 1; i >= 0; i--) {
+            if (dead.has(closedTabCache[i])) closedTabCache.splice(i, 1);
+          }
+          set((s) => {
+            const bySession = { ...s.bySession };
+            const drafts = { ...s.drafts };
+            const unseen = { ...s.unseen };
+            for (const key of dead) {
+              delete bySession[key];
+              delete drafts[key];
+              delete unseen[key];
+            }
+            return { bySession, drafts, unseen };
+          });
+        }
         const openTabs = get().openTabs.filter(
           (t) => t.workspacePath !== removedPath,
         );
@@ -1330,9 +1418,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
           ipc.interruptSession(runId).catch(() => false),
         ),
       );
-      // The runs are dead: drop their routing entries so the map cannot grow
-      // forever. (A late done event would also remove them.)
-      for (const runId of deadRunIds) runRouting.delete(runId);
+      // The runs are dead: drop their routing and usage entries so the maps
+      // cannot grow forever. (A late done event would also remove them.)
+      for (const runId of deadRunIds) {
+        runRouting.delete(runId);
+        untrackRun(runId);
+        dropRunUsage(runId);
+      }
     },
 
     deleteSession: async (engine, sessionId) => {
@@ -1343,14 +1435,28 @@ export const useChatStore = create<ChatStore>((set, get) => {
         return;
       }
       set({ actionError: null });
+      const key = sessionKey(engine, sessionId, "");
       const tab = get().openTabs.find(
         (t) => t.engine === engine && t.sessionId === sessionId,
       );
-      set((s) => ({
-        sessions: s.sessions.filter(
-          (x) => !(x.engine === engine && x.sessionId === sessionId),
-        ),
-      }));
+      set((s) => {
+        // Permanent delete: the cached session state is dead weight.
+        const bySession = { ...s.bySession };
+        const drafts = { ...s.drafts };
+        delete bySession[key];
+        delete drafts[key];
+        return {
+          sessions: s.sessions.filter(
+            (x) => !(x.engine === engine && x.sessionId === sessionId),
+          ),
+          bySession,
+          drafts,
+          unseen: omitKey(s.unseen, key),
+        };
+      });
+      // The closed-tab reopen cache must not keep the dead key either.
+      const cacheIdx = closedTabCache.indexOf(key);
+      if (cacheIdx >= 0) closedTabCache.splice(cacheIdx, 1);
       if (tab) {
         // removeTab activates the neighboring tab when the deleted one was active.
         removeTab(engine, sessionId, tab.workspacePath);

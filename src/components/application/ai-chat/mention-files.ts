@@ -81,15 +81,20 @@ export const useMentionIndexStore = create<MentionIndexStore>((set, get) => ({
     const p = ipc
       .listFileIndex(root)
       .then((raw) => {
-        set((s) => ({
-          byRoot: {
-            ...s.byRoot,
-            [root]: { entries: buildEntries(raw), status: "ready", fetchedAt: Date.now() },
-          },
-        }));
+        set((s) => {
+          // Pruned while the fetch was in flight (workspace removed): stay gone.
+          if (!(root in s.byRoot)) return {};
+          return {
+            byRoot: {
+              ...s.byRoot,
+              [root]: { entries: buildEntries(raw), status: "ready", fetchedAt: Date.now() },
+            },
+          };
+        });
       })
       .catch(() => {
         set((s) => {
+          if (!(root in s.byRoot)) return {};
           const prev = s.byRoot[root];
           return {
             byRoot: {
@@ -107,6 +112,17 @@ export const useMentionIndexStore = create<MentionIndexStore>((set, get) => ({
     inFlight.set(root, p);
   },
 }));
+
+/** Drop one workspace root's cached index when its workspace is removed;
+ * the per-root cache would otherwise accumulate every root ever opened. */
+export function pruneMentionIndex(root: string) {
+  useMentionIndexStore.setState((s) => {
+    if (!(root in s.byRoot)) return {};
+    const byRoot = { ...s.byRoot };
+    delete byRoot[root];
+    return { byRoot };
+  });
+}
 
 /** Max rows the picker renders — caps DOM work regardless of match count. */
 export const MENTION_MENU_LIMIT = 50;

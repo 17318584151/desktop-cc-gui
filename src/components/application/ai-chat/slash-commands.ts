@@ -74,15 +74,20 @@ export const useSlashCommandStore = create<SlashCommandStore>((set, get) => ({
     const p = ipc
       .listSlashCommands(root)
       .then((entries) => {
-        set((s) => ({
-          byRoot: {
-            ...s.byRoot,
-            [root]: { entries, status: "ready", fetchedAt: Date.now() },
-          },
-        }));
+        set((s) => {
+          // Pruned while the fetch was in flight (workspace removed): stay gone.
+          if (!(root in s.byRoot)) return {};
+          return {
+            byRoot: {
+              ...s.byRoot,
+              [root]: { entries, status: "ready", fetchedAt: Date.now() },
+            },
+          };
+        });
       })
       .catch(() => {
         set((s) => {
+          if (!(root in s.byRoot)) return {};
           const prev = s.byRoot[root];
           return {
             byRoot: {
@@ -100,6 +105,17 @@ export const useSlashCommandStore = create<SlashCommandStore>((set, get) => ({
     inFlight.set(root, p);
   },
 }));
+
+/** Drop one workspace root's cached catalog when its workspace is removed;
+ * the per-root cache would otherwise accumulate every root ever opened. */
+export function pruneSlashCommands(root: string) {
+  useSlashCommandStore.setState((s) => {
+    if (!(root in s.byRoot)) return {};
+    const byRoot = { ...s.byRoot };
+    delete byRoot[root];
+    return { byRoot };
+  });
+}
 
 /** Max rows the picker renders — caps DOM work regardless of match count. */
 export const SLASH_MENU_LIMIT = 50;
