@@ -18,7 +18,9 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -36,8 +38,10 @@ const REDIAL_DELAY_MS: u64 = 1_000;
 /// pairing key for those requests only, so the LAN keeps upstream's model.
 pub const VIA_HEADER: &str = "x-ccgui-via";
 
-/// Hop-by-hop headers have no meaning across the relay.
-const HOP_HEADERS: [&str; 8] = [
+/// Headers that must never survive the hop: hop-by-hop ones have no meaning
+/// across the relay, and `VIA_HEADER` is ours — a phone that sent its own copy
+/// would otherwise decide how the bridge classifies the request.
+const HOP_HEADERS: [&str; 9] = [
     "host",
     "connection",
     "keep-alive",
@@ -46,6 +50,7 @@ const HOP_HEADERS: [&str; 8] = [
     "content-length",
     "accept-encoding",
     "sec-websocket-extensions",
+    VIA_HEADER,
 ];
 
 #[derive(Default)]
@@ -220,7 +225,7 @@ pub async fn web_relay_start(
     let (stop_tx, stop_rx) = watch::channel(false);
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     {
-        let mut guard = state.relay.inner.lock().map_err(|e| e.to_string())?;
+        let mut guard = state.relay.inner.lock();
         if let Some(previous) = guard.take() {
             let _ = previous.stop.send(true);
         }
@@ -241,7 +246,7 @@ pub async fn web_relay_start(
 #[tauri::command]
 pub fn web_relay_stop(app: tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<crate::AppState>();
-    let mut guard = state.relay.inner.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.relay.inner.lock();
     if let Some(running) = guard.take() {
         let _ = running.stop.send(true);
     }
@@ -253,7 +258,7 @@ pub fn web_relay_stop(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn web_relay_status(app: tauri::AppHandle) -> Option<RelayInfo> {
     let state = app.state::<crate::AppState>();
-    let guard = state.relay.inner.lock().ok()?;
+    let guard = state.relay.inner.lock();
     guard.as_ref().map(|r| r.info.clone())
 }
 
@@ -795,9 +800,9 @@ async fn serve(
             } => {
                 if ws {
                     let live = spawn_socket(id, path, headers, port, out_tx.clone());
-                    sockets.lock().unwrap().insert(id, live);
+                    sockets.lock().insert(id, live);
                 } else {
-                    http.lock().unwrap().insert(
+                    http.lock().insert(
                         id,
                         PendingHttp {
                             method,
@@ -809,35 +814,59 @@ async fn serve(
                 }
             }
             AgentFrame::Body { id, b64 } => {
-                if let Some(pending) = http.lock().unwrap().get_mut(&id) {
+                if let Some(pending) = http.lock().get_mut(&id) {
                     pending.body.extend(b64_to_bytes(&b64));
                 }
             }
             AgentFrame::End { id } => {
-                let pending = http.lock().unwrap().remove(&id);
+                let pending = http.lock().remove(&id);
                 if let Some(pending) = pending {
                     spawn_http(id, pending, port, out_tx.clone(), client.clone());
                 }
             }
             AgentFrame::Data { id, b64, text } => {
-                let sender = sockets.lock().unwrap().get(&id).map(|s| s.frames.clone());
+                let sender = sockets.lock().get(&id).map(|s| s.frames.clone());
                 if let Some(sender) = sender {
-                    let _ = sender.send((b64_to_bytes(&b64), text.unwrap_or(true))).await;
+                    // `try_send`, never `send().await`: awaiting a full channel
+                    // stalls this loop, and this loop is the only reader for
+                    // *every* stream on the connection — one wedged local socket
+                    // would freeze the phone's whole session. A socket that
+                    // cannot keep up loses its stream instead.
+                    match sender.try_send((b64_to_bytes(&b64), text.unwrap_or(true))) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            if let Some(live) = sockets.lock().remove(&id) {
+                                live.task.abort();
+                            }
+                            let _ = send(
+                                &out_tx,
+                                &ClientFrame::Error {
+                                    id,
+                                    message: "本机 socket 积压过多，已断开该连接".into(),
+                                },
+                            )
+                            .await;
+                        }
+                        // Receiver gone: the stream's task already ended.
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            sockets.lock().remove(&id);
+                        }
+                    }
                 }
             }
             AgentFrame::Close { id } => {
-                if let Some(live) = sockets.lock().unwrap().remove(&id) {
+                if let Some(live) = sockets.lock().remove(&id) {
                     live.task.abort();
                 }
-                http.lock().unwrap().remove(&id);
+                http.lock().remove(&id);
             }
         }
     }
 
-    for (_, live) in sockets.lock().unwrap().drain() {
+    for (_, live) in sockets.lock().drain() {
         live.task.abort();
     }
-    http.lock().unwrap().clear();
+    http.lock().clear();
     drop(out_tx);
     let _ = writer.await;
 }
@@ -956,10 +985,13 @@ fn spawn_socket(
             tokio_tungstenite::tungstenite::http::HeaderValue::from_static("relay"),
         );
         for (name, value) in &headers {
-            if name.to_ascii_lowercase().starts_with("sec-websocket")
-                || name.eq_ignore_ascii_case("host")
-                || name.eq_ignore_ascii_case("connection")
-                || name.eq_ignore_ascii_case("upgrade")
+            // HOP_HEADERS carries VIA_HEADER, so the tag set just above cannot
+            // be overwritten by a phone that sent its own — `insert` below
+            // would otherwise replace it and the bridge would stop seeing the
+            // request as relayed. `origin` and the handshake's own
+            // `sec-websocket-*` belong to this hop only.
+            if HOP_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+                || name.to_ascii_lowercase().starts_with("sec-websocket")
                 || name.eq_ignore_ascii_case("origin")
             {
                 continue;
@@ -1066,7 +1098,8 @@ fn bytes_to_b64(bytes: &[u8]) -> String {
 
 fn set_connected(app: &tauri::AppHandle, generation: u64, connected: bool) {
     let state = app.state::<crate::AppState>();
-    if let Ok(mut guard) = state.relay.inner.lock() {
+    {
+        let mut guard = state.relay.inner.lock();
         if let Some(running) = guard.as_mut().filter(|r| r.generation == generation) {
             running.info.connected = connected;
         }
@@ -1076,7 +1109,8 @@ fn set_connected(app: &tauri::AppHandle, generation: u64, connected: bool) {
 
 fn set_error(app: &tauri::AppHandle, generation: u64, message: String) {
     let state = app.state::<crate::AppState>();
-    if let Ok(mut guard) = state.relay.inner.lock() {
+    {
+        let mut guard = state.relay.inner.lock();
         if let Some(running) = guard.as_mut().filter(|r| r.generation == generation) {
             running.info.error = (!message.is_empty()).then_some(message);
         }
@@ -1090,18 +1124,16 @@ fn set_error(app: &tauri::AppHandle, generation: u64, message: String) {
 /// the state it would otherwise be read from no longer exists.
 fn give_up(app: &tauri::AppHandle, generation: u64, message: String) {
     let state = app.state::<crate::AppState>();
-    match state.relay.inner.lock() {
-        Ok(mut guard) => {
-            match guard.as_ref() {
-                // Superseded: a newer session owns the switch, leave it alone.
-                Some(running) if running.generation != generation => return,
-                Some(_) => {
-                    guard.take();
-                }
-                None => return,
+    {
+        let mut guard = state.relay.inner.lock();
+        match guard.as_ref() {
+            // Superseded: a newer session owns the switch, leave it alone.
+            Some(running) if running.generation != generation => return,
+            Some(_) => {
+                guard.take();
             }
+            None => return,
         }
-        Err(_) => return,
     }
     use crate::event_sink::Emit;
     let payload = serde_json::json!({ "error": message }).to_string();
@@ -1173,5 +1205,228 @@ mod tests {
         let key = new_relay_key();
         assert_eq!(key.len(), 32);
         assert!(key.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    /// Start a router on an ephemeral loopback port; returns the port. Stands
+    /// in for whichever end the test needs: the local bridge, or the Worker
+    /// holding the agent socket.
+    async fn serve_local(router: axum::Router) -> u16 {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        port
+    }
+
+    /// Collect this stream's frames until it closes, folding them into
+    /// (status, body). Panics on an `error` frame: the tests below all describe
+    /// hops that must succeed.
+    async fn drain_stream(
+        frames: &mut mpsc::Receiver<String>,
+        id: u64,
+    ) -> (Option<u64>, Vec<u8>) {
+        let mut status = None;
+        let mut body = Vec::new();
+        loop {
+            let text = tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv())
+                .await
+                .expect("the stream produced no frame")
+                .expect("the stream ended without closing");
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["id"], id, "every frame carries its stream id");
+            match value["t"].as_str().unwrap() {
+                "head" => status = value["status"].as_u64(),
+                "data" => body.extend(b64_to_bytes(value["b64"].as_str().unwrap())),
+                "close" => return (status, body),
+                other => panic!("unexpected {other} frame: {text}"),
+            }
+        }
+    }
+
+    /// The HTTP hop end to end: the bridge sees the phone's method, path and
+    /// body, the answer comes back as head → data → close, and the hop carries
+    /// exactly one `VIA_HEADER` — ours. A phone that sends its own copy is
+    /// telling the bridge how to classify itself, which is the gate's input.
+    #[tokio::test]
+    async fn http_stream_round_trips_and_owns_the_via_tag() {
+        #[derive(Clone)]
+        struct Seen(Arc<Mutex<Vec<String>>>);
+
+        let seen = Seen(Arc::new(Mutex::new(Vec::new())));
+        let bridge = axum::Router::new()
+            .route(
+                "/echo",
+                axum::routing::post(
+                    |axum::extract::State(seen): axum::extract::State<Seen>,
+                     headers: axum::http::HeaderMap,
+                     body: String| async move {
+                        seen.0.lock().push(
+                            headers
+                                .get_all(VIA_HEADER)
+                                .iter()
+                                .map(|value| value.to_str().unwrap_or_default().to_string())
+                                .collect::<Vec<_>>()
+                                .join(","),
+                        );
+                        (axum::http::StatusCode::CREATED, body)
+                    },
+                ),
+            )
+            .with_state(seen.clone());
+        let port = serve_local(bridge).await;
+
+        let (out, mut frames) = mpsc::channel::<String>(32);
+        let mut headers = HashMap::new();
+        // The phone's own claim about the hop, and a hop-by-hop header that
+        // would describe a body length reqwest is about to set itself.
+        headers.insert(VIA_HEADER.to_string(), "lan".to_string());
+        headers.insert("content-length".to_string(), "999".to_string());
+        spawn_http(
+            7,
+            PendingHttp {
+                method: "POST".into(),
+                path: "/echo".into(),
+                headers,
+                body: b"hello relay".to_vec(),
+            },
+            port,
+            out,
+            reqwest::Client::new(),
+        );
+
+        let (status, body) = drain_stream(&mut frames, 7).await;
+        assert_eq!(status, Some(201));
+        assert_eq!(String::from_utf8(body).unwrap(), "hello relay");
+        assert_eq!(
+            seen.0.lock().as_slice(),
+            ["relay"],
+            "one via header, ours: the phone may neither add nor replace it"
+        );
+    }
+
+    /// Socket payloads keep their frame type in both directions. The bridge
+    /// speaks JSON text and the app's client parses text; when this regressed,
+    /// every reply reached the browser as bytes and the web UI rendered empty.
+    #[tokio::test]
+    async fn socket_frames_keep_text_and_binary_apart() {
+        let bridge = axum::Router::new().route(
+            "/ws",
+            axum::routing::get(|ws: axum::extract::WebSocketUpgrade| async move {
+                ws.on_upgrade(|mut socket| async move {
+                    use axum::extract::ws::Message as Axum;
+                    // Echo each frame back in the kind it arrived in.
+                    while let Some(Ok(message)) = socket.recv().await {
+                        let echo = match message {
+                            Axum::Text(text) => Axum::Text(text),
+                            Axum::Binary(bytes) => Axum::Binary(bytes),
+                            Axum::Close(_) => break,
+                            _ => continue,
+                        };
+                        if socket.send(echo).await.is_err() {
+                            break;
+                        }
+                    }
+                })
+            }),
+        );
+        let port = serve_local(bridge).await;
+
+        let (out, mut frames) = mpsc::channel::<String>(32);
+        let live = spawn_socket(11, "/ws".into(), HashMap::new(), port, out);
+        let text_payload = br#"{"type":"hello"}"#.to_vec();
+        // Deliberately not UTF-8: a binary frame decoded as text would corrupt.
+        let binary_payload = vec![0xff, 0x00, 0x01];
+        live.frames.send((text_payload.clone(), true)).await.unwrap();
+        live.frames.send((binary_payload.clone(), false)).await.unwrap();
+
+        let mut got = Vec::new();
+        while got.len() < 2 {
+            let text = tokio::time::timeout(std::time::Duration::from_secs(5), frames.recv())
+                .await
+                .expect("the socket produced no frame")
+                .expect("the socket closed before both echoes");
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if value["t"] == "data" {
+                got.push((
+                    b64_to_bytes(value["b64"].as_str().unwrap()),
+                    value["text"].as_bool(),
+                ));
+            }
+        }
+        assert_eq!(got[0], (text_payload, Some(true)), "text stays text");
+        assert_eq!(got[1], (binary_payload, Some(false)), "bytes stay bytes");
+        live.task.abort();
+    }
+
+    /// `serve` assembles `open` + every `body` + `end` into one request. The
+    /// Worker splits bodies across frames as a matter of course, so dropping
+    /// one would silently truncate an upload rather than fail it.
+    #[tokio::test]
+    async fn serve_assembles_a_split_body_before_dispatching() {
+        let bridge = axum::Router::new().route(
+            "/upload",
+            axum::routing::post(|body: String| async move { body }),
+        );
+        let bridge_port = serve_local(bridge).await;
+
+        let scripted = Arc::new(vec![
+            serde_json::json!({"t":"open","id":3,"method":"POST","path":"/upload","headers":{}})
+                .to_string(),
+            serde_json::json!({"t":"body","id":3,"b64":bytes_to_b64(b"first ")}).to_string(),
+            serde_json::json!({"t":"body","id":3,"b64":bytes_to_b64(b"second")}).to_string(),
+            serde_json::json!({"t":"end","id":3}).to_string(),
+        ]);
+        let (got_tx, mut got_rx) = mpsc::channel::<String>(32);
+        let worker = axum::Router::new()
+            .route(
+                "/agent",
+                axum::routing::get(
+                    |axum::extract::State((scripted, got)): axum::extract::State<(
+                        Arc<Vec<String>>,
+                        mpsc::Sender<String>,
+                    )>,
+                     ws: axum::extract::WebSocketUpgrade| async move {
+                        ws.on_upgrade(move |mut socket| async move {
+                            use axum::extract::ws::Message as Axum;
+                            for frame in scripted.iter() {
+                                if socket.send(Axum::Text(frame.clone().into())).await.is_err() {
+                                    return;
+                                }
+                            }
+                            while let Some(Ok(Axum::Text(text))) = socket.recv().await {
+                                if got.send(text.to_string()).await.is_err() {
+                                    return;
+                                }
+                            }
+                        })
+                    },
+                ),
+            )
+            .with_state((scripted, got_tx));
+        let worker_port = serve_local(worker).await;
+
+        let (socket, _) =
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{worker_port}/agent"))
+                .await
+                .unwrap();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let served = tokio::spawn(async move {
+            let mut stop = stop_rx;
+            serve(socket, bridge_port, &mut stop).await;
+        });
+
+        let (status, body) = drain_stream(&mut got_rx, 3).await;
+        assert_eq!(status, Some(200));
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            "first second",
+            "both body frames have to reach the bridge"
+        );
+
+        let _ = stop_tx.send(true);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), served).await;
     }
 }

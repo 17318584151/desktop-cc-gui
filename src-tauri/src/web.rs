@@ -271,8 +271,10 @@ pub fn web_access_status(app: tauri::AppHandle) -> Option<WebAccessInfo> {
 
 // ==================== Device gate ====================
 
-/// Cookie carrying the device id. Lax: the phone arrives by tapping a link,
-/// and the bridge is plain http on the LAN, so `Secure` would never be sent.
+/// Cookie carrying the device id. `HttpOnly`: it is the whole credential for an
+/// approved device, and no script on any surface reads it. Lax rather than
+/// `Secure`: the phone arrives by tapping a link, and the bridge is plain http
+/// on the LAN, so `Secure` would never be sent at all.
 const DEVICE_COOKIE: &str = "ccgui_device";
 /// A device that keeps polling must not write to sqlite on every asset hit.
 const TOUCH_INTERVAL_MS: i64 = 60_000;
@@ -475,7 +477,8 @@ background:#a7e05f;animation:pulse 1.2s ease-in-out infinite}
 
 /// Page + cookie for a device that still has to unlock.
 fn unlock_response(html: String, device: &str, set_cookie: bool) -> Response {
-    let cookie = format!("{DEVICE_COOKIE}={device}; Path=/; Max-Age=31536000; SameSite=Lax");
+    let cookie =
+        format!("{DEVICE_COOKIE}={device}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly");
     let mut builder = Response::builder()
         .status(StatusCode::FORBIDDEN)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8");
@@ -487,22 +490,13 @@ fn unlock_response(html: String, device: &str, set_cookie: bool) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-/// A submitted pairing key is accepted only when one is configured and the two
-/// match, case-insensitively (the form field is normalised before comparison).
-/// Extracted from the handler so the cases that must never pass — no key
-/// configured, an empty submission, the `--------` the UI shows while
-/// authorization is off — are pinned by a test.
-fn pairing_key_matches(expected: &str, submitted: &str) -> bool {
-    !expected.is_empty() && !submitted.is_empty() && submitted.eq_ignore_ascii_case(expected)
-}
-
-/// `POST /unlock`: check the key, remember the device, send it into the app.
+/// `POST /unlock`: spend the pairing key on this device and file a request the
+/// desktop still has to approve.
 async fn unlock_handler(
     AxumState(ctx): AxumState<WebCtx>,
     headers: axum::http::HeaderMap,
     body: String,
 ) -> Response {
-    let (enabled, expected) = auth_config();
     let db = ctx.app.state::<crate::AppState>().db.clone();
     let device = match cookie_value(&headers) {
         Some(id) => id,
@@ -511,23 +505,24 @@ async fn unlock_handler(
         }
     };
     let submitted = form_field(&body, "key").unwrap_or_default().to_uppercase();
-    // With the switch off there is nothing to unlock, and a key that was never
-    // configured must never admit anyone: the UI shows `--------` in that
-    // state, and a placeholder must not be able to look like a pairing.
-    if !enabled {
-        return unlock_response(unlock_page(Some("未启用授权")), &device, false);
-    }
-    if !pairing_key_matches(&expected, &submitted) {
-        return unlock_response(unlock_page(Some("密钥不正确")), &device, false);
+    // Compare and rotate in one locked step, straight off disk: the cached
+    // config behind `auth_config` is a second old at worst, and a second is
+    // long enough for two devices to spend the same code. The switch being off
+    // (nothing to pair with) and a wrong key are the same answer here — a
+    // caller that could tell them apart would learn whether pairing is even
+    // possible.
+    match crate::settings::consume_web_auth_key(&ctx.app, &submitted) {
+        Ok(true) => {}
+        Ok(false) => return unlock_response(unlock_page(Some("密钥不正确")), &device, false),
+        Err(_) => {
+            return unlock_response(unlock_page(Some("无法读取本机设置，请重试")), &device, false)
+        }
     }
 
-    // Correct key: file a pairing request. The device is remembered but NOT
-    // approved — only the desktop's 授权 does that, which is the whole point of
-    // the switch: holding the key alone never lets a browser in.
+    // The device is remembered but NOT approved — only the desktop's 授权 does
+    // that, which is the whole point of the switch: holding the key alone never
+    // lets a browser in.
     let _ = db.web_device_touch(&device, &user_agent(&headers), now_ms());
-    // One-time code: the moment a device pairs with it, a fresh one takes
-    // over, so the same key can never pair a second device.
-    let _ = crate::settings::rotate_web_auth_key(&ctx.app);
     notify_devices(&ctx.app);
     unlock_response(waiting_page(), &device, false)
 }
@@ -1692,17 +1687,5 @@ mod tests {
         );
         assert_eq!(form_field("key=a+b%2C", "key").as_deref(), Some("a b,"));
         assert_eq!(form_field("other=1", "key"), None);
-    }
-
-    /// The key box shows `--------` while authorization is off; a placeholder
-    /// (or an empty field, or no configured key at all) must never pair.
-    #[test]
-    fn pairing_key_rejects_placeholders() {
-        assert!(pairing_key_matches("BCDF2345", "bcdf2345"));
-        assert!(!pairing_key_matches("BCDF2345", "--------"));
-        assert!(!pairing_key_matches("BCDF2345", ""));
-        assert!(!pairing_key_matches("", "--------"));
-        assert!(!pairing_key_matches("", ""));
-        assert!(!pairing_key_matches("BCDF2345", "BCDF2346"));
     }
 }

@@ -137,10 +137,23 @@ export class Relay {
     if (body.length) this.send({ t: "body", id, b64: base64FromBytes(body) });
     this.send({ t: "end", id });
 
-    const head = await Promise.race([
-      headReady,
-      new Promise((r) => setTimeout(() => r({ status: 504, headers: { "content-type": "text/plain; charset=utf-8" } }), 30000)),
-    ]);
+    // A head that never came back still has to release the stream: the desktop
+    // may answer later (or never), and leaving the entry in `streams` leaks one
+    // per timed-out request while the phone waits on a body nobody will close.
+    const timeout = new Promise((r) =>
+      setTimeout(
+        () => r({ status: 504, headers: { "content-type": "text/plain; charset=utf-8" }, expired: true }),
+        30000,
+      ),
+    );
+    const head = await Promise.race([headReady, timeout]);
+    if (head.expired) {
+      this.streams.delete(id);
+      this.send({ t: "close", id });
+      try {
+        controller?.close();
+      } catch {}
+    }
     return new Response(stream, { status: head.status, headers: head.headers });
   }
 
