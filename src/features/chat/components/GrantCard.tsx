@@ -70,7 +70,7 @@ export function GrantCard({ message }: { message: Message }) {
               type="button"
               disabled={!path}
               onClick={() => answer(true)}
-              className={`${btn} bg-background-brand-default text-text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50`}
+              className={`${btn} bg-button-primary text-text-white disabled:cursor-not-allowed disabled:text-button-primary-disabled-foreground`}
             >
               <Check className="size-3.5" aria-hidden />
               {t("chat.grantAllow")}

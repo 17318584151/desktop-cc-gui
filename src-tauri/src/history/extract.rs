@@ -317,6 +317,23 @@ fn pi_image_part(part: &Value) -> Option<String> {
     Some(format!("data:{mime};base64,{data}"))
 }
 
+/// Codex token_count `info` → occupancy + the window the CLI actually used.
+/// last_token_usage is this request; total_token_usage is session-billed
+/// cumulative and must not fill the context bar.
+fn usage_from_codex_token_info(info: Option<&Value>) -> Option<Value> {
+    let info = info?;
+    let mut usage = info
+        .get("last_token_usage")
+        .or_else(|| info.get("total_token_usage"))?
+        .clone();
+    if let Some(window) = info.get("model_context_window") {
+        if let Some(obj) = usage.as_object_mut() {
+            obj.insert("model_context_window".to_string(), window.clone());
+        }
+    }
+    Some(usage)
+}
+
 /// Codex `input_image` content part -> its `image_url` (data URL or path).
 fn codex_image_part(part: &Value) -> Option<String> {
     if part.get("type").and_then(Value::as_str) != Some("input_image") {
@@ -481,16 +498,7 @@ fn extract_codex_line(value: &Value, images: ImageMode) -> LineRows {
                 return Vec::new();
             };
             if payload.get("type").and_then(Value::as_str) == Some("token_count") {
-                let info = payload.get("info");
-                let usage_opt = info
-                    .and_then(|i| i.get("last_token_usage").or_else(|| i.get("total_token_usage")))
-                    .cloned();
-                if let Some(mut usage) = usage_opt {
-                    if let Some(mcw) = info.and_then(|i| i.get("model_context_window")) {
-                        if let Some(obj) = usage.as_object_mut() {
-                            obj.insert("model_context_window".to_string(), mcw.clone());
-                        }
-                    }
+                if let Some(usage) = usage_from_codex_token_info(payload.get("info")) {
                     return vec![LineRow {
                         usage: Some(usage),
                         ..LineRow::new("__usage__", String::new(), ts)
@@ -1193,6 +1201,37 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].text, "see this");
         assert_eq!(rows[0].images, ["data:image/png;base64,aGk="]);
+    }
+
+    #[test]
+    fn codex_token_count_uses_last_turn_not_session_total() {
+        let line: Value = serde_json::json!({
+            "type": "event_msg",
+            "timestamp": "2026-09-10T04:54:08.090Z",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 2741100,
+                        "output_tokens": 11900,
+                        "total_tokens": 2753000
+                    },
+                    "last_token_usage": {
+                        "input_tokens": 34660,
+                        "cached_input_tokens": 27520,
+                        "output_tokens": 85,
+                        "total_tokens": 34745
+                    },
+                    "model_context_window": 475000
+                }
+            }
+        });
+        let rows = extract_codex_line(&line, ImageMode::Collect);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].role, "__usage__");
+        assert_eq!(rows[0].usage.as_ref().unwrap()["input_tokens"], 34660);
+        assert_eq!(rows[0].usage.as_ref().unwrap()["total_tokens"], 34745);
+        assert_eq!(rows[0].usage.as_ref().unwrap()["model_context_window"], 475000);
     }
 
     #[test]

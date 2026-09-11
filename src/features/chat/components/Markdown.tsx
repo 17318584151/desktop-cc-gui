@@ -1,6 +1,14 @@
 import { isValidElement, memo, useLayoutEffect, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import { remarkDisplayMath } from "./remark-display-math";
+import {
+  prepareMathText,
+  restoreMathDollars,
+} from "./math-delimiters";
 import { useReducedMotion } from "motion/react";
 import { StreamReveal } from "./stream-reveal";
 import { RevealText } from "./reveal-text";
@@ -22,7 +30,7 @@ import {
   toFileLink,
 } from "@/lib/fileLinks";
 
-const REMARK_PLUGINS = [remarkGfm];
+const REMARK_PLUGINS = [remarkGfm, remarkMath, remarkDisplayMath];
 /** ReactMarkdown's plugin-list prop type, derived here instead of importing
  * `PluggableList` from unified (a transitive dep we don't declare). */
 type PluginListProp = NonNullable<
@@ -155,10 +163,15 @@ export default memo(function Markdown({
   // them, retain its DOM shape on settle so selection does not jump.
   const [revealEnabled, setRevealEnabled] = useState(streaming);
   if (streaming && !revealEnabled) setRevealEnabled(true);
+  // `\[...\]` / `\(...\)` become the `$` delimiters remark-math knows, and
+  // nested `$...$` inside box commands (e.g. `\colorbox{yellow}{$x$}`) must
+  // not end remark-math's span early; the prepared text feeds both the plan
+  // and the renderer so reveal offsets stay aligned with the DOM.
+  const mathText = useMemo(() => prepareMathText(text), [text]);
   // Show already-received text on mount (including virtualizer remounts);
   // smooth only subsequent arrivals, never replay a paragraph from empty.
   const controller = useMemo(() => new StreamReveal(false), []);
-  const plan = useMemo(createRevealPlan, [text, contributions]);
+  const plan = useMemo(createRevealPlan, [mathText, contributions]);
   const reducedMotion = useReducedMotion();
   useLayoutEffect(() => {
     controller.update(plan.text, streaming && !reducedMotion && !document.hidden);
@@ -175,11 +188,15 @@ export default memo(function Markdown({
   // HAST tree and re-parse the whole document.
   const hostComponents = useMemo<Components>(
     () => ({
-      span: ({ node, className, children }) => {
+      span: ({ node, className, children, ...rest }) => {
         const start = node?.properties.dataStreamStart;
+        // Forward every other prop (style, aria-hidden, ...): KaTeX positions
+        // superscripts, fractions and radicals with inline styles like
+        // `style="top:-3.06em"` on bare spans — dropping them collapses the
+        // whole formula onto the baseline with overlapping glyphs.
         return typeof start === "number" && typeof children === "string"
           ? <RevealText controller={controller} start={start}>{children}</RevealText>
-          : <span className={className}>{children}</span>;
+          : <span className={className} {...rest}>{children}</span>;
       },
       a: ({ href, children }) => {
         const url = href ?? "";
@@ -248,6 +265,12 @@ export default memo(function Markdown({
   const rehypePlugins = useMemo(
     () =>
       [
+        // Math first: a display formula arrives as a code block
+        // (`language-math`), and the highlighter below would otherwise try to
+        // syntax-highlight the TeX as if it were source code. The dollar
+        // restore runs before KaTeX so nested `$...$` reaches the renderer.
+        restoreMathDollars,
+        rehypeKatex,
         [cachedHighlight, { streaming }],
         ...contributions.flatMap((c) => c.rehypePlugins ?? []),
         ...(revealEnabled ? [plan.plugin] : []),
@@ -284,7 +307,7 @@ export default memo(function Markdown({
             : ""
         }
       >
-        {text}
+        {mathText}
       </ReactMarkdown>
     </div>
   );

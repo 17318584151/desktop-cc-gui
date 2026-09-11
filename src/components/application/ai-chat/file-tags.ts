@@ -126,6 +126,22 @@ export function getCaretOffset(el: HTMLElement): number {
   return flatten(preRange.cloneContents()).length;
 }
 
+/**
+ * Caret x relative to the composer wrapper, clamped so a `menuWidth`-px
+ * popover anchored there stays inside the wrapper. Shared by the
+ * `@`-mention and `/`-command pickers.
+ */
+export function caretLeftPx(wrapper: HTMLElement | null, menuWidth: number): number {
+  const selection = window.getSelection();
+  if (!wrapper || !selection || selection.rangeCount === 0) return 0;
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  const wrap = wrapper.getBoundingClientRect();
+  // A collapsed range in an element container (right after a chip) reports
+  // a zero rect in WKWebView — fall back to the wrapper's left edge.
+  const raw = (rect.left || wrap.left) - wrap.left;
+  return Math.max(0, Math.min(raw, Math.max(0, wrap.width - menuWidth)));
+}
+
 /** Inverse of getCaretOffset: place the caret at a text offset. */
 export function setCaretOffset(el: HTMLElement, target: number) {
   const selection = window.getSelection();

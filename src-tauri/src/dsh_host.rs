@@ -1,5 +1,5 @@
 //! DeepSeek Harness (DSH) local-host maintenance: probe/adopt/spawn/stop the
-//! `dsh web` server, and report/update the CLI version via npm.
+//! `dsh web` server. CLI version/update lives in [`crate::cli_lifecycle`].
 //!
 //! Wire protocol (verified against the reference desktop-cc-gui):
 //! `POST {origin}/api/host.describe` with
@@ -17,10 +17,9 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
-use tokio::process::{Child, Command};
-use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout, Instant};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::process::Child;
+use tokio::time::{sleep, Instant};
 
 use crate::engine::{command_for_binary, resolve};
 use crate::settings::AppSettings;
@@ -29,9 +28,6 @@ const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 3080;
 const DESCRIBE_CONNECT_TIMEOUT: Duration = Duration::from_millis(800);
 const DESCRIBE_TOTAL_TIMEOUT: Duration = Duration::from_secs(3);
-const CLI_VERSION_TIMEOUT: Duration = Duration::from_secs(10);
-const NPM_VIEW_TIMEOUT: Duration = Duration::from_secs(15);
-const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(420);
 const SPAWN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// Windows npm shims chain through cmd → node and cold-start noticeably
 /// slower; give the spawn readiness poll extra headroom there.
@@ -41,9 +37,6 @@ const SPAWN_READY_TIMEOUT: Duration = Duration::from_secs(45);
 const SPAWN_READY_TIMEOUT: Duration = Duration::from_secs(20);
 /// Bytes of spawned-host stdout+stderr kept for error reporting.
 const RING_CAP: usize = 8192;
-/// Bytes of npm output quoted back in an update-failure error.
-const ERROR_TAIL_CAP: usize = 2048;
-
 // ==================== State ====================
 
 /// Managed inside AppState; holds the spawned host child, if any.
@@ -140,26 +133,9 @@ pub struct DshHostStatus {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DshCliVersion {
-    pub installed: bool,
-    pub local_version: Option<String>,
-    pub latest_version: Option<String>,
-    pub update_available: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct OkResult {
     pub ok: bool,
 }
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateResult {
-    pub ok: bool,
-    pub version: Option<String>,
-}
-
 // ==================== Probes ====================
 
 fn http_client() -> &'static reqwest::Client {
@@ -238,110 +214,6 @@ fn dsh_bin(settings: &AppSettings) -> String {
     resolve::resolve_launchable_cli_binary("dsh")
 }
 
-struct CliProbe {
-    installed: bool,
-    version: Option<String>,
-}
-
-/// `dsh --version`: first non-empty stdout line, 10s cap.
-async fn probe_cli_version(settings: &AppSettings) -> CliProbe {
-    let mut command = command_for_binary(&dsh_bin(settings));
-    command.arg("--version");
-    let output = match run_capture(command, CLI_VERSION_TIMEOUT).await {
-        Ok(output) => output,
-        // Spawn failure = binary not found / not launchable.
-        Err(_) => {
-            return CliProbe {
-                installed: false,
-                version: None,
-            }
-        }
-    };
-    let version = output
-        .stdout
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string);
-    CliProbe {
-        installed: true,
-        version,
-    }
-}
-
-/// Latest published version: `npm view @deepseek-ai/dsh version`.
-async fn probe_latest_version() -> Option<String> {
-    let mut command = command_for_binary(&resolve::resolve_launchable_cli_binary("npm"));
-    command.args(["view", "@deepseek-ai/dsh", "version"]);
-    let output = run_capture(command, NPM_VIEW_TIMEOUT).await.ok()?;
-    output
-        .stdout
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string)
-}
-
-/// Run a short-lived command to completion with a timeout, capturing all of
-/// stdout/stderr. The child gets its own process group (unix) so a timeout
-/// kill takes grandchildren (npm's cmd/node chain) down too.
-struct ProcOutput {
-    status: Option<std::process::ExitStatus>,
-    stdout: String,
-    stderr: String,
-    timed_out: bool,
-}
-
-async fn run_capture(mut command: Command, limit: Duration) -> Result<ProcOutput, String> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(unix)]
-    command.process_group(0);
-    #[cfg(windows)]
-    crate::engine::hide_console(&mut command);
-    let mut child = command.spawn().map_err(|e| e.to_string())?;
-    let pid = child.id();
-    let stdout = child.stdout.take().map(spawn_read_all);
-    let stderr = child.stderr.take().map(spawn_read_all);
-    let (status, timed_out) = match timeout(limit, child.wait()).await {
-        Ok(Ok(status)) => (Some(status), false),
-        Ok(Err(e)) => return Err(e.to_string()),
-        Err(_) => {
-            if let Some(pid) = pid {
-                crate::engine::kill_process_group(pid);
-            }
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            (None, true)
-        }
-    };
-    let stdout = match stdout {
-        Some(handle) => handle.await.unwrap_or_default(),
-        None => String::new(),
-    };
-    let stderr = match stderr {
-        Some(handle) => handle.await.unwrap_or_default(),
-        None => String::new(),
-    };
-    Ok(ProcOutput {
-        status,
-        stdout,
-        stderr,
-        timed_out,
-    })
-}
-
-fn spawn_read_all<R: AsyncRead + Unpin + Send + 'static>(pipe: R) -> JoinHandle<String> {
-    tokio::spawn(async move {
-        let mut bytes = Vec::new();
-        let mut pipe = pipe;
-        let _ = pipe.read_to_end(&mut bytes).await;
-        String::from_utf8_lossy(&bytes).into_owned()
-    })
-}
-
 /// Drain a long-lived child's stream into the last-RING_CAP-bytes ring.
 fn spawn_ring_drain<R: AsyncRead + Unpin + Send + 'static>(pipe: R, buf: Arc<Mutex<String>>) {
     tokio::spawn(async move {
@@ -371,18 +243,6 @@ fn ring_snapshot(buf: &Mutex<String>) -> String {
     lock(buf).trim().to_string()
 }
 
-/// Last `cap` bytes of `text`, on a char boundary.
-fn tail(text: &str, cap: usize) -> &str {
-    if text.len() <= cap {
-        return text.trim();
-    }
-    let mut start = text.len() - cap;
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    text[start..].trim()
-}
-
 // ==================== ensure (adopt-or-spawn) ====================
 
 /// Adopt the host if it already answers, otherwise spawn `dsh web` and wait
@@ -407,7 +267,10 @@ pub(crate) async fn ensure_host(
         .arg("--host")
         .arg(&cfg.host)
         .arg("--port")
-        .arg(cfg.port.to_string());
+        .arg(cfg.port.to_string())
+        // The GUI talks to the host over HTTP itself; opening a browser tab
+        // on every app launch is pure noise.
+        .arg("--no-open");
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -484,7 +347,8 @@ pub(crate) async fn ensure_host(
 
 async fn status_snapshot(host_state: &DshHostState, settings: &AppSettings) -> DshHostStatus {
     let cfg = HostConfig::from(settings);
-    let (cli, describe) = tokio::join!(probe_cli_version(settings), probe_describe(&cfg.origin));
+    let bin = dsh_bin(settings);
+    let (cli, describe) = tokio::join!(crate::cli_lifecycle::probe_local_version(&bin), probe_describe(&cfg.origin));
     let running = describe.is_ok();
     let ownership = if running {
         Some(
@@ -546,65 +410,6 @@ pub async fn dsh_host_stop(state: tauri::State<'_, crate::AppState>) -> Result<O
         terminate_local_listener(cfg.port, &cfg.origin).await?;
     }
     Ok(OkResult { ok: true })
-}
-
-#[tauri::command]
-pub async fn dsh_cli_version() -> DshCliVersion {
-    let settings = crate::settings::read_settings().unwrap_or_default();
-    let (local, latest) = tokio::join!(probe_cli_version(&settings), probe_latest_version());
-    let update_available = match (
-        local.version.as_deref().and_then(parse_version),
-        latest.as_deref().and_then(parse_version),
-    ) {
-        (Some(local), Some(latest)) => latest > local,
-        _ => false,
-    };
-    DshCliVersion {
-        installed: local.installed,
-        local_version: local.version,
-        latest_version: latest,
-        update_available,
-    }
-}
-
-#[tauri::command]
-pub async fn dsh_cli_update() -> Result<UpdateResult, String> {
-    let npm = resolve::resolve_launchable_cli_binary("npm");
-    let mut command = command_for_binary(&npm);
-    command.args([
-        "install",
-        "-g",
-        "--maxsockets=1",
-        "--fetch-retries=5",
-        "--no-audit",
-        "--no-fund",
-        "@deepseek-ai/dsh@latest",
-    ]);
-    let output = run_capture(command, NPM_INSTALL_TIMEOUT)
-        .await
-        .map_err(|e| format!("无法运行 npm（{npm}）：{e}"))?;
-    if output.timed_out {
-        return Err("npm 更新超时（420 秒），请检查网络后重试。".to_string());
-    }
-    if !output.status.map(|s| s.success()).unwrap_or(false) {
-        let combined = format!("{}\n{}", output.stdout, output.stderr);
-        let tail = tail(&combined, ERROR_TAIL_CAP);
-        return Err(format!(
-            "npm 更新失败。{}",
-            if tail.is_empty() {
-                "无输出。".to_string()
-            } else {
-                format!("输出末尾：{tail}")
-            }
-        ));
-    }
-    // Fresh local version after the install.
-    let settings = crate::settings::read_settings().unwrap_or_default();
-    let probe = probe_cli_version(&settings).await;
-    Ok(UpdateResult {
-        ok: true,
-        version: probe.version,
-    })
 }
 
 // ==================== Stop helpers ====================
@@ -699,26 +504,4 @@ async fn terminate_local_listener(port: u16, _origin: &str) -> Result<(), String
 #[cfg(not(any(unix, windows)))]
 async fn terminate_local_listener(_port: u16, _origin: &str) -> Result<(), String> {
     Err("当前平台不支持停止本机 DSH host。".to_string())
-}
-
-// ==================== Version compare ====================
-
-/// Semver-ish tuple from the first digit-run in the text: "v1.2.3",
-/// "dsh 1.2.3-beta", "1.2" all parse; anything without digits → None.
-fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
-    let text = text.trim();
-    let start = text.find(|c: char| c.is_ascii_digit())?;
-    let mut parts = text[start..].split('.');
-    let major = leading_number(parts.next()?)?;
-    let minor = parts.next().and_then(leading_number).unwrap_or(0);
-    let patch = parts.next().and_then(leading_number).unwrap_or(0);
-    Some((major, minor, patch))
-}
-
-fn leading_number(text: &str) -> Option<u64> {
-    let digits: String = text
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    digits.parse().ok()
 }

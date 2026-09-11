@@ -1,16 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import Globe from "lucide-react/dist/esm/icons/globe";
-import EllipsisVertical from "lucide-react/dist/esm/icons/ellipsis-vertical";
 import Pencil from "lucide-react/dist/esm/icons/pencil";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2";
 import { Switch } from "@/components/base/switch/switch";
-import {
-  Dropdown,
-  DropdownItem,
-  DropdownPopover,
-  DropdownTrigger,
-} from "@/components/base/dropdown/dropdown";
 import type { RepoDragChrome } from "@/components/application/ai-chat/workspace-sortable-list";
 import { inferModelEngine } from "@/components/foundations/icons/engine-brands";
 import { EngineIcon } from "@/components/foundations/icons/engine-icon";
@@ -22,24 +15,18 @@ import type { EngineId, ProviderEntry } from "./providers";
 export const ROW =
   "flex min-h-[52px] w-full items-center gap-3 py-2.5 pr-2.5 border-b border-separator-border last:border-b-0";
 
-export type Health =
-  | { state: "idle" }
-  | { state: "testing" }
-  | { state: "ok"; ms: number }
-  | { state: "fail" };
-
 export function Badge({
   children,
   tone = "default",
 }: {
-  children: string;
+  children: ReactNode;
   /** "warning" = orange, used for the cc-switch origin pill. */
   tone?: "default" | "warning";
 }) {
   return (
     <span
       className={cx(
-        "shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-none",
+        "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-none",
         tone === "warning"
           ? "bg-background-tertiary-warning text-text-warning-primary"
           : "bg-background-tertiary-default text-text-secondary",
@@ -104,47 +91,37 @@ export function ChannelAvatar({
   );
 }
 
-/** One custom channel: click to activate, ⋯ menu for the rest. */
+/** One custom channel: click to activate. */
 export function ChannelRow({
   engine,
   entry,
   current,
-  health,
   busy,
   drag,
   onToggle,
   onEdit,
   onDelete,
-  onTest,
 }: {
   engine: EngineId;
   entry: ProviderEntry;
   current: boolean;
-  health: Health;
   busy: boolean;
   drag: RepoDragChrome | null;
   /** on=true → make current; on=false (only possible when current) → fall back to 官方配置. */
   onToggle: (on: boolean) => void;
   onEdit: () => void;
   onDelete: () => void;
-  onTest: () => void;
 }) {
   const { t } = useTranslation();
-  const [menuOpen, setMenuOpen] = useState(false);
   const fromCcSwitch = (entry.raw as Record<string, unknown>).source === "cc-switch";
   const subtitle = useMemo(() => {
     const parts = [
       entry.remark,
       entry.baseUrl && hostOf(entry.baseUrl),
       entry.model,
-      health.state === "ok"
-        ? `${health.ms}ms`
-        : health.state === "fail"
-          ? t("settings.cliTestFail")
-          : "",
     ].filter(Boolean);
     return parts.join(" · ");
-  }, [entry.remark, entry.baseUrl, entry.model, health, t]);
+  }, [entry.remark, entry.baseUrl, entry.model]);
 
   return (
     <div
@@ -229,38 +206,6 @@ export function ChannelRow({
       >
         <Trash2 className="size-4" aria-hidden />
       </button>
-      <span onClick={(e) => e.stopPropagation()}>
-        <Dropdown isOpen={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownTrigger
-            aria-label={t("settings.cliMore")}
-            className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover"
-          >
-            <EllipsisVertical className="size-4" aria-hidden />
-          </DropdownTrigger>
-          <DropdownPopover aria-label={entry.name} placement="bottom end" className="w-44">
-            {!current && (
-              <DropdownItem
-                className="px-2 py-1.5"
-                onSelect={() => {
-                  setMenuOpen(false);
-                  onToggle(true);
-                }}
-              >
-                {t("settings.cliSetCurrent")}
-              </DropdownItem>
-            )}
-            <DropdownItem
-              className="px-2 py-1.5"
-              onSelect={() => {
-                setMenuOpen(false);
-                onTest();
-              }}
-            >
-              {health.state === "testing" ? t("settings.cliTesting") : t("settings.cliTest")}
-            </DropdownItem>
-          </DropdownPopover>
-        </Dropdown>
-      </span>
     </div>
   );
 }

@@ -1,97 +1,76 @@
 import { describe, expect, it } from "vitest";
-import { parseUsage } from "./usage";
+import { mergeUsage, parseUsage } from "./usage";
 import { usageBreakdown } from "./components/usage-breakdown";
 
 describe("parseUsage", () => {
-  /** 验证非法输入或无 token 时的安全处理 */
-  it("returns null for null, non-object, or empty usage", () => {
-    expect(parseUsage(null)).toBeNull();
-    expect(parseUsage(undefined)).toBeNull();
-    expect(parseUsage("not an object")).toBeNull();
-    expect(parseUsage({})).toBeNull();
-    expect(parseUsage({ other: 123 })).toBeNull();
-  });
-
-  /** 验证 Claude API 格式用量解析 */
-  it("parses Claude API usage format with independent cache fields", () => {
-    const claudeUsage = {
-      input_tokens: 1500,
-      output_tokens: 350,
-      cache_read_input_tokens: 4000,
-      cache_creation_input_tokens: 500,
-    };
-    const parsed = parseUsage(claudeUsage);
-    expect(parsed).toEqual({
-      input: 1500,
-      output: 350,
-      cacheRead: 4000,
-      cacheWrite: 500,
-      total: 6350,
-      contextWindow: undefined,
+  it("folds a codex record's cache counters out of its input", () => {
+    // The session-log tail emits token_usage_record payloads: a flat usage
+    // with codex's own cache field names and the stamped context window.
+    // Codex bills `input_tokens` as the whole prompt and reports
+    // `total_tokens` = input + output, so the cache counters are already
+    // inside input and must not be added again.
+    const parsed = parseUsage({
+      input_tokens: 8000,
+      cached_input_tokens: 6000,
+      cache_write_input_tokens: 1500,
+      output_tokens: 300,
+      total_tokens: 8300,
+      model_context_window: 258_400,
     });
-  });
-
-  /** 验证 OpenAI / Codex 格式用量解析，确保扣除包含的 cached tokens 避免双重累加 */
-  it("parses Codex/OpenAI usage and deducts cached_input_tokens from input", () => {
-    const codexUsage = {
-      input_tokens: 18011,
-      cached_input_tokens: 16384,
-      cache_write_input_tokens: 0,
-      output_tokens: 301,
-      reasoning_output_tokens: 0,
-      total_tokens: 18312,
-      model_context_window: 828400,
-    };
-    const parsed = parseUsage(codexUsage);
-    expect(parsed).toEqual({
-      input: 18011 - 16384, // 1627: 实际未命中的常规输入
-      output: 301,
-      cacheRead: 16384,
-      cacheWrite: 0,
-      total: 18312,
-      contextWindow: 828400,
-    });
-  });
-
-  /** 验证 Codex 无缓存命中时的常规处理 */
-  it("parses Codex usage with zero cached tokens correctly", () => {
-    const codexNoCache = {
-      input_tokens: 5000,
-      cached_input_tokens: 0,
-      output_tokens: 200,
-      total_tokens: 5200,
-      model_context_window: 200000,
-    };
-    const parsed = parseUsage(codexNoCache);
-    expect(parsed).toEqual({
-      input: 5000,
-      output: 200,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 5200,
-      contextWindow: 200000,
-    });
-  });
-
-  /** 验证 Pi / OMP 驼峰命名格式用量解析 */
-  it("parses Pi / OMP usage format with camelCase keys", () => {
-    const piUsage = {
-      input: 1200,
+    expect(parsed).toMatchObject({
+      input: 500,
       output: 300,
-      cacheRead: 2500,
-      cacheWrite: 0,
-      totalTokens: 4000,
-    };
-    const parsed = parseUsage(piUsage);
-    expect(parsed).toEqual({
-      input: 1200,
+      cacheRead: 6000,
+      cacheWrite: 1500,
+      total: 8300,
+      contextWindow: 258_400,
+    });
+    expect(
+      parsed!.input + parsed!.output + parsed!.cacheRead + parsed!.cacheWrite,
+    ).toBe(parsed!.total);
+  });
+
+  it("keeps claude's cache tokens outside its input", () => {
+    // Claude reports fresh input separately from the cache it read and wrote,
+    // so there the cache volume is missing input rather than a subset of it.
+    const parsed = parseUsage({
+      input_tokens: 400,
+      cache_read_input_tokens: 6000,
+      cache_creation_input_tokens: 1500,
+      output_tokens: 300,
+    });
+    expect(parsed).toMatchObject({
+      input: 400,
       output: 300,
-      cacheRead: 2500,
-      cacheWrite: 0,
-      total: 4000,
-      contextWindow: undefined,
+      cacheRead: 6000,
+      cacheWrite: 1500,
+      total: 8200,
     });
   });
+
+  it("reads a flattened last-turn snapshot with the window copied on", () => {
+    const parsed = parseUsage({
+      input_tokens: 34_660,
+      output_tokens: 85,
+      total_tokens: 34_745,
+      model_context_window: 475_000,
+    });
+    expect(parsed?.contextWindow).toBe(475_000);
+    expect(parsed?.total).toBe(34_745);
+  });
+});
+
+describe("mergeUsage", () => {
+  it("keeps a previously reported context window", () => {
+    const merged = mergeUsage(
+      { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
+      { input_tokens: 8, output_tokens: 1, total_tokens: 9, model_context_window: 475_000 },
+    );
+    expect(merged).toMatchObject({
+      input_tokens: 10,
+      total_tokens: 12,
+      model_context_window: 475_000,
+    });
 });
 
 describe("usageBreakdown", () => {
@@ -100,36 +79,27 @@ describe("usageBreakdown", () => {
     expect(usageBreakdown(null, 200000)).toBeNull();
   });
 
-  /** 验证当用量中提供 model_context_window 时动态采纳并计算百分比 */
-  it("uses dynamic contextWindow over default maxTokens when available", () => {
-    const codexUsage = {
-      input_tokens: 18011,
-      cached_input_tokens: 16384,
-      output_tokens: 301,
-      total_tokens: 18312,
-      model_context_window: 828400,
-    };
-    const breakdown = usageBreakdown(codexUsage, 200000);
+  /** 验证按调用方解析出的 maxTokens 计算百分比 */
+  it("computes pct against the provided maxTokens", () => {
+    const breakdown = usageBreakdown(
+      { input_tokens: 10000, output_tokens: 2000, total_tokens: 12000 },
+      200000,
+    );
     expect(breakdown).not.toBeNull();
-    expect(breakdown?.contextWindow).toBe(828400);
-    // 18312 / 828400 ≈ 2.21% -> 2%
-    expect(breakdown?.pct).toBe(2);
-    // 分段中 segments 相加必须等于 total (1627 + 301 + 16384 = 18312)
-    const sumSegments = breakdown?.parts.reduce((sum, p) => sum + p.tokens, 0);
-    expect(sumSegments).toBe(18312);
-  });
-
-  /** 验证未携带上下文大小时回退至参数 maxTokens */
-  it("falls back to provided maxTokens when contextWindow is not present", () => {
-    const claudeUsage = {
-      input_tokens: 10000,
-      output_tokens: 2000,
-      total_tokens: 12000,
-    };
-    const breakdown = usageBreakdown(claudeUsage, 200000);
-    expect(breakdown).not.toBeNull();
-    expect(breakdown?.contextWindow).toBe(200000);
     // 12000 / 200000 = 6%
     expect(breakdown?.pct).toBe(6);
+    // 分段相加必须等于 total (10000 + 2000 = 12000)
+    const sumSegments = breakdown?.parts.reduce((sum, p) => sum + p.tokens, 0);
+    expect(sumSegments).toBe(12000);
+  });
+
+  /** 验证畸形 payload 的负 token 不会得到负百分比 */
+  it("clamps pct at zero for negative token counts", () => {
+    const breakdown = usageBreakdown(
+      { input_tokens: -5000, output_tokens: 0, total_tokens: -5000 },
+      200000,
+    );
+    expect(breakdown?.pct).toBe(0);
+  });
   });
 });

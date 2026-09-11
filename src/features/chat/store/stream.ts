@@ -24,7 +24,11 @@ export interface SessionState {
   turnStartedAt: number | null;
   activeModel?: string | null;
   activeEffort?: string | null;
+  /** Newest single report: the context meter reads occupancy from it. */
   usage: unknown;
+  /** Running total of the reply in flight (sum of its reports), so the tail
+   *  indicator counts this reply instead of showing one request's slice. */
+  turnUsage: unknown;
   error: string | null;
   /** Messages typed while a turn streams; sent FIFO when the turn ends. */
   queue: QueuedMessage[];
@@ -42,10 +46,40 @@ export const EMPTY_SESSION: SessionState = {
   activeModel: null,
   activeEffort: null,
   usage: null,
+  turnUsage: null,
   error: null,
   queue: [],
   interrupted: false,
 };
+
+/** The model one session runs with, most specific first:
+ *
+ *  1. the tab's own pick (an explicit choice for this session),
+ *  2. what the engine reported running for this session,
+ *  3. the model this session's history was written with,
+ *  4. the engine default (new chats, sessions with no history yet).
+ *
+ * Per session on purpose: two omp sessions may run different models, so the
+ * picker, the send, and the stamped rows must all read the session's model —
+ * an engine-wide default would make one session's pick leak into the other.
+ */
+export function resolveSessionModel(
+  tab: { engine: string; model?: string } | null | undefined,
+  session: Pick<SessionState, "activeModel" | "messages"> | undefined,
+  engineDefault?: string,
+): string | undefined {
+  if (!tab) return engineDefault;
+  if (tab.model) return tab.model;
+  if (session?.activeModel) return session.activeModel;
+  const messages = session?.messages;
+  if (messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const model = messages[i].model;
+      if (model) return model;
+    }
+  }
+  return engineDefault;
+}
 
 /** Minimal store shape these helpers touch. */
 export interface BySessionSlice {
@@ -58,6 +92,48 @@ export type SetFn<T extends BySessionSlice> = (fn: (s: T) => Partial<T>) => void
  * the run settles (done/error) or is interrupted — the map must not grow
  * monotonically over the app's lifetime. */
 export const runRouting = new Map<string, string>();
+/** runId -> last activity (stamped at routing, refreshed on each routed
+ * event). A run that dies without done/error (engine crash, killed process)
+ * never gets its routing entry removed by the settling paths, so each newly
+ * routed run sweeps entries silent for longer than the TTL — bounded, no
+ * timer. Activity-based rather than start-based so an hours-long codex turn
+ * is never swept while it is still talking. */
+const runActivity = new Map<string, number>();
+const RUN_ORPHAN_TTL_MS = 30 * 60_000;
+
+/** Route a run to its session key and stamp its activity. Each call also
+ * sweeps runs silent past the TTL; the returned `[runId, sessionKey]` pairs
+ * are the dropped orphans, so the caller can clear their other run-scoped
+ * state (usage maps, streaming flags). */
+export function routeRun(runId: string, key: string): Array<[string, string]> {
+  runRouting.set(runId, key);
+  runActivity.set(runId, Date.now());
+  return sweepOrphanRuns();
+}
+
+/** Refresh a live run's activity stamp on each routed event. */
+export function touchRun(runId: string) {
+  if (runActivity.has(runId)) runActivity.set(runId, Date.now());
+}
+
+/** Forget a settled run (its routing entry is dropped by the settling path). */
+export function untrackRun(runId: string) {
+  runActivity.delete(runId);
+}
+
+/** Drop routing entries silent past the TTL — their done/error never came. */
+function sweepOrphanRuns(): Array<[string, string]> {
+  const now = Date.now();
+  const orphaned: Array<[string, string]> = [];
+  for (const [runId, seenAt] of runActivity) {
+    if (now - seenAt < RUN_ORPHAN_TTL_MS) continue;
+    runActivity.delete(runId);
+    const key = runRouting.get(runId);
+    runRouting.delete(runId);
+    if (key !== undefined) orphaned.push([runId, key]);
+  }
+  return orphaned;
+}
 
 /** One ordered stream chunk. Thinking and text deltas interleave within a
  * turn (extended thinking resumes between tool calls), so per-kind string

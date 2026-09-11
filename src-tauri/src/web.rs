@@ -404,11 +404,6 @@ struct ImportCcSwitchFromPathArgs {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UrlArgs {
-    url: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct FetchProviderModelsArgs {
     base_url: String,
     #[serde(default)]
@@ -443,6 +438,12 @@ struct EngineArgs {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct OfficialConfigWriteArgs {
+    engine: String,
+    files: Vec<crate::provider_files::OfficialConfigDraft>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SavePastedImageArgs {
     data_base64: String,
     extension: String,
@@ -459,6 +460,17 @@ struct LoadSessionPageArgs {
     session_id: String,
     limit: Option<usize>,
     before_seq: Option<i64>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageSummaryArgs {
+    days: u32,
+    tz_offset_minutes: i32,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageRecordArgs {
+    entry: crate::usage::UsageEntry,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -623,6 +635,18 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
                 a.engine,
             )))
         }
+        "official_config_read" => {
+            let a: EngineArgs = parse_args(&raw)?;
+            ser(crate::provider_files::official_config_read(a.engine))
+        }
+        "official_config_write" => {
+            let a: OfficialConfigWriteArgs = parse_args(&raw)?;
+            ser(crate::provider_files::official_config_write(
+                app.state(),
+                a.engine,
+                a.files,
+            ))
+        }
         "reorder_providers" => {
             let a: ReorderProvidersArgs = parse_args(&raw)?;
             ser(crate::config::reorder_providers(
@@ -657,10 +681,6 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
                 a.engine,
             ))
         }
-        "test_provider_connection" => {
-            let a: UrlArgs = parse_args(&raw)?;
-            ser(crate::cc_switch::test_provider_connection(a.url).await)
-        }
         "fetch_provider_models" => {
             let a: FetchProviderModelsArgs = parse_args(&raw)?;
             ser(crate::provider_models::fetch_provider_models(a.base_url, a.api_key).await)
@@ -669,7 +689,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         "get_app_settings" => ser(crate::settings::get_app_settings()),
         "update_app_settings" => {
             let a: UpdateSettingsArgs = parse_args(&raw)?;
-            ser(crate::settings::update_app_settings(a.settings))
+            ser(crate::settings::update_app_settings(
+                app.clone(),
+                a.settings,
+            ))
         }
         // engine
         "send_message" => {
@@ -709,6 +732,25 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         }
         // history
         "list_sessions" => ser(crate::history::reader::list_sessions(app.state())),
+        // Usage ledger: the mobile/web client renders the same page, so the
+        // bridge must route it like every other settings surface.
+        "usage_summary" => {
+            let a: UsageSummaryArgs = parse_args(&raw)?;
+            ser(crate::usage::usage_summary(
+                app.state(),
+                a.days,
+                a.tz_offset_minutes,
+            ))
+        }
+        "usage_record" => {
+            let a: UsageRecordArgs = parse_args(&raw)?;
+            ser(crate::usage::usage_record(
+                app.clone(),
+                app.state(),
+                a.entry,
+            ))
+        }
+        "usage_clear" => ser(crate::usage::usage_clear(app.state())),
         "load_session_page" => {
             let a: LoadSessionPageArgs = parse_args(&raw)?;
             ser(crate::history::reader::load_session_page(
@@ -818,6 +860,10 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
         "list_file_index" => {
             let a: PathArgs = parse_args(&raw)?;
             ser(crate::files::list_file_index(app.state(), a.path).await)
+        }
+        "list_slash_commands" => {
+            let a: PathArgs = parse_args(&raw)?;
+            ser(crate::slash_commands::list_slash_commands(app.state(), a.path).await)
         }
         // NB: grant_scope/grant_root/revoke_granted_root are intentionally
         // absent — remote clients must not widen the filesystem boundary.

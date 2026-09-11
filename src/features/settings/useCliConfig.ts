@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ipc, type CcSwitchStatus, type CliConfig } from "@/lib/ipc";
+import { ipc, type CcSwitchStatus, type CliConfig, type OfficialConfigDraft } from "@/lib/ipc";
 import { newId } from "@/lib/id";
 import { pickFile } from "@/lib/platform";
 import {
@@ -21,8 +21,6 @@ import {
   type ProviderEntry,
 } from "./providers";
 import type { ProviderFormValue } from "./ProviderDialog";
-import type { Health } from "./CliChannelRow";
-
 /** Add (no entry) or edit (with entry) dialog state. */
 type DialogState = { entry?: ProviderEntry } | null;
 
@@ -47,8 +45,14 @@ export interface CliConfigState {
   setPendingDelete: Dispatch<SetStateAction<ProviderEntry | null>>;
   pendingSwitch: PendingSwitch | null;
   setPendingSwitch: Dispatch<SetStateAction<PendingSwitch | null>>;
+  /** 官方配置 edit dialog open state (claude/codex/kimi/grok only). */
+  officialEditing: boolean;
+  setOfficialEditing: Dispatch<SetStateAction<boolean>>;
+  /** Save the edited official files; returns the error message (dialog
+   *  stays open) or null on success (dialog closed). Backend re-validates
+   *  and gates on 官方配置 being active. */
+  saveOfficialConfig: (files: OfficialConfigDraft[]) => Promise<string | null>;
   ccStatus: CcSwitchStatus | null;
-  health: Record<string, Health>;
   currentId: string;
   enabled: boolean;
   entries: ProviderEntry[];
@@ -59,7 +63,6 @@ export interface CliConfigState {
   confirmSwitch: () => void;
   saveProvider: (value: ProviderFormValue) => void;
   confirmDelete: () => void;
-  testConnection: (entry: ProviderEntry) => Promise<void>;
   syncCcSwitch: (target: string) => Promise<void>;
   importCcSwitchFile: () => Promise<void>;
   dismissCcSwitch: () => void;
@@ -75,7 +78,8 @@ export interface CliConfigState {
  *     官方配置 switch can only be turned on, never off.
  *   - 停用 is a per-CLI state (the enable switch), not a channel row.
  *   - 官方配置 is the built-in fallback (the CLI's own config file) and
- *     lives in the 引擎设置 card, next to the enable switch.
+ *     sits directly below the enable switch, inside the disabled-overlay
+ *     wrapper.
  */
 export function useCliConfig(engine: EngineId): CliConfigState {
   const { t } = useTranslation();
@@ -86,9 +90,8 @@ export function useCliConfig(engine: EngineId): CliConfigState {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [pendingDelete, setPendingDelete] = useState<ProviderEntry | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<PendingSwitch | null>(null);
+  const [officialEditing, setOfficialEditing] = useState(false);
   const [ccStatus, setCcStatus] = useState<CcSwitchStatus | null>(null);
-  /** Per-channel connection probe results, keyed `${engine}:${id}`. */
-  const [health, setHealth] = useState<Record<string, Health>>({});
   useEffect(() => {
     let cancelled = false;
     ipc
@@ -232,21 +235,6 @@ export function useCliConfig(engine: EngineId): CliConfigState {
     void mutate(() => ipc.deleteProvider(engine, id));
   };
 
-  const testConnection = async (entry: ProviderEntry) => {
-    const key = `${engine}:${entry.id}`;
-    if (!entry.baseUrl.trim()) {
-      setHealth((h) => ({ ...h, [key]: { state: "fail" } }));
-      return;
-    }
-    setHealth((h) => ({ ...h, [key]: { state: "testing" } }));
-    try {
-      const ms = await ipc.testProviderConnection(entry.baseUrl);
-      setHealth((h) => ({ ...h, [key]: { state: "ok", ms } }));
-    } catch {
-      setHealth((h) => ({ ...h, [key]: { state: "fail" } }));
-    }
-  };
-
   /** Shared import→notice funnel. `target` is an engine id or "all" (banner).
    *  setState happens in the handler, not inside the `mutate` callback (React
    *  treats updater-style callbacks as pure and may invoke them twice). */
@@ -287,6 +275,22 @@ export function useCliConfig(engine: EngineId): CliConfigState {
 
   const officialActive = currentId === PSEUDO_LOCAL;
 
+  const saveOfficialConfig = useCallback(
+    async (files: OfficialConfigDraft[]): Promise<string | null> => {
+      setBusy(true);
+      try {
+        await ipc.officialConfigWrite(engine, files);
+        setOfficialEditing(false);
+        return null;
+      } catch (e) {
+        return String(e);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [engine],
+  );
+
   return {
     t,
     config,
@@ -300,8 +304,10 @@ export function useCliConfig(engine: EngineId): CliConfigState {
     setPendingDelete,
     pendingSwitch,
     setPendingSwitch,
+    officialEditing,
+    setOfficialEditing,
+    saveOfficialConfig,
     ccStatus,
-    health,
     currentId,
     enabled,
     entries,
@@ -312,7 +318,6 @@ export function useCliConfig(engine: EngineId): CliConfigState {
     confirmSwitch,
     saveProvider,
     confirmDelete,
-    testConnection,
     syncCcSwitch,
     importCcSwitchFile,
     dismissCcSwitch,

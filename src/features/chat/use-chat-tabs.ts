@@ -200,11 +200,29 @@ export function useChatTabs({
     [openFiles, moveOpenFile, sessionTabItems, moveTab],
   );
 
+
+  // Tab context menu "Close All": drop every tab. Dirty file tabs cannot be
+  // discarded silently — close everything else first, then route the first
+  // dirty file through the existing save-confirmation dialog (any others
+  // stay open and a repeat Close All walks through them).
+  const handleTabCloseAll = useCallback(() => {
+    closeDiff();
+    for (const item of sessionTabItems) {
+      closeTab(item.tab.engine, item.tab.sessionId, item.tab.workspacePath);
+    }
+    const dirty = openFiles.filter((path) => dirtyPaths[path]);
+    for (const path of openFiles) {
+      if (!dirtyPaths[path]) closeFile(path);
+    }
+    if (dirty[0]) setDialog({ kind: "closeFile", path: dirty[0] });
+  }, [sessionTabItems, closeTab, openFiles, dirtyPaths, closeFile, closeDiff, setDialog]);
+
   return {
     tabItems,
     activeTabKey,
     handleTabSelect,
     handleTabClose,
+    handleTabCloseAll,
     handleTabReorder,
     sessionById,
     threadStreaming,

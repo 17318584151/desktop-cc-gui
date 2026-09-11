@@ -542,61 +542,6 @@ pub fn import_cc_switch_from_path(
     )
 }
 
-/// Reachability probe for 测试连接: TCP connect latency to the URL's
-/// host:port (443/80 by scheme). Deliberately not an HTTPS round-trip — no
-/// TLS stack in this binary, and "the endpoint answers" is the signal the
-/// user wants before saving a channel.
-#[tauri::command]
-pub async fn test_provider_connection(url: String) -> Result<u64, String> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return Err("empty url".to_string());
-    }
-    let with_scheme = if trimmed.contains("://") {
-        trimmed.to_string()
-    } else {
-        format!("https://{trimmed}")
-    };
-    let authority = with_scheme
-        .split("://")
-        .nth(1)
-        .and_then(|rest| rest.split('/').next())
-        .unwrap_or("");
-    let (host, port) = match authority.split_once(':') {
-        Some((h, p)) => (
-            h.to_string(),
-            p.parse::<u16>()
-                .map_err(|_| format!("invalid port in url: {trimmed}"))?,
-        ),
-        None => (
-            authority.to_string(),
-            if with_scheme.starts_with("http://") {
-                80
-            } else {
-                443
-            },
-        ),
-    };
-    if host.is_empty() {
-        return Err(format!("invalid url: {trimmed}"));
-    }
-    let start = std::time::Instant::now();
-    let mut addrs = tokio::net::lookup_host((host.as_str(), port))
-        .await
-        .map_err(|e| format!("resolve {host}: {e}"))?;
-    let addr = addrs
-        .next()
-        .ok_or_else(|| format!("no address for {host}"))?;
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        tokio::net::TcpStream::connect(addr),
-    )
-    .await
-    .map_err(|_| format!("connect {host}:{port} timed out"))?
-    .map_err(|e| format!("connect {host}:{port}: {e}"))?;
-    Ok(start.elapsed().as_millis() as u64)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

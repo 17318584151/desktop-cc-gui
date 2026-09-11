@@ -1,34 +1,28 @@
-import { OmpSpeedSection } from "./omp-speed-section";
 import { supportsOmpFastMode, type OmpServiceTier } from "@/lib/omp-service-tier";
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { Ref, ReactNode } from "react";
+import { Fragment, useEffect, useState } from "react";
+import type { Ref } from "react";
 import { useTranslation } from "react-i18next";
-import Check from "lucide-react/dist/esm/icons/check";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right";
-import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw";
-import Search from "lucide-react/dist/esm/icons/search";
-import X from "lucide-react/dist/esm/icons/x";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
   DialogTrigger as AriaDialogTrigger,
   Popover as AriaPopover,
-  Slider as AriaSlider,
-  SliderThumb as AriaSliderThumb,
-  SliderTrack as AriaSliderTrack,
 } from "react-aria-components";
-import { AnimatePresence, m } from "motion/react";
 import { menuPopoverSurface } from "@/components/base/dropdown/menu-styles";
 import { ModalShell } from "@/components/dialogs";
-import { CLI_DISPLAY_NAMES, inferModelEngine } from "@/components/foundations/icons/engine-brands";
+import { CLI_DISPLAY_NAMES } from "@/components/foundations/icons/engine-brands";
 import { EngineIcon } from "@/components/foundations/icons/engine-icon";
 import { MOBILE_MEDIA, useMediaQuery } from "@/hooks/use-media-query";
 import { cx } from "@/utils/cx";
 import { usePopoverState } from "@/utils/use-dismiss-on-outside-press";
-import { FlameOverlay } from "./effort-flame";
 import { EFFORT_LEVELS } from "./effort-levels";
+import { EFFORT_LABEL_KEYS, type EffortLevel } from "./effort-slider";
+import { EngineFlyout, EngineModelPanel } from "./engine-model-panel";
+
+export type { EffortLevel } from "./effort-slider";
 
 /**
  * Board UI → "ai_chat" dropdowns (nodes 4035:6313 / 4035:6925), adapted to
@@ -38,8 +32,6 @@ import { EFFORT_LEVELS } from "./effort-levels";
  *   button: each engine row flies out a model + effort panel to the right
  *   (search field over a "Models" radio group over the effort slider,
  *   Board UI node 4035:6925). */
-
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** CLI picker panel: shadcn-style menu (reference: desktop-cc-gui's
  *  ModelSelect) — 8px radius, 4px padding, hairline separators between rows,
@@ -62,126 +54,6 @@ export interface MenuOption {
   disabledReason?: string;
 }
 
-const EFFORT_LABEL_KEYS: Record<EffortLevel, string> = {
-  low: "chat.effortLow",
-  medium: "chat.effortMedium",
-  high: "chat.effortHigh",
-  xhigh: "chat.effortXhigh",
-  max: "chat.effortMax",
-};
-
-/** Fresh random impulse per tick each time the engine ignites: blown left by
- *  the exhaust with random lift, tumble and stagger, like debris. */
-function useBlastImpulses(isMax: boolean) {
-  return useMemo(
-    () =>
-      EFFORT_LEVELS.map(() => ({
-        x: -(70 + Math.random() * 130),
-        y: (Math.random() - 0.5) * 70,
-        rotate: (Math.random() - 0.5) * 720,
-        delay: Math.random() * 0.3,
-      })),
-    [isMax],
-  );
-}
-
-/** The tick row on the effort track: one tick per stop, fading past the
- *  current value; at max they blast off like exhaust debris. */
-function EffortTicks({
-  index,
-  isMax,
-  blast,
-}: {
-  index: number;
-  isMax: boolean;
-  blast: { x: number; y: number; rotate: number; delay: number }[];
-}) {
-  return (
-    <div className="absolute inset-x-[9px] top-[7px] flex h-[13px] items-center justify-between">
-      {EFFORT_LEVELS.map((level, i) => (
-        <m.span
-          key={level}
-          aria-hidden
-          animate={
-            isMax
-              ? {
-                  x: blast[i].x,
-                  y: blast[i].y,
-                  rotate: blast[i].rotate,
-                  opacity: 0,
-                }
-              : { x: 0, y: 0, rotate: 0, opacity: i > index ? 0.3 : 1 }
-          }
-          transition={
-            isMax
-              ? { duration: 1.6, ease: [0.22, 0.5, 0.5, 1], delay: blast[i].delay }
-              : { duration: 0.3, ease: "easeOut" }
-          }
-          className="h-full w-[3px] rounded-[2px] bg-foreground-icon-tertiary"
-        />
-      ))}
-    </div>
-  );
-}
-
-/**
- * Effort slider (Board UI Figma node 4037:4885, five stops here): 27px
- * neutral track with a tick per stop, a light fill up to the 21×27 bordered
- * thumb. Built on react-aria's Slider for drag + keyboard support.
- *
- * The thumb travels edge to edge: its center moves from 10.5px to
- * (width − 10.5)px, and the tick row is inset to match, so ticks sit on the
- * stops at any rendered width. At max the ticks blast off like exhaust
- * debris and the flame shader washes over the track.
- */
-function EffortSlider({
-  value,
-  onChange,
-}: {
-  value: EffortLevel;
-  onChange: (level: EffortLevel) => void;
-}) {
-  const { t } = useTranslation();
-  const index = Math.max(0, EFFORT_LEVELS.indexOf(value));
-  const isMax = index === EFFORT_LEVELS.length - 1;
-  const blast = useBlastImpulses(isMax);
-  // Thumb center sits at `fraction` of the 21px-inset rail, so its right
-  // edge is at fraction × (track − 21px) + 21px — in calc() so the fill
-  // lands flush against the thumb at any rendered width.
-  const fraction = index / (EFFORT_LEVELS.length - 1);
-
-  return (
-    <AriaSlider
-      aria-label={t("chat.effort")}
-      minValue={0}
-      maxValue={EFFORT_LEVELS.length - 1}
-      step={1}
-      value={index}
-      onChange={(v) => onChange(EFFORT_LEVELS[v as number] ?? "medium")}
-      className="w-full"
-    >
-      <div className="relative h-[27px] w-full overflow-hidden rounded-lg bg-background-secondary-default">
-        {/* Fill up to the thumb's right edge. */}
-        <div
-          className="absolute inset-y-0 left-0 rounded-lg bg-background-tertiary-hover transition-[width] duration-150 ease-out"
-          style={{ width: `calc(${fraction} * (100% - 21px) + 21px)` }}
-        />
-        <EffortTicks index={index} isMax={isMax} blast={blast} />
-        {/* Above the ticks so the flame washes over the step dividers. */}
-        <AnimatePresence>{isMax && <FlameOverlay />}</AnimatePresence>
-        {/* Rail inset by half the thumb width so the 21px thumb lands flush
-            on both track edges. The wrapper does the absolute positioning
-            because SliderTrack forces `position: relative` inline. */}
-        <div className="absolute inset-x-[10.5px] inset-y-0">
-          <AriaSliderTrack className="h-full w-full">
-            <AriaSliderThumb className="top-1/2 h-[27px] w-[21px] cursor-grab rounded-[7px] border border-border-checkbox-default bg-background-primary-default shadow-xs outline-none transition-shadow data-[dragging]:cursor-grabbing data-[focus-visible]:ring-2 data-[focus-visible]:ring-border-focus-ring" />
-          </AriaSliderTrack>
-        </div>
-      </div>
-    </AriaSlider>
-  );
-}
-
 export interface ModelOption {
   /** "" selects the CLI/provider default model. */
   id: string;
@@ -194,14 +66,6 @@ export interface ModelOption {
   provider?: string;
 }
 
-/** Per-engine model flyout: pops to the right of the CLI popover, bottom-
- *  aligned with the engine list so the taller panel never clips below the
- *  composer-anchored popover. */
-const FLYOUT_CLASSES = cx(
-  "absolute left-full bottom-0 z-10 ml-2 w-80 max-w-[calc(100vw-32px)]",
-  "rounded-lg border border-border-button-default bg-background-primary-default p-1 shadow-dropdown",
-);
-
 /* -------------------------------------------------------------- engine row */
 
 /** One engine row in the CLI list: brand mark, name, selection dot (active
@@ -211,14 +75,14 @@ function EngineRow({
   selected,
   flyoutOpen,
   onSelect,
-  onHover,
 }: {
   option: MenuOption;
   selected: boolean;
   /** This engine's flyout is currently open. */
   flyoutOpen: boolean;
+  /** Row click: show this engine's model list (the engine itself switches
+   *  when a model is picked there). */
   onSelect: () => void;
-  onHover: () => void;
 }) {
   return (
     <button
@@ -227,8 +91,6 @@ function EngineRow({
       title={option.disabled ? option.disabledReason : undefined}
       aria-pressed={selected}
       onClick={onSelect}
-      onMouseEnter={onHover}
-      onFocus={onHover}
       className={cx(
         "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 outline-none transition-colors",
         selected || flyoutOpen
@@ -261,360 +123,25 @@ function EngineRow({
   );
 }
 
-/* ------------------------------------------------------------------ flyout */
-
-/** One checkmark model row inside the flyout's radio group. */
-function ModelRow({
-  option,
-  selected,
-  engineId,
-  onPick,
-}: {
-  option: ModelOption;
-  selected: boolean;
-  engineId: string;
-  onPick: (engine: string, id: string) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      onClick={() => onPick(engineId, option.id)}
-      className={cx(
-        "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors",
-        selected
-          ? "bg-background-primary-hover"
-          : "hover:bg-background-primary-hover focus-visible:bg-background-primary-hover",
-      )}
-    >
-      <EngineIcon
-        engine={inferModelEngine(option.label) ?? inferModelEngine(option.id) ?? engineId}
-        size={18}
-        className="shrink-0 text-foreground-icon-primary"
-      />
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate text-body-medium whitespace-nowrap text-text-primary">
-          {option.label}
-        </span>
-        {/* CLI /model-menu style subtitle ("Custom Opus model"); absent
-            for plain catalog rows. */}
-        {option.description && (
-          <span className="truncate text-body-2-regular whitespace-nowrap text-text-secondary">
-            {option.description}
-          </span>
-        )}
-      </span>
-      {selected && (
-        <Check
-          className="ml-auto size-4 shrink-0 text-foreground-icon-primary"
-          aria-hidden
-        />
-      )}
-    </button>
-  );
-}
-
-/** The flyout's effort section: label with a keyed blur-in value, the
- *  faster/smarter captions, and the five-stop slider. */
-interface ModelGroup {
-  /** Provider id, "" for rows with no provider. */
-  key: string;
-  rows: ModelOption[];
-}
-
-/** Bucket rows by provider, first-appearance order. Returns a single
- *  keyless group when fewer than two providers are present — layering only
- *  earns its headers when it actually separates sources. */
-function groupModelsByProvider(models: ModelOption[]): ModelGroup[] {
-  const groups: ModelGroup[] = [];
-  const byKey = new Map<string, ModelGroup>();
-  for (const model of models) {
-    const key = model.provider ?? "";
-    let group = byKey.get(key);
-    if (!group) {
-      group = { key, rows: [] };
-      byKey.set(key, group);
-      groups.push(group);
+/** Trigger min-width lock while the popover is open: snapshot on open, clear
+ *  on close, so shorter model labels can't shrink the trigger mid-session
+ *  and slide the top-end popover. Adjusted during render (prev-prop pattern)
+ *  so every open/close path — trigger press, outside press, Esc — flips it,
+ *  not just onOpenChange. */
+function useLockedMinWidth(isOpen: boolean, triggerRef: Ref<HTMLButtonElement>) {
+  const [lockedMinWidth, setLockedMinWidth] = useState<number | undefined>();
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+  if (prevIsOpen !== isOpen) {
+    setPrevIsOpen(isOpen);
+    if (!isOpen) {
+      setLockedMinWidth(undefined);
+    } else {
+      const node =
+        triggerRef && typeof triggerRef !== "function" ? triggerRef.current : null;
+      if (node) setLockedMinWidth(node.offsetWidth);
     }
-    group.rows.push(model);
   }
-  const labeled = groups.filter((g) => g.key !== "");
-  return labeled.length > 1 ? groups : [{ key: "", rows: models }];
-}
-
-function FlyoutEffortSection({
-  effort,
-  onChange,
-  header,
-}: {
-  effort: EffortLevel;
-  onChange: (level: EffortLevel) => void;
-  header?: ReactNode;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="flex w-full flex-col">
-      {header ?? <span className="pl-2 text-body-medium text-text-secondary">
-        {t("chat.effort")}{" "}
-        {/* Keyed on the value so each change remounts and blurs in. */}
-        <m.span
-          key={effort}
-          initial={{ opacity: 0, filter: "blur(4px)" }}
-          animate={{ opacity: 1, filter: "blur(0px)" }}
-          transition={{ duration: 0.35, ease: "easeOut" }}
-          className="inline-block text-text-primary"
-        >
-          {t(EFFORT_LABEL_KEYS[effort])}
-        </m.span>
-      </span>}
-      <div className={cx("flex w-full items-center justify-between px-2 pb-[3px]", header ? "pt-0" : "pt-2")}>
-        <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
-          {t("chat.effortFaster")}
-        </span>
-        <span className="text-body-2-medium whitespace-nowrap text-text-secondary">
-          {t("chat.effortSmarter")}
-        </span>
-      </div>
-      <div className="w-full px-2 pb-2">
-        <EffortSlider value={effort} onChange={onChange} />
-      </div>
-    </div>
-  );
-}
-
-/** Case-insensitive label/id/description match; an empty query passes the
- * catalog through untouched (identity, so memoized groups stay stable). */
-function filterModels(models: ModelOption[], normalizedQuery: string): ModelOption[] {
-  if (!normalizedQuery) return models;
-  return models.filter(
-    (m) =>
-      m.label.toLowerCase().includes(normalizedQuery) ||
-      m.id.toLowerCase().includes(normalizedQuery) ||
-      (m.description ?? "").toLowerCase().includes(normalizedQuery),
-  );
-}
-
-/** Header refresh button: re-probes provider configs and model catalogs,
- * spinning until the probe settles. */
-function RefreshButton({ onRefresh }: { onRefresh: () => void | Promise<void> }) {
-  const { t } = useTranslation();
-  const [refreshing, setRefreshing] = useState(false);
-  return (
-    <button
-      type="button"
-      aria-label={t("common.refresh")}
-      title={t("common.refresh")}
-      disabled={refreshing}
-      onClick={() => {
-        if (refreshing) return;
-        setRefreshing(true);
-        Promise.resolve(onRefresh()).finally(() => setRefreshing(false));
-      }}
-      className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary disabled:cursor-default"
-    >
-      <RefreshCw
-        className={cx("size-3.5", refreshing && "animate-spin")}
-        aria-hidden
-      />
-    </button>
-  );
-}
-
-/** Optional header actions: catalog refresh (flyout + dialog) and/or the
- * dialog's dismiss button. Renders nothing when neither applies. */
-function PanelActions({
-  onRefresh,
-  onClose,
-}: {
-  onRefresh?: () => void | Promise<void>;
-  onClose?: () => void;
-}) {
-  const { t } = useTranslation();
-  if (!onRefresh && !onClose) return null;
-  return (
-    <span className="mr-1 flex shrink-0 items-center">
-      {onRefresh && <RefreshButton onRefresh={onRefresh} />}
-      {onClose && (
-        <button
-          type="button"
-          aria-label={t("common.close")}
-          onClick={onClose}
-          className="flex size-7 items-center justify-center rounded-lg text-foreground-icon-secondary hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
-        >
-          <X className="size-4" aria-hidden />
-        </button>
-      )}
-    </span>
-  );
-}
-
-/** The scrollable radio-group model list: provider-sectioned when layered,
- * flat otherwise; an exhausted search shows the no-match hint. */
-function ModelGroupList({
-  groups,
-  empty,
-  selectedModelId,
-  engineId,
-  onPickModel,
-}: {
-  groups: ModelGroup[];
-  empty: boolean;
-  selectedModelId: string;
-  engineId: string;
-  onPickModel: (engine: string, id: string) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div
-      className="flex max-h-[240px] w-full flex-col overflow-y-auto"
-      role="radiogroup"
-      aria-label={t("chat.modelPicker")}
-    >
-      {groups.map((group) => (
-        <div key={group.key || "__flat__"} className="flex w-full flex-col">
-          {group.key && (
-            <span className="sticky top-0 z-10 bg-background-primary-default px-2 pt-1.5 pb-0.5 text-body-2-medium text-text-tertiary">
-              {group.key}
-            </span>
-          )}
-          {group.rows.map((model) => (
-            <ModelRow
-              key={model.id || "__default__"}
-              option={model}
-              selected={model.id === selectedModelId}
-              engineId={engineId}
-              onPick={onPickModel}
-            />
-          ))}
-        </div>
-      ))}
-      {empty && (
-        <span className="p-2 text-body-medium text-text-tertiary">
-          {t("chat.noMatchingModels")}
-        </span>
-      )}
-    </div>
-  );
-}
-
-/**
- * Engine model panel content: "{name} 引擎" header over a search field over
- * checkmark model rows over the effort slider. Shared by the desktop flyout
- * (EngineFlyout) and the mobile second-level dialog; `onClose` adds a
- * dismiss button to the header, which only the dialog passes. Picking a
- * model dismisses the whole menu (handled by the parent via `onPickModel`).
- */
-function EngineModelPanel({
-  option,
-  models,
-  selectedModelId,
-  query,
-  onQueryChange,
-  effort,
-  onPickModel,
-  onEffortChange,
-  ompServiceTier,
-  onOmpServiceTierChange,
-  onRefresh,
-  onClose,
-}: {
-  option: MenuOption;
-  models: ModelOption[];
-  selectedModelId: string;
-  query: string;
-  onQueryChange: (value: string) => void;
-  effort: EffortLevel;
-  onPickModel: (engine: string, id: string) => void;
-  onEffortChange: (engine: string, level: EffortLevel) => void;
-  ompServiceTier: OmpServiceTier;
-  onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
-  /** Re-probe provider configs and model catalogs without an app restart. */
-  onRefresh?: () => void | Promise<void>;
-  onClose?: () => void;
-}) {
-  const { t } = useTranslation();
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredModels = filterModels(models, normalizedQuery);
-  // Provider sections layer the list when the engine's catalog mixes sources
-  // (OMP serving several relays). Pinning the active row to the top would
-  // tear it out of its section, so grouped lists keep the catalog order and
-  // mark the pick in place; flat and searched lists keep the pin.
-  const groups = useMemo(() => groupModelsByProvider(filteredModels), [filteredModels]);
-  const layered = !normalizedQuery && groups.length > 1;
-  const orderedModels =
-    normalizedQuery || layered
-      ? filteredModels
-      : [...filteredModels].sort(
-          (a, b) =>
-            Number(b.id === selectedModelId) - Number(a.id === selectedModelId),
-        );
-  // The section holding the current pick leads so the selection is never
-  // scrolled out of view; within sections the catalog order stands.
-  const visibleGroups = layered
-    ? [...groups].sort(
-        (a, b) =>
-          Number(b.rows.some((m) => m.id === selectedModelId)) -
-          Number(a.rows.some((m) => m.id === selectedModelId)),
-      )
-    : null;
-  const ompFast = option.id === "omp" && supportsOmpFastMode(selectedModelId);
-
-  return (
-    <div className="flex w-full flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-1">
-        <span className="truncate px-2 py-1.5 text-body-medium text-text-secondary">
-          {t("chat.engineHeader", {
-            name: CLI_DISPLAY_NAMES[option.id] ?? option.label,
-          })}
-        </span>
-        <PanelActions onRefresh={onRefresh} onClose={onClose} />
-      </div>
-      <div className="relative mx-1 -mt-1.5 pb-1">
-        <Search
-          className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-[calc(50%+2px)] text-foreground-icon-secondary"
-          aria-hidden
-        />
-        <input
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          placeholder={t("chat.modelSearchPlaceholder")}
-          aria-label={t("chat.modelSearchPlaceholder")}
-          className="h-8 w-full rounded-md border border-separator-border bg-background-secondary-default pr-2 pl-7 text-body-regular text-text-primary outline-none placeholder:text-text-tertiary focus-visible:ring-2 focus-visible:ring-border-focus-ring"
-        />
-      </div>
-      <ModelGroupList
-        groups={visibleGroups ?? [{ key: "", rows: orderedModels }]}
-        empty={orderedModels.length === 0}
-        selectedModelId={selectedModelId}
-        engineId={option.id}
-        onPickModel={onPickModel}
-      />
-
-      {/* Full-bleed divider, like the reference submenu. */}
-      <div aria-hidden className={cx("-mx-1 mt-[7px] h-px bg-border-button-default", ompFast ? "mb-1" : "mb-3")} />
-      <FlyoutEffortSection
-        header={ompFast ? (
-          <OmpSpeedSection model={selectedModelId} value={ompServiceTier} onChange={onOmpServiceTierChange}>
-            <span className="text-body-medium text-text-primary">{t(EFFORT_LABEL_KEYS[effort])}</span>
-          </OmpSpeedSection>
-        ) : undefined}
-        effort={effort}
-        onChange={(level) => onEffortChange(option.id, level)}
-      />
-    </div>
-  );
-}
-
-/** Desktop-only wrapper: the model panel as a flyout popping to the right of
- *  the CLI popover. On mobile CliMenu renders the same panel in a modal
- *  dialog instead (hover flyouts don't work on touch). */
-function EngineFlyout(props: Parameters<typeof EngineModelPanel>[0]) {
-  return (
-    <div className={FLYOUT_CLASSES}>
-      <EngineModelPanel {...props} />
-    </div>
-  );
+  return lockedMinWidth;
 }
 
 /** Borderless trigger carrying the whole selection at a glance:
@@ -630,7 +157,9 @@ function CliMenuTrigger({
   model,
   effort,
   ompServiceTier,
+  codexServiceTier,
   modelId,
+  isOpen,
 }: {
   triggerRef: Ref<HTMLButtonElement>;
   engine: string;
@@ -640,13 +169,24 @@ function CliMenuTrigger({
   model: ModelOption | undefined;
   effort: EffortLevel;
   ompServiceTier: OmpServiceTier;
+  codexServiceTier: OmpServiceTier;
   modelId: string;
+  /** While open, lock the trigger's min-width so model picks don't shrink it
+   *  and nudge the top-end popover. */
+  isOpen: boolean;
 }) {
   const { t } = useTranslation();
+  const showFast =
+    (engine === "omp" && supportsOmpFastMode(modelId) && ompServiceTier === "priority") ||
+    (engine === "codex" && codexServiceTier === "priority");
+  // Snapshot width on open; clear on close. Shorter model labels then can't
+  // shrink the trigger mid-session and slide the popover.
+  const lockedMinWidth = useLockedMinWidth(isOpen, triggerRef);
   return (
     <AriaButton
       ref={triggerRef}
       aria-label={`${engineName}${model ? ` / ${model.label}` : ""} · ${t(EFFORT_LABEL_KEYS[effort])}`}
+      style={lockedMinWidth ? { minWidth: lockedMinWidth } : undefined}
       className="group flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 outline-none focus-visible:ring-2 focus-visible:ring-border-focus-ring"
     >
       <EngineIcon engine={engine} size={16} className="shrink-0 text-foreground-icon-secondary" />
@@ -671,9 +211,9 @@ function CliMenuTrigger({
             </span>
           ))}
         </span>
-        {engine === "omp" && supportsOmpFastMode(modelId) && (
-          <span aria-hidden={ompServiceTier !== "priority"} className={cx("w-7 shrink-0 text-center text-text-primary", ompServiceTier !== "priority" && "invisible")}>Fast</span>
-        )}
+        {(engine === "omp" && supportsOmpFastMode(modelId)) || engine === "codex" ? (
+          <span aria-hidden={!showFast} className={cx("w-7 shrink-0 text-center text-text-primary", !showFast && "invisible")}>Fast</span>
+        ) : null}
       </span>
     </AriaButton>
   );
@@ -694,14 +234,14 @@ function EngineMenuBody({
   onQueryChange,
   isMobile,
   onSelectEngine,
-  onHoverEngine,
   onPickModel,
   onEffortChange,
   ompServiceTier,
   onOmpServiceTierChange,
+  codexServiceTier,
+  onCodexServiceTierChange,
   onRefreshModels,
-  onFlyoutEnter,
-  onFlyoutLeave,
+  loadingEngines,
 }: {
   options: MenuOption[];
   value: string;
@@ -714,23 +254,20 @@ function EngineMenuBody({
   onQueryChange: (value: string) => void;
   isMobile: boolean;
   onSelectEngine: (option: MenuOption) => void;
-  onHoverEngine: (option: MenuOption) => void;
   onPickModel: (engine: string, id: string) => void;
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
   onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
+  codexServiceTier: OmpServiceTier;
+  onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   onRefreshModels?: () => void | Promise<void>;
-  onFlyoutEnter: () => void;
-  onFlyoutLeave: () => void;
+  /** Engine ids whose catalog probe has not returned yet. */
+  loadingEngines?: readonly string[];
 }) {
   const flyoutOption = options.find((o) => o.id === openEngine);
   return (
     <div className="flex w-full flex-col">
-      <div
-        className="relative"
-        onMouseEnter={onFlyoutEnter}
-        onMouseLeave={onFlyoutLeave}
-      >
+      <div className="relative">
         <div className="flex w-full flex-col">
           {options.map((option, index) => (
             <Fragment key={option.id}>
@@ -740,14 +277,13 @@ function EngineMenuBody({
                   className="-mx-1 my-1 border-t border-separator-border"
                 />
               )}
-              {/* Not `disabled`: that attribute would swallow hover
-                  events and leave a stale flyout on the prior engine. */}
+              {/* Not `disabled`: that attribute would swallow the click
+                  that switches the panel. */}
               <EngineRow
                 option={option}
                 selected={option.id === value}
                 flyoutOpen={option.id === openEngine}
                 onSelect={() => onSelectEngine(option)}
-                onHover={() => onHoverEngine(option)}
               />
             </Fragment>
           ))}
@@ -755,17 +291,20 @@ function EngineMenuBody({
 
         {!isMobile && flyoutOption && (
           <EngineFlyout
-            option={flyoutOption}
-            models={modelsByEngine[flyoutOption.id] ?? []}
-            selectedModelId={models[flyoutOption.id] ?? ""}
-            query={query}
-            onQueryChange={onQueryChange}
-            effort={efforts[flyoutOption.id] ?? "medium"}
-            onPickModel={onPickModel}
-            onEffortChange={onEffortChange}
-            ompServiceTier={ompServiceTier}
-            onOmpServiceTierChange={onOmpServiceTierChange}
+              option={flyoutOption}
+              models={modelsByEngine[flyoutOption.id] ?? []}
+              selectedModelId={models[flyoutOption.id] ?? ""}
+              query={query}
+              onQueryChange={onQueryChange}
+              effort={efforts[flyoutOption.id] ?? "medium"}
+              onPickModel={onPickModel}
+              onEffortChange={onEffortChange}
+              ompServiceTier={ompServiceTier}
+              onOmpServiceTierChange={onOmpServiceTierChange}
+              codexServiceTier={codexServiceTier}
+              onCodexServiceTierChange={onCodexServiceTierChange}
             onRefresh={onRefreshModels}
+            loading={loadingEngines?.includes(flyoutOption.id)}
           />
         )}
       </div>
@@ -786,6 +325,8 @@ function EngineModelDialog({
   onEffortChange,
   ompServiceTier,
   onOmpServiceTierChange,
+  codexServiceTier,
+  onCodexServiceTierChange,
   onRefreshModels,
   onClose,
 }: {
@@ -800,6 +341,8 @@ function EngineModelDialog({
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
   onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
+  codexServiceTier: OmpServiceTier;
+  onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   onRefreshModels?: () => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -818,8 +361,10 @@ function EngineModelDialog({
         effort={efforts[option.id] ?? "medium"}
         onPickModel={onPickModel}
         onEffortChange={onEffortChange}
-            ompServiceTier={ompServiceTier}
-            onOmpServiceTierChange={onOmpServiceTierChange}
+        ompServiceTier={ompServiceTier}
+        onOmpServiceTierChange={onOmpServiceTierChange}
+        codexServiceTier={codexServiceTier}
+        onCodexServiceTierChange={onCodexServiceTierChange}
         onRefresh={onRefreshModels}
         onClose={onClose}
       />
@@ -833,7 +378,7 @@ function EngineModelDialog({
  * "{CLI} / {model} · {effort}" — hairline-separated engine rows where
  * only the active engine carries a status dot, and a per-engine flyout.
  * Picking a model in another engine's flyout switches to that engine (when
- * installed), matching the reference picker's behavior.
+ * installed) and keeps the panel open for Fast / effort.
  */
 export function CliMenu({
   options,
@@ -846,7 +391,10 @@ export function CliMenu({
   onEffortChange,
   ompServiceTier,
   onOmpServiceTierChange,
+  codexServiceTier,
+  onCodexServiceTierChange,
   onRefreshModels,
+  loadingEngines,
 }: {
   options: MenuOption[];
   value: string;
@@ -861,8 +409,12 @@ export function CliMenu({
   onEffortChange: (engine: string, level: EffortLevel) => void;
   ompServiceTier: OmpServiceTier;
   onOmpServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
+  codexServiceTier: OmpServiceTier;
+  onCodexServiceTierChange: (tier: OmpServiceTier) => Promise<void>;
   /** Re-probe provider configs and model catalogs (flyout refresh button). */
   onRefreshModels?: () => void | Promise<void>;
+  /** Engine ids whose catalog probe has not returned yet (loading hint). */
+  loadingEngines?: readonly string[];
 }) {
   const { t } = useTranslation();
   const { isOpen, triggerRef, popoverRef, close, setOpen } = usePopoverState();
@@ -884,22 +436,12 @@ export function CliMenu({
   const isMobile = useMediaQuery(MOBILE_MEDIA);
   const [dialogEngine, setDialogEngine] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const closeTimer = useRef<number | null>(null);
-  const cancelFlyoutClose = () => {
-    if (closeTimer.current !== null) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  };
-  // Brief grace period so the pointer can cross the gap into the flyout.
-  const scheduleFlyoutClose = () => {
-    cancelFlyoutClose();
-    closeTimer.current = window.setTimeout(() => setOpenEngine(null), 150);
-  };
+
+  // The filter belongs to the search, not to one engine: switching the flyout
+  // must not wipe what the user typed.
   useEffect(() => {
     setQuery("");
-  }, [openEngine, dialogEngine]);
-  useEffect(() => () => cancelFlyoutClose(), []);
+  }, [dialogEngine]);
 
   const handleOpenChange = (o: boolean) => {
     if (!setOpen(o)) return;
@@ -909,16 +451,14 @@ export function CliMenu({
 
   const dialogOption = options.find((o) => o.id === dialogEngine);
 
-  // Picking a model is the decision the flyout exists for, so it dismisses
-  // the whole menu; a model picked on another installed engine also switches
-  // the active engine to it.
+  // Keep the menu open after a model pick so Fast / effort can be adjusted in
+  // the same panel (Codex desktop behavior). A model on another installed
+  // engine still switches the active CLI; the flyout stays on that engine.
   const pickModel = (engine: string, id: string) => {
     onModelChange(engine, id);
     const target = options.find((o) => o.id === engine);
     if (engine !== value && target && !target.disabled) onChange(engine);
-    close();
-    setOpenEngine(null);
-    setDialogEngine(null);
+    if (!isMobile) setOpenEngine(engine);
   };
 
   const selectEngine = (option: MenuOption) => {
@@ -931,15 +471,21 @@ export function CliMenu({
       return;
     }
     if (option.disabled) return;
-    onChange(option.id);
-    close();
-  };
-
-  const hoverEngine = (option: MenuOption) => {
-    if (isMobile) return;
-    cancelFlyoutClose();
+    // Desktop: the row switches WHICH model list is shown, nothing more. The
+    // engine itself changes when a model is picked from that list (see
+    // pickModel), so browsing another CLI can never yank the panel away
+    // mid-search — a pointer crossing the column does nothing at all.
+    // An engine with no catalog has nothing to browse: keep the old
+    // behaviour of switching outright.
+    if ((modelsByEngine[option.id] ?? []).length === 0) {
+      onChange(option.id);
+      close();
+      return;
+    }
     setOpenEngine(option.id);
   };
+
+
 
   return (
     <>
@@ -951,7 +497,9 @@ export function CliMenu({
         model={selectedModel}
         effort={triggerEffort}
         ompServiceTier={ompServiceTier}
+        codexServiceTier={codexServiceTier}
         modelId={selectedModelId}
+        isOpen={isOpen}
       />
 
       <AriaPopover
@@ -973,14 +521,14 @@ export function CliMenu({
             onQueryChange={setQuery}
             isMobile={isMobile}
             onSelectEngine={selectEngine}
-            onHoverEngine={hoverEngine}
             onPickModel={pickModel}
             onEffortChange={onEffortChange}
             ompServiceTier={ompServiceTier}
             onOmpServiceTierChange={onOmpServiceTierChange}
+            codexServiceTier={codexServiceTier}
+            onCodexServiceTierChange={onCodexServiceTierChange}
             onRefreshModels={onRefreshModels}
-            onFlyoutEnter={cancelFlyoutClose}
-            onFlyoutLeave={scheduleFlyoutClose}
+            loadingEngines={loadingEngines}
           />
         </AriaDialog>
       </AriaPopover>
@@ -995,8 +543,10 @@ export function CliMenu({
       onQueryChange={setQuery}
       onPickModel={pickModel}
       onEffortChange={onEffortChange}
-            ompServiceTier={ompServiceTier}
-            onOmpServiceTierChange={onOmpServiceTierChange}
+      ompServiceTier={ompServiceTier}
+      onOmpServiceTierChange={onOmpServiceTierChange}
+      codexServiceTier={codexServiceTier}
+      onCodexServiceTierChange={onCodexServiceTierChange}
       onRefreshModels={onRefreshModels}
       onClose={() => setDialogEngine(null)}
     />

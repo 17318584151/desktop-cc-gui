@@ -1,9 +1,8 @@
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import type { ComposerInputHandle } from "@/components/application/ai-chat/ai-chat-composer";
-import { mentionToken } from "@/components/application/ai-chat/file-tags";
 import { AddMenu } from "@/components/application/ai-chat/add-menu";
 import { PermissionMenu } from "@/components/application/ai-chat/permission-menu";
 import type { ComposerPermission } from "@/components/application/ai-chat/permission-menu";
@@ -19,16 +18,18 @@ import {
   type ActiveSession,
   type QueuedMessage,
 } from "../store";
-import { parseUsage } from "../usage";
-import { recordPrompt } from "../prompt-history";
+
 import { MessageTimeline } from "./MessageTimeline";
 import { ConversationFooter } from "./ConversationFooter";
 import { useBranchSwitcher } from "./use-branch-switcher";
 import { useComposerImages } from "./use-composer-images";
 import { useEngineModels } from "./use-engine-models";
+import { useTabModelDisplay } from "./use-tab-model-display";
+import { useComposerActions } from "./use-composer-actions";
 import type { EngineInfo, Workspace } from "@/lib/ipc";
 import type { OmpServiceTier } from "@/lib/omp-service-tier";
 import { EmptyState } from "@/components/base/empty-state";
+import { parseUsage } from "../usage";
 
 const EMPTY_QUEUE: QueuedMessage[] = [];
 
@@ -92,35 +93,44 @@ function SessionErrorBanner({
 function useConversationMenus({
   engines,
   engineInfo,
-  supportsImages,
   activeEngine,
+  onPickFiles,
+  onPickSkills,
   modelsByEngine,
   displayModels,
   displayEfforts,
   ompServiceTier,
+  codexServiceTier,
   permission,
   setActiveEngine,
   setPermission,
   setModel,
   setEffort,
   setOmpServiceTier,
+  setCodexServiceTier,
   refreshModels,
+  loadingEngines,
 }: {
   engines: EngineInfo[];
   engineInfo: EngineInfo | undefined;
-  supportsImages: boolean;
   activeEngine: string;
+  onPickFiles: () => void;
+  /** "Skills" add-menu row: opens the composer's `/` command picker. */
+  onPickSkills: () => void;
   modelsByEngine: Record<string, ModelOption[]>;
   displayModels: Record<string, string>;
   displayEfforts: Record<string, EffortLevel>;
   ompServiceTier: OmpServiceTier;
+  codexServiceTier: OmpServiceTier;
   permission: ComposerPermission;
   setActiveEngine: (engine: string) => void;
   setPermission: (permission: ComposerPermission) => void;
   setModel: (engine: string, model: string) => Promise<void>;
   setEffort: (engine: string, effort: EffortLevel) => Promise<void>;
   setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
+  setCodexServiceTier: (tier: OmpServiceTier) => Promise<void>;
   refreshModels: () => Promise<void>;
+  loadingEngines: readonly string[];
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -154,14 +164,14 @@ function useConversationMenus({
     [setEffort],
   );
 
+
+  // Files & folders works for every engine: non-image picks become @mentions
+  // (plain text), and image picks on an engine without image input surface
+  // the unsupported banner instead of being silently dropped — so the menu
+  // stays enabled regardless of supportsImages.
   const addMenu = useMemo(
-    () => (
-      <AddMenu
-        disabled={!supportsImages}
-        disabledReason={t("chat.imagesUnsupported")}
-      />
-    ),
-    [supportsImages, t],
+    () => <AddMenu onPickFiles={onPickFiles} onPickSkills={onPickSkills} />,
+    [onPickFiles, onPickSkills],
   );
   const cliMenu = useMemo(
     () =>
@@ -185,7 +195,10 @@ function useConversationMenus({
           onEffortChange={handleEffortChange}
           ompServiceTier={ompServiceTier}
           onOmpServiceTierChange={setOmpServiceTier}
+          codexServiceTier={codexServiceTier}
+          onCodexServiceTierChange={setCodexServiceTier}
           onRefreshModels={refreshModels}
+          loadingEngines={loadingEngines}
         />
       ),
     [
@@ -202,7 +215,10 @@ function useConversationMenus({
       handleEffortChange,
       ompServiceTier,
       setOmpServiceTier,
+      codexServiceTier,
+      setCodexServiceTier,
       refreshModels,
+      loadingEngines,
     ],
   );
   const permissionMenu = useMemo(
@@ -260,13 +276,13 @@ export const ChatConversation = memo(function ChatConversation({
   const hasSession = useChatStore((s) => key in s.bySession);
   const draft = useChatStore((s) => s.drafts[key] ?? "");
   const sendShortcut = useChatStore((s) => s.sendShortcut);
-  const pendingMention = useChatStore((s) => s.pendingMention);
   // Engine/effort/model prefs: low-frequency, grouped into one shallow watch.
-  const { activeEngine, efforts, models, ompServiceTier } = useChatStore(
+  const { activeEngine, efforts, models, ompServiceTier, codexServiceTier } = useChatStore(
     useShallow((s) => ({
       activeEngine: s.activeEngine,
       efforts: s.efforts,
       ompServiceTier: s.ompServiceTier,
+      codexServiceTier: s.codexServiceTier,
       models: s.models,
     })),
   );
@@ -274,31 +290,23 @@ export const ChatConversation = memo(function ChatConversation({
     setActiveEngine,
     setEffort,
     setOmpServiceTier,
+    setCodexServiceTier,
     setModel,
     pinModels,
-    setDraft,
-    clearPendingMention,
     loadEarlier,
-    send,
-    queueMessage,
     removeQueued,
     clearQueue,
-    interrupt,
   } = useChatStore(
     useShallow((s) => ({
       setActiveEngine: s.setActiveEngine,
       setEffort: s.setEffort,
       setOmpServiceTier: s.setOmpServiceTier,
+      setCodexServiceTier: s.setCodexServiceTier,
       setModel: s.setModel,
       pinModels: s.pinModels,
-      setDraft: s.setDraft,
-      clearPendingMention: s.clearPendingMention,
       loadEarlier: s.loadEarlier,
-      send: s.send,
-      queueMessage: s.queueMessage,
       removeQueued: s.removeQueued,
       clearQueue: s.clearQueue,
-      interrupt: s.interrupt,
     })),
   );
   const {
@@ -313,6 +321,7 @@ export const ChatConversation = memo(function ChatConversation({
   // first supported one, which is what the chip displays.
   const permission = useChatStore((s) => s.permission);
   const setPermission = useChatStore((s) => s.setPermission);
+
   const {
     images,
     previews,
@@ -320,48 +329,37 @@ export const ChatConversation = memo(function ChatConversation({
     removeImage,
     clearImages,
     pasteImages,
+    importImageFiles,
     dismissImageError,
   } = useComposerImages();
+
+  const { displayModels, displayEfforts } = useTabModelDisplay({
+    active,
+    activeEngine,
+    sessionKey: key,
+    models,
+    efforts,
+  });
+
   const {
     catalogs,
     modelsByEngine,
     refresh: refreshModels,
+    pendingEngines,
   } = useEngineModels(engines, models, pinModels);
-
-  // Per-tab model/effort overrides win over the engine's global defaults, so
-  // the picker follows each session across tab switches (multi-CLI tabs keep
-  // their own selection).
-  const tabModel =
-    active && active.engine === activeEngine ? active.model : undefined;
-  const tabEffort =
-    active && active.engine === activeEngine ? active.effort : undefined;
-  const displayModels = useMemo(
-    () =>
-      tabModel !== undefined ? { ...models, [activeEngine]: tabModel } : models,
-    [tabModel, models, activeEngine],
-  );
-  const displayEfforts = useMemo(
-    () =>
-      tabEffort !== undefined
-        ? { ...efforts, [activeEngine]: tabEffort }
-        : efforts,
-    [tabEffort, efforts, activeEngine],
+  const loadingEngines = useMemo(
+    () => Object.keys(pendingEngines),
+    [pendingEngines],
   );
 
-  // The usage payload's model_context_window beats the catalog, and the
-  // catalog's context window beats the 200k assumption when the selected
-  // model reports one.
-  const contextMax = useMemo(() => {
-    const parsed = parseUsage(sessionUsage);
-    if (parsed?.contextWindow && parsed.contextWindow > 0) {
-      return parsed.contextWindow;
-    }
-    return (
-      (catalogs[activeEngine]?.models ?? []).find(
-        (m) => m.id === displayModels[activeEngine],
-      )?.contextWindow || CONTEXT_WINDOW_TOKENS
-    );
-  }, [sessionUsage, catalogs, activeEngine, displayModels]);
+  // Conversation-reported window (Codex token_count) wins; catalog is only
+  // a fallback for engines that never send one.
+  const contextMax =
+    parseUsage(sessionUsage)?.contextWindow ||
+    (catalogs[activeEngine]?.models ?? []).find(
+      (m) => m.id === displayModels[activeEngine],
+    )?.contextWindow ||
+    CONTEXT_WINDOW_TOKENS;
 
   const engineInfo = engines.find((e) => e.id === activeEngine);
   const supportsImages = engineInfo?.supportsImages ?? false;
@@ -371,55 +369,43 @@ export const ChatConversation = memo(function ChatConversation({
     [loadEarlier],
   );
 
-  const submit = useCallback(
-    (value: string) => {
-      if (!active || (!value.trim() && images.length === 0)) return;
-      recordPrompt(value);
-      setDraft(key, "");
-      clearImages();
-      // A turn is in flight: park the message in the session's queue; the
-      // store drains it FIFO when the turn ends.
-      if (streaming) {
-        queueMessage(value, images);
-        return;
-      }
-      void send(value, images);
-    },
-    [active, images, streaming, key, setDraft, clearImages, send, queueMessage],
-  );
-
-  // File-tree "+" asks the composer to insert an @path mention at the caret.
-  useEffect(() => {
-    if (!pendingMention) return;
-    clearPendingMention();
-    const input = composerInputRef.current;
-    if (!input) return;
-    input.focus();
-    input.insertText(`${mentionToken(pendingMention.path)} `);
-  }, [pendingMention, clearPendingMention, composerInputRef]);
-
-  const handleDraftChange = useCallback(
-    (v: string) => setDraft(key, v),
-    [key, setDraft],
-  );
-  const handleStop = useCallback(() => void interrupt(), [interrupt]);
+  const {
+    submit,
+    handleDraftChange,
+    handleAddAttachments,
+    handleStop,
+    handlePickSkills,
+  } = useComposerActions({
+    active,
+    sessionKey: key,
+    streaming,
+    images,
+    clearImages,
+    importImageFiles,
+    supportsImages,
+    composerInputRef,
+  });
   const { addMenu, cliMenu, permissionMenu, noEnabledEngines } =
     useConversationMenus({
       engines,
       engineInfo,
-      supportsImages,
       activeEngine,
       modelsByEngine,
+      onPickFiles: handleAddAttachments,
+      onPickSkills: handlePickSkills,
       displayModels,
       displayEfforts,
       ompServiceTier,
+      codexServiceTier,
       permission,
       setActiveEngine,
       setPermission,
       setModel,
       setEffort,
       setOmpServiceTier,
+      setCodexServiceTier,
       refreshModels,
+      loadingEngines,
     });
 
   return (

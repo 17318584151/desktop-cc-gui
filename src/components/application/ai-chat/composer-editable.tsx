@@ -9,6 +9,7 @@ import {
   insertTextAtCaret,
 } from "@/components/application/ai-chat/file-tags";
 import { type FileMentionMenuHandle } from "@/components/application/ai-chat/file-mention-menu";
+import { type SlashCommandMenuHandle } from "@/components/application/ai-chat/slash-command-menu";
 import { cx } from "@/utils/cx";
 
 /**
@@ -24,17 +25,19 @@ export function ComposerEditable({
   editableRef,
   sendShortcut,
   mentionOpen,
+  slashOpen,
   completionSuffix,
   acceptCompletion,
   setEditableText,
   handleHistoryKeyDown,
   mentionMenuRef,
+  slashMenuRef,
   isComposingRef,
   lastCompositionEndTimeRef,
   setIsComposing,
   emitChange,
   syncTags,
-  updateMentionTrigger,
+  updateTriggers,
   disabled,
   onSubmit,
   onPasteImages,
@@ -44,6 +47,8 @@ export function ComposerEditable({
   sendShortcut: "enter" | "cmdEnter";
   /** A mention trigger is active: gates the ghost completion + key delegation. */
   mentionOpen: boolean;
+  /** A `/` command trigger is active: same gating as mentionOpen. */
+  slashOpen: boolean;
   /** Ghost-text history suffix painted after the caret ("" = none). */
   completionSuffix: string;
   /** Accept the ghost suggestion: returns the full text, or null. */
@@ -51,12 +56,14 @@ export function ComposerEditable({
   setEditableText: (text: string) => void;
   handleHistoryKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => boolean;
   mentionMenuRef: MutableRefObject<FileMentionMenuHandle | null>;
+  slashMenuRef: MutableRefObject<SlashCommandMenuHandle | null>;
   isComposingRef: MutableRefObject<boolean>;
   lastCompositionEndTimeRef: MutableRefObject<number>;
   setIsComposing: (composing: boolean) => void;
   emitChange: () => void;
   syncTags: () => void;
-  updateMentionTrigger: () => void;
+  /** Re-derive completion triggers (`/` first, then `@`) after real input. */
+  updateTriggers: () => void;
   disabled: boolean;
   onSubmit?: (value: string) => void;
   onPasteImages?: (files: File[]) => void;
@@ -76,11 +83,11 @@ export function ComposerEditable({
       data-placeholder={sendShortcut === "cmdEnter"
         ? t(isMac ? "chat.inputPlaceholderCmdEnter" : "chat.inputPlaceholderCmdEnterCtrl")
         : t("chat.inputPlaceholder")}
-      data-completion-suffix={mentionOpen ? undefined : completionSuffix || undefined}
+      data-completion-suffix={mentionOpen || slashOpen ? undefined : completionSuffix || undefined}
       onInput={() => {
         emitChange();
         syncTags();
-        if (!isComposingRef.current) updateMentionTrigger();
+        if (!isComposingRef.current) updateTriggers();
       }}
       onCompositionStart={() => {
         isComposingRef.current = true;
@@ -93,7 +100,7 @@ export function ComposerEditable({
         // Composition commits text without an input event in WKWebView.
         emitChange();
         syncTags();
-        updateMentionTrigger();
+        updateTriggers();
       }}
       onKeyDown={(event) => {
         // An open mention picker owns arrows/Enter/Tab/Escape (never
@@ -104,6 +111,17 @@ export function ComposerEditable({
           !isComposingRef.current &&
           event.nativeEvent.keyCode !== 229 &&
           mentionMenuRef.current?.handleKey(event.key)
+        ) {
+          event.preventDefault();
+          return;
+        }
+        // An open `/` picker owns the same keys (same IME gating).
+        if (
+          slashOpen &&
+          !event.nativeEvent.isComposing &&
+          !isComposingRef.current &&
+          event.nativeEvent.keyCode !== 229 &&
+          slashMenuRef.current?.handleKey(event.key)
         ) {
           event.preventDefault();
           return;

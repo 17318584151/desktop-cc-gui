@@ -1,5 +1,64 @@
 use super::{run_probe, EngineModel};
 
+pub(super) fn configured_models(engine: &str) -> Result<Vec<EngineModel>, String> {
+    let config = crate::engine::pi_family_auth::pi_family_models_config_read(engine.to_string())?;
+    let Some(text) = config.text.filter(|text| !text.trim().is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let value = crate::engine::pi_family_auth::validate_models_config_text(engine, &text)?;
+    let mut models = Vec::new();
+    let Some(providers) = value
+        .get("providers")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(models);
+    };
+    for (provider_id, provider) in providers {
+        let Some(entries) = provider.get("models").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for entry in entries {
+            let Some(model_id) = entry
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            models.push(EngineModel {
+                id: format!("{provider_id}/{model_id}"),
+                name: entry
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string),
+                description: None,
+                provider: provider_id.clone(),
+                context_window: entry
+                    .get("contextWindow")
+                    .and_then(serde_json::Value::as_u64),
+            });
+        }
+    }
+    Ok(models)
+}
+
+pub(super) fn merge_configured_models(
+    mut discovered: Vec<EngineModel>,
+    configured: Vec<EngineModel>,
+) -> Vec<EngineModel> {
+    let mut seen: std::collections::HashSet<String> =
+        discovered.iter().map(|model| model.id.clone()).collect();
+    discovered.extend(
+        configured
+            .into_iter()
+            .filter(|model| seen.insert(model.id.clone())),
+    );
+    discovered
+}
+
 /// `<bin> models --json` → {"models":[{provider,id,selector,name,contextWindow,…}]}.
 pub(super) async fn run_models_json(bin: &str) -> Result<Vec<EngineModel>, String> {
     parse_models_json(&run_probe(bin, &["models", "--json"], "models --json").await?)
@@ -162,5 +221,36 @@ kimi-code      k3             262.1K    32.8K    yes       no
         assert_eq!(parse_token_count("1M"), Some(1_000_000));
         assert_eq!(parse_token_count("8192"), Some(8192));
         assert_eq!(parse_token_count("—"), None);
+    }
+
+    #[test]
+    fn merges_custom_models_without_duplicate_selectors() {
+        let discovered = vec![EngineModel {
+            id: "relay/model-a".to_string(),
+            name: None,
+            description: None,
+            provider: "relay".to_string(),
+            context_window: None,
+        }];
+        let configured = vec![
+            EngineModel {
+                id: "relay/model-a".to_string(),
+                name: Some("duplicate".to_string()),
+                description: None,
+                provider: "relay".to_string(),
+                context_window: None,
+            },
+            EngineModel {
+                id: "private/model-b".to_string(),
+                name: Some("Model B".to_string()),
+                description: None,
+                provider: "private".to_string(),
+                context_window: Some(200_000),
+            },
+        ];
+        let merged = merge_configured_models(discovered, configured);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].id, "relay/model-a");
+        assert_eq!(merged[1].id, "private/model-b");
     }
 }

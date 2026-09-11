@@ -57,12 +57,21 @@ impl Engine for CodexEngine {
             cmd.arg("-m");
             cmd.arg(model);
         }
-        // Reasoning effort maps onto codex's config key (TOML value, so the string needs
-        // quotes). Codex tops out at "xhigh"; clamp "max" onto it.
+        // Reasoning effort maps onto codex's config key (TOML value, so the
+        // string needs quotes). Pass the level through as-is: current models
+        // accept low…ultra (catalog-ordered), including max.
         if let Some(effort) = req.effort.as_deref() {
-            let effort = if effort == "max" { "xhigh" } else { effort };
             cmd.arg("-c");
             cmd.arg(format!("model_reasoning_effort=\"{effort}\""));
+        }
+        // Fast mode is Codex's service_tier=priority (same id the desktop app
+        // uses). Explicit default opts out; None leaves the CLI's config alone.
+        if let Some(tier) = req.service_tier.as_deref() {
+            if !matches!(tier, "default" | "priority") {
+                return Err("Invalid Codex service tier".to_string());
+            }
+            cmd.arg("-c");
+            cmd.arg(format!("service_tier=\"{tier}\""));
         }
         for raw in &req.images {
             if let Some(path) = images::absolutize_image_path(raw, &req.workspace) {
@@ -131,22 +140,158 @@ impl Engine for CodexEngine {
                 }
             }
             "turn.completed" => {
-                let usage = value.get("usage").cloned();
+                let usage = value
+                    .get("usage")
+                    .cloned()
+                    .map(|usage| attach_context_window(usage, &value));
                 out.push(EngineEvent::Done {
                     session_id: None,
                     usage,
                 });
             }
-            "turn.failed" | "error" => {
-                let message = value
-                    .get("error")
-                    .and_then(|e| e.get("message").or(Some(e)).and_then(Value::as_str))
-                    .or_else(|| value.get("message").and_then(Value::as_str))
-                    .unwrap_or("codex turn failed")
-                    .to_string();
-                out.push(EngineEvent::Error(message));
+            "turn.failed" => {
+                out.push(EngineEvent::Error(error_message(&value)));
+            }
+            // Non-terminal: codex emits `error` for every retry it is about
+            // to make ("Reconnecting... 1/5 (...)") and once more with the
+            // final message just before `turn.failed`. Verified against a
+            // live run: both a retryable stream drop and a terminal 401
+            // produce retries, one bare error line, then turn.failed. Only
+            // turn.failed ends the turn — treating `error` as terminal
+            // settled the UI and killed the CLI on the first reconnect, so
+            // the turn died at 1/5 instead of continuing.
+            "error" => {
+                out.push(EngineEvent::Warn(error_message(&value)));
             }
             _ => {}
         }
+    }
+}
+
+fn attach_context_window(mut usage: Value, source: &Value) -> Value {
+    if usage.get("model_context_window").is_none() {
+        if let Some(window) = source
+            .get("model_context_window")
+            .or_else(|| source.get("info").and_then(|i| i.get("model_context_window")))
+        {
+            if let Some(obj) = usage.as_object_mut() {
+                obj.insert("model_context_window".to_string(), window.clone());
+            }
+        }
+    }
+    usage
+}
+
+/// Message text of a codex error payload: `error.message` when nested,
+/// `error` or `message` when flat, with a generic fallback.
+fn error_message(value: &Value) -> String {
+    value
+        .get("error")
+        .and_then(|e| e.get("message").or(Some(e)).and_then(Value::as_str))
+        .or_else(|| value.get("message").and_then(Value::as_str))
+        .unwrap_or("codex turn failed")
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Engine, EngineEvent};
+
+    fn argv(req: &SendRequest) -> Vec<String> {
+        CodexEngine
+            .build_command(req, "fake-bin")
+            .unwrap()
+            .command
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect()
+    }
+
+    fn base_req() -> SendRequest {
+        SendRequest {
+            session_id: None,
+            workspace: std::path::PathBuf::from("/tmp"),
+            prompt: "hi".into(),
+            images: Vec::new(),
+            model: Some("gpt-6-astra".into()),
+            effort: None,
+            service_tier: None,
+            permission: Some("auto".into()),
+            additional_dirs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn effort_and_fast_tier_pass_through() {
+        let mut req = base_req();
+        req.effort = Some("ultra".into());
+        req.service_tier = Some("priority".into());
+        let args = argv(&req);
+        assert!(args.iter().any(|a| a == "model_reasoning_effort=\"ultra\""));
+        assert!(args.iter().any(|a| a == "service_tier=\"priority\""));
+    }
+
+    #[test]
+    fn max_effort_is_not_clamped_to_xhigh() {
+        let mut req = base_req();
+        req.effort = Some("max".into());
+        let args = argv(&req);
+        assert!(args.iter().any(|a| a == "model_reasoning_effort=\"max\""));
+        assert!(!args.iter().any(|a| a.contains("xhigh")));
+    }
+
+    fn parse(line: &str) -> Vec<EngineEvent> {
+        let mut out = Vec::new();
+        CodexEngine.parse_line(line, &mut out);
+        out
+    }
+
+    /// Captured live from `codex exec --json` against a mock endpoint that
+    /// drops the SSE stream: codex announces every retry as an `error` event
+    /// and only `turn.failed` ends the turn. Handling these as terminal
+    /// settled the UI — and killed the CLI — on the first reconnect, so the
+    /// turn died at 1/5 instead of continuing to completion.
+    #[test]
+    fn reconnect_notice_is_non_terminal() {
+        let line = r#"{"type":"error","message":"Reconnecting... 1/5 (stream disconnected before completion: stream closed before response.completed)"}"#;
+        match &parse(line)[..] {
+            [EngineEvent::Warn(text)] => assert!(text.starts_with("Reconnecting... 1/5")),
+            other => panic!("expected a non-terminal warn, got {other:?}"),
+        }
+    }
+
+    /// The bare error line codex emits right before `turn.failed` repeats the
+    /// final message; the terminal signal is the `turn.failed` event itself.
+    #[test]
+    fn turn_failed_is_the_terminal_error() {
+        // The retry notice must not settle the turn.
+        match &parse(
+            r#"{"type":"error","message":"unexpected status 401 Unauthorized: Incorrect API key provided: x."}"#,
+        )[..] {
+            [EngineEvent::Warn(_)] => {}
+            other => panic!("expected warn for the retry notice, got {other:?}"),
+        }
+        // turn.failed carries the terminal error text to the banner.
+        match &parse(
+            r#"{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Incorrect API key provided: x."}}"#,
+        )[..] {
+            [EngineEvent::Error(message)] => assert!(message.contains("401 Unauthorized")),
+            other => panic!("expected terminal error, got {other:?}"),
+        }
+    }
+
+    /// A successful turn after retries must still complete normally.
+    #[test]
+    fn turn_completed_after_retries_still_dones() {
+        let mut out = Vec::new();
+        CodexEngine.parse_line(
+            r#"{"type":"error","message":"Reconnecting... 2/5 (stream disconnected before completion: x)"}"#,
+            &mut out,
+        );
+        CodexEngine.parse_line(r#"{"type":"turn.completed","usage":null}"#, &mut out);
+        assert!(matches!(out[0], EngineEvent::Warn(_)));
+        assert!(matches!(out[1], EngineEvent::Done { .. }));
     }
 }

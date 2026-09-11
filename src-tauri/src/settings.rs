@@ -40,11 +40,18 @@ pub struct AppSettings {
     pub language: String,
     #[serde(default)]
     pub default_models: HashMap<String, String>,
+    /// Per-engine user-added custom model ids, merged into the chat model
+    /// picker alongside the CLI's catalog (设置 → CLI → 自定义模型).
+    #[serde(default)]
+    pub custom_models: HashMap<String, Vec<String>>,
     #[serde(default)]
     pub default_efforts: HashMap<String, String>,
     /// Per-app OMP OpenAI tier override; None preserves native CLI settings.
     #[serde(default)]
     pub omp_openai_service_tier: Option<String>,
+    /// Per-app Codex Fast override (`service_tier`); None preserves ~/.codex.
+    #[serde(default)]
+    pub codex_service_tier: Option<String>,
     /// Max sessions shown per workspace in the sidebar before collapsing
     /// behind a "show more" row.
     #[serde(default = "default_sidebar_thread_limit")]
@@ -104,8 +111,10 @@ impl Default for AppSettings {
             archived_workspaces: Vec::new(),
             language: default_language(),
             default_models: HashMap::new(),
+            custom_models: HashMap::new(),
             default_efforts: HashMap::new(),
             omp_openai_service_tier: None,
+            codex_service_tier: None,
             sidebar_thread_limit: default_sidebar_thread_limit(),
             composer_send_shortcut: default_composer_send_shortcut(),
             terminal_shell_path: None,
@@ -368,19 +377,31 @@ fn import_legacy_groups_from(
     Ok(())
 }
 
+use tauri::Emitter;
+
 #[tauri::command]
 pub fn get_app_settings() -> Result<AppSettings, String> {
     read_settings()
 }
 
 #[tauri::command]
-pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
+pub fn update_app_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    mut settings: AppSettings,
+) -> Result<(), String> {
     if settings
         .omp_openai_service_tier
         .as_deref()
         .is_some_and(|tier| !matches!(tier, "default" | "priority"))
     {
         return Err("Invalid OMP OpenAI service tier".to_string());
+    }
+    if settings
+        .codex_service_tier
+        .as_deref()
+        .is_some_and(|tier| !matches!(tier, "default" | "priority"))
+    {
+        return Err("Invalid Codex service tier".to_string());
     }
     // Reject only the offending bin-override fields: the rest of the settings
     // still persist, and the error names what was dropped.
@@ -419,6 +440,9 @@ pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
     atomic_write(&path, &content)?;
     // Apply to this process's env so the next spawned child inherits it.
     crate::proxy::apply_app_proxy_settings(&settings)?;
+    // Other surfaces (the composer's proxy toggle) follow along without
+    // re-reading settings.json.
+    let _ = app.emit("settings://changed", ());
     if rejected.is_empty() {
         Ok(())
     } else {
@@ -608,4 +632,22 @@ mod tests {
         .unwrap();
         assert!(!scratch.path("settings.json").exists());
     }
+}
+#[tauri::command]
+pub fn set_window_theme(
+    app: tauri::AppHandle,
+    dark: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::{Manager, Theme};
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_theme(Some(if dark {
+                Theme::Dark
+            } else {
+                Theme::Light
+            }));
+        }
+    }
+    Ok(())
 }

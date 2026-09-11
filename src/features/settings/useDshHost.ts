@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { ipc, type AppSettings, type DshCliVersion, type DshHostStatus } from "@/lib/ipc";
+import { ipc, type AppSettings, type DshHostStatus } from "@/lib/ipc";
 import { pickFile } from "@/lib/platform";
+import { useCliUpdateFlow, type CliUpdateFlow } from "./useCliUpdateFlow";
+import { useCliVersionStatus } from "./useCliVersionStatus";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 3080;
@@ -16,7 +18,6 @@ export interface DshHostSectionState {
   t: TFunction;
   status: DshHostStatus | null;
   probeError: string | null;
-  cli: DshCliVersion | null;
   cliError: string | null;
   saveError: string | null;
   checking: boolean;
@@ -37,10 +38,10 @@ export interface DshHostSectionState {
   dshBin: string;
   hostState: HostState;
   refreshStatus: (manual?: boolean) => Promise<void>;
-  refreshCli: () => Promise<void>;
   start: () => Promise<void>;
   stop: () => Promise<void>;
   updateCli: () => Promise<void>;
+  updateFlow: CliUpdateFlow;
   save: (patch: Partial<AppSettings>) => Promise<void>;
   commitHost: () => void;
   commitPort: () => void;
@@ -149,40 +150,6 @@ function useDshHostProbe() {
   };
 }
 
-/** CLI version probe + install/update action. */
-function useDshCli(refreshStatus: () => Promise<void>) {
-  const [cli, setCli] = useState<DshCliVersion | null>(null);
-  const [cliError, setCliError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
-
-  const refreshCli = useCallback(async () => {
-    try {
-      setCli(await ipc.dshCliVersion());
-      setCliError(null);
-    } catch (e) {
-      setCliError(String(e));
-    }
-  }, []);
-
-  const updateCli = useCallback(async () => {
-    setUpdating(true);
-    try {
-      await ipc.dshCliUpdate();
-      await Promise.all([refreshCli(), refreshStatus()]);
-    } catch (e) {
-      setCliError(String(e));
-    } finally {
-      setUpdating(false);
-    }
-  }, [refreshCli, refreshStatus]);
-
-  useEffect(() => {
-    void refreshCli();
-  }, [refreshCli]);
-
-  return { cli, cliError, updating, refreshCli, updateCli };
-}
-
 /**
  * App-settings snapshot + save funnel. Read-modify-write (same funnel as
  * GeneralSection): the local snapshot descends from a mount-time read, so
@@ -263,13 +230,25 @@ function useDshConnectionForm({
 export function useDshHost(): DshHostSectionState {
   const { t } = useTranslation();
   const probe = useDshHostProbe();
-  const cli = useDshCli(probe.refreshStatus);
   const { settings, saveError, save } = useDshSettings();
+  // Install CTA for the "CLI missing" host state; the version display lives
+  // in the CLI 管理 page header, both backed by the same session store. The
+  // CTA opens the confirm-plan dialog and streams the install log there.
+  const { updating } = useCliVersionStatus("dsh");
+  const [cliError, setCliError] = useState<string | null>(null);
+  const updateFlow = useCliUpdateFlow("dsh", {
+    onSuccess: () => {
+      setCliError(null);
+      void probe.refreshStatus();
+    },
+    onError: setCliError,
+  });
+  const updateCli = updateFlow.begin;
   const view = deriveDshView(probe.status, settings, probe.probeError, {
     checking: probe.checking,
     starting: probe.starting,
     stopping: probe.stopping,
-    updating: cli.updating,
+    updating,
   });
   const form = useDshConnectionForm({
     t,
@@ -279,5 +258,5 @@ export function useDshHost(): DshHostSectionState {
     refreshStatus: probe.refreshStatus,
   });
 
-  return { t, ...probe, ...cli, saveError, save, ...view, ...form };
+  return { t, ...probe, cliError, updating, updateCli, updateFlow, saveError, save, ...view, ...form };
 }

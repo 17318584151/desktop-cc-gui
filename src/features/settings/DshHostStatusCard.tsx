@@ -4,6 +4,7 @@ import { Button } from "@/components/base/buttons/button";
 import type { DshHostStatus } from "@/lib/ipc";
 import { openExternal } from "@/lib/platform";
 import { cx } from "@/utils/cx";
+import { CliUpdateDialog } from "./CliUpdateDialog";
 import type { DshHostSectionState, HostState } from "./useDshHost";
 
 const DOT_CLASS: Record<HostState, string> = {
@@ -107,7 +108,7 @@ function HostActions({
       return (
         <>
           <Button size="small" disabled={actionBusy} onClick={() => void updateCli()}>
-            {updating ? t("settings.dshUpdating") : t("settings.dshInstall")}
+            {updating ? t("settings.cliUpdating") : t("settings.cliInstall")}
           </Button>
           {recheck}
         </>
@@ -169,6 +170,7 @@ export function DshHostStatusCard({ dsh }: { dsh: DshHostSectionState }) {
           <HostActions dsh={dsh} statusTitle={statusTitle} />
         </div>
       </div>
+      <CliUpdateDialog engine="dsh" flow={dsh.updateFlow} />
     </div>
   );
 }

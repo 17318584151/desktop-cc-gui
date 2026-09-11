@@ -113,14 +113,18 @@ function formatMessageTime(ts: string | null | undefined): string | null {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
 }
 
-/** Compact token usage for one message: "↑3.2k ↓412". */
+/** Compact token usage for one message: "↑3.2k ↓412". Input is the whole
+ *  prompt side — fresh tokens plus cache reads/writes — so a cache-heavy turn
+ *  does not read as if it had sent almost nothing. */
 function formatUsage(usage: unknown): string | null {
   const u = parseUsage(usage);
-  if (!u || (!u.input && !u.output)) return null;
+  if (!u) return null;
+  const input = u.input + u.cacheRead + u.cacheWrite;
+  if (!input && !u.output) return null;
   const fmt = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n);
   const parts: string[] = [];
-  if (u.input) parts.push(`↑${fmt(u.input)}`);
+  if (input) parts.push(`↑${fmt(input)}`);
   if (u.output) parts.push(`↓${fmt(u.output)}`);
   return parts.join(" ");
 }
@@ -184,6 +188,30 @@ function MessageActions({ text }: { text: string }) {
   );
 }
 
+/** Copy affordance for a user bubble: icon only, no chrome, sitting at the
+ *  bubble's left edge. Mirrors the assistant row's hover-reveal so a settled
+ *  conversation stays clean, and stays reachable by keyboard. */
+function UserMessageCopy({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const { copied, copy } = useCopied();
+  if (!text.trim()) return null;
+  return (
+    <button
+      type="button"
+      aria-label={t("chat.copy")}
+      title={t("chat.copy")}
+      onClick={() => copy(text)}
+      className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-transparent text-foreground-icon-secondary opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground-icon-primary"
+    >
+      {copied ? (
+        <Check className="size-3.5 text-lime-500" aria-hidden />
+      ) : (
+        <Copy className="size-3.5" aria-hidden />
+      )}
+    </button>
+  );
+}
+
 const MessageRow = memo(function MessageRow({
   message,
   workspacePath,
@@ -204,11 +232,14 @@ const MessageRow = memo(function MessageRow({
   }
   if (message.role === "user") {
     return (
-      <div className="-mr-1.5 ml-auto flex w-fit max-w-[85%] flex-col rounded-xl bg-bubble-user px-3.5 py-2.5 text-left text-body-regular whitespace-pre-wrap break-words text-text-white">
-        {message.images && message.images.length > 0 && (
-          <MessageImages images={message.images} />
-        )}
-        {message.text}
+      <div className="group -mr-1.5 ml-auto flex w-fit max-w-[85%] items-center gap-1">
+        <UserMessageCopy text={message.text} />
+        <div className="flex flex-col rounded-xl bg-bubble-user px-3.5 py-2.5 text-left text-body-regular whitespace-pre-wrap break-words text-text-white">
+          {message.images && message.images.length > 0 && (
+            <MessageImages images={message.images} />
+          )}
+          {message.text}
+        </div>
       </div>
     );
   }
@@ -330,6 +361,16 @@ export const MessageTimeline = memo(function MessageTimeline({
     return t("chat.metaEffort", { effort: effortVal });
   }, [activeEffort, t]);
 
+  // Tokens the reply in flight has spent, in the same "↑in ↓out" shape the
+  // settled rows use. `turnUsage` is the run's reports summed (omp per
+  // message, codex token_count); engines that report only at the end have
+  // nothing until they do. Nothing is estimated from streamed text, so the
+  // number is always real.
+  const liveUsage = useMemo(
+    () => formatUsage(session.turnUsage ?? session.usage),
+    [session.turnUsage, session.usage],
+  );
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <MessageAnchorRail
@@ -381,6 +422,7 @@ export const MessageTimeline = memo(function MessageTimeline({
                     durationFormatter={(d) => t("chat.metaDuration", { duration: d })}
                     model={activeModelFormatted}
                     effort={activeEffortFormatted}
+                    usage={liveUsage}
                   />
                 ) : (
                   <TimelineRowView

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import GitMerge from "lucide-react/dist/esm/icons/git-merge";
+import Globe from "lucide-react/dist/esm/icons/globe";
 import {
   Button as AriaButton,
   Dialog as AriaDialog,
@@ -31,6 +32,7 @@ import { ComposerResizeHandle } from "@/components/application/ai-chat/composer-
 import { ComposerEditable } from "@/components/application/ai-chat/composer-editable";
 import { ComposerToolbar } from "@/components/application/ai-chat/composer-toolbar";
 import { useMentionPicker } from "@/components/application/ai-chat/use-mention-picker";
+import { useSlashPicker } from "@/components/application/ai-chat/use-slash-picker";
 import { useResizableComposer } from "@/components/application/ai-chat/use-resizable-composer";
 import {
   FILE_TAG_CLASS,
@@ -44,7 +46,12 @@ import {
   setCaretOffset,
 } from "@/components/application/ai-chat/file-tags";
 import { FileMentionMenu } from "@/components/application/ai-chat/file-mention-menu";
+import { SlashCommandMenu } from "@/components/application/ai-chat/slash-command-menu";
+import { findSlashTrigger } from "@/components/application/ai-chat/slash-commands";
 import { type MentionEntry } from "@/components/application/ai-chat/mention-files";
+import { ipc, type SlashCommandEntry } from "@/lib/ipc";
+import { listenSettingsChanged } from "@/lib/events";
+import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { joinPath } from "@/features/files/store";
 import {
   usePromptCompletion,
@@ -66,6 +73,9 @@ export interface ComposerInputHandle {
   focus: () => void;
   /** Insert plain text at the caret; `@/abs/path` mentions render as chips. */
   insertText: (text: string) => void;
+  /** Focus the field and open the `/` picker, appending a line-start `/`
+   *  when the caret is not already inside a slash trigger. */
+  openSlashPicker: () => void;
 }
 
 export interface ComposerProps {
@@ -140,6 +150,17 @@ export function Composer({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const { mention, setMention, mentionMenuRef, updateMentionTrigger } =
     useMentionPicker({ editableRef, wrapperRef, workspacePath, value, lastEmittedRef });
+  // `/` command picker: same trigger-tracking model as the mention picker.
+  const { slash, setSlash, slashMenuRef, updateSlashTrigger } =
+    useSlashPicker({ editableRef, wrapperRef, workspacePath, value, lastEmittedRef });
+
+  // One detection pass per input, `/` first (desktop-cc-gui parity: a
+  // line-start slash owns the completion surface; `@` inside a slash query
+  // must not open the file picker on top of it).
+  const updateTriggers = useCallback(() => {
+    if (updateSlashTrigger()) setMention(null);
+    else updateMentionTrigger();
+  }, [updateSlashTrigger, updateMentionTrigger, setMention]);
 
   const emitChange = useCallback(() => {
     const el = editableRef.current;
@@ -185,6 +206,36 @@ export function Composer({
       syncTags();
     },
     [workspacePath, emitChange, syncTags, setMention],
+  );
+  /** Replace the active `/query` trigger with the picked command
+   *  (+ trailing space). Plain text, no chip: the CLI expands `/name args`
+   *  itself when the prompt is sent. */
+  const handleSlashSelect = useCallback(
+    (entry: SlashCommandEntry) => {
+      const el = editableRef.current;
+      if (!el) return;
+      setSlash(null);
+      const token = `/${entry.name} `;
+      const caret = getCaretOffset(el);
+      const text = extractText(el);
+      // Recompute the trigger at select time — the caret may have moved
+      // since the menu last sampled it.
+      const trigger = caret >= 0 ? findSlashTrigger(text, caret) : null;
+      el.focus();
+      if (!trigger) {
+        insertTextAtCaret(el, token);
+      } else {
+        el.innerHTML = htmlFromText(
+          text.slice(0, trigger.start) +
+            token +
+            text.slice(trigger.start + 1 + trigger.query.length),
+        );
+        setCaretOffset(el, trigger.start + token.length);
+      }
+      emitChange();
+      syncTags();
+    },
+    [emitChange, syncTags, setSlash],
   );
   // Ghost-text completion from prompt history (desktop-cc-gui parity):
   // suffix is painted via data-completion-suffix and accepted with Tab.
@@ -234,12 +285,32 @@ export function Composer({
         emitChange();
         syncTags();
       },
+      openSlashPicker: () => {
+        const el = editableRef.current;
+        if (!el) return;
+        el.focus();
+        // Append at the end: the trigger regex only accepts a line-start
+        // `/`, so an arbitrary caret position mid-line could not open the
+        // picker anyway.
+        const text = extractText(el);
+        setCaretOffset(el, text.length);
+        if (!findSlashTrigger(text, text.length)) {
+          insertTextAtCaret(el, text === "" || text.endsWith("\n") ? "/" : "\n/");
+        }
+        emitChange();
+        syncTags();
+        updateSlashTrigger();
+        // react-aria restores focus to the popover trigger when the add
+        // menu unmounts — after our focus() above. Reclaim the field so
+        // typing reaches it once the picker is open.
+        requestAnimationFrame(() => editableRef.current?.focus());
+      },
     };
     inputRef.current = handle;
     return () => {
       if (inputRef.current === handle) inputRef.current = null;
     };
-  }, [inputRef, emitChange, syncTags]);
+  }, [inputRef, emitChange, syncTags, updateSlashTrigger]);
 
   // Chip × removal via delegation (chips are raw DOM, not React).
   useEffect(() => {
@@ -284,23 +355,35 @@ export function Composer({
           menuRef={mentionMenuRef}
         />
       )}
+      {!isCollapsed && slash && workspacePath && (
+        <SlashCommandMenu
+          root={workspacePath}
+          query={slash.query}
+          left={slash.left}
+          onSelect={handleSlashSelect}
+          onClose={() => setSlash(null)}
+          menuRef={slashMenuRef}
+        />
+      )}
 
       {!isCollapsed && (
         <ComposerEditable
           editableRef={editableRef}
           sendShortcut={sendShortcut}
           mentionOpen={mention != null}
+          slashOpen={slash != null}
           completionSuffix={completion.suffix}
           acceptCompletion={completion.accept}
           setEditableText={setEditableText}
           handleHistoryKeyDown={handleHistoryKeyDown}
           mentionMenuRef={mentionMenuRef}
+          slashMenuRef={slashMenuRef}
           isComposingRef={isComposingRef}
           lastCompositionEndTimeRef={lastCompositionEndTimeRef}
           setIsComposing={setIsComposing}
           emitChange={emitChange}
           syncTags={syncTags}
-          updateMentionTrigger={updateMentionTrigger}
+          updateTriggers={updateTriggers}
           disabled={disabled}
           onSubmit={onSubmit}
           onPasteImages={onPasteImages}
@@ -334,6 +417,65 @@ const CONTEXT_POPOVER_CLASSES = cx(
 
 const EMPTY_LIMITS: UsageLimit[] = [];
 const EMPTY_PLAN = "";
+
+/**
+ * One-click network-proxy switch for the composer footer: the glyph carries
+ * the state (dim = off, green = on) and the click persists `systemProxyEnabled`
+ * through the same read-modify-write funnel the settings page uses, so the two
+ * surfaces can never clobber each other.
+ */
+function ProxyQuickToggle() {
+  const { t } = useTranslation();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const read = useCallback(() => {
+    void ipc
+      .getAppSettings()
+      .then((s) => setEnabled(s.systemProxyEnabled ?? false))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => read(), [read]);
+  // The settings page (desktop or phone) writes the same field.
+  useTauriEvent(() => listenSettingsChanged(read));
+
+  const toggle = useCallback(async () => {
+    if (busy || enabled === null) return;
+    setBusy(true);
+    try {
+      const latest = await ipc.getAppSettings();
+      const next = !(latest.systemProxyEnabled ?? false);
+      await ipc.updateAppSettings({ ...latest, systemProxyEnabled: next });
+      setEnabled(next);
+    } catch {
+      // Persist failed (e.g. the proxy URL is empty): keep the old glyph, the
+      // settings page is where the reason is shown.
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, enabled]);
+
+  if (enabled === null) return null;
+  const label = enabled ? t("chat.proxyOn") : t("chat.proxyOff");
+  // Mirror the context-meter button exactly: react-aria AriaButton, the same
+  // shape/focus classes, colour carries the state. That control never shows
+  // a stray circle, so this one should not either.
+  return (
+    <AriaButton
+      aria-label={label}
+      aria-pressed={enabled}
+      isDisabled={busy}
+      onPress={() => void toggle()}
+      className={cx(
+        "flex cursor-pointer items-center rounded-full p-1.5 outline-none transition-colors duration-150 ease focus-visible:ring-2 focus-visible:ring-border-focus-ring",
+        enabled ? "text-notification-success-foreground" : "text-foreground-icon-tertiary",
+      )}
+    >
+      <Globe className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+    </AriaButton>
+  );
+}
 
 /** 16px circular context meter at `pct` percent. */
 function ContextRing({ pct }: { pct: number }) {
@@ -452,6 +594,7 @@ export function StatusBar({
           ))}
       </div>
       <div className="flex items-center gap-3">
+        <ProxyQuickToggle />
         {/* Context meter is always on: 0% until the first usage report. */}
         <AriaDialogTrigger
           isOpen={contextOpen}

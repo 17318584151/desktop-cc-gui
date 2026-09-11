@@ -1,3 +1,4 @@
+import { useState } from "react";
 import Plus from "lucide-react/dist/esm/icons/plus";
 import { Button } from "@/components/base/buttons/button";
 import {
@@ -9,6 +10,7 @@ import { ipc } from "@/lib/ipc";
 import { PSEUDO_LOCAL, type EngineId } from "./providers";
 import { ChannelRow } from "./CliChannelRow";
 import { CliEngineCard } from "./CliEngineCard";
+import { CliEngineSettingsCard } from "./CliEngineSettingsCard";
 import { CliImportMenu } from "./CliImportMenu";
 import { CliSyncBanner } from "./CliSyncBanner";
 import { DshHostSection } from "./DshHostSection";
@@ -21,10 +23,14 @@ const CCS_IMPORT_ENGINES: readonly EngineId[] = ["claude", "codex", "grok"];
 /**
  * The loaded CLI config UI:
  *   cc-switch sync banner (when the store changed)
- *   → 引擎设置 card (enable switch + 官方配置 row)
- *   → DSH local host section (dsh only)
- *   → 供应商渠道 card (avatar/switch/⋯-menu rows + drag sorting)
- *   → empty state.
+ *   → 引擎设置 card (enable switch)
+ *   → everything below the switch lives in one overlay wrapper so a disabled
+ *     engine masks all of it:
+ *       官方配置 fallback row
+ *       → Pi-family auth section (pi/omp only)
+ *       → DSH local host section (dsh only)
+ *       → 供应商渠道 card (avatar/switch/⋯-menu rows + drag sorting)
+ *       → empty state.
  */
 export function CliConfigBody({ cli }: { cli: CliConfigState }) {
   const {
@@ -33,19 +39,20 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
     ccStatus,
     busy,
     enabled,
-    officialActive,
     entries,
     currentId,
-    health,
     mutate,
     requestActivate,
     setDialog,
     setPendingDelete,
-    testConnection,
     syncCcSwitch,
     importCcSwitchFile,
     dismissCcSwitch,
   } = cli;
+  // pi/omp official files are never cc-gui-managed: their 编辑 entry opens
+  // the models.json/models.yml editor already living in the auth section.
+  const [customEditorSignal, setCustomEditorSignal] = useState(0);
+
   return (
     <>
       {ccStatus?.changed && (
@@ -60,43 +67,51 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
       <CliEngineCard
         engine={engine}
         enabled={enabled}
-        officialActive={officialActive}
         busy={busy}
         onToggleEnabled={(on) => void mutate(() => ipc.setEngineEnabled(engine, on))}
-        onActivateOfficial={() => requestActivate(PSEUDO_LOCAL)}
       />
 
-      {(engine === "pi" || engine === "omp") && <PiFamilyAuthSection engine={engine} />}
-      {engine === "dsh" && <DshHostSection />}
+      <div className="relative flex w-full flex-col gap-6">
+        <CliEngineSettingsCard
+          cli={cli}
+          onEditOfficial={() => {
+            if (engine === "pi" || engine === "omp") setCustomEditorSignal((n) => n + 1);
+            else cli.setOfficialEditing(true);
+          }}
+        />
 
-      <div className="flex w-full flex-col gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <SettingsSectionLabel>
-            {t("settings.cliChannels")}
-            <span className="ml-2 text-body-2-regular font-normal text-text-tertiary">
-              {t("settings.cliChannelsHint")}
-            </span>
-          </SettingsSectionLabel>
-          <div className="flex shrink-0 items-center gap-2">
-            {CCS_IMPORT_ENGINES.includes(engine) && (
-              <CliImportMenu
-                busy={busy}
-                onSyncAuto={() => void syncCcSwitch(engine)}
-                onImportFile={() => void importCcSwitchFile()}
-              />
-            )}
-            <Button
-              size="small"
-              leadingIcon={Plus}
-              disabled={busy}
-              onClick={() => setDialog({})}
-            >
-              {t("settings.cliDialogAdd")}
-            </Button>
+        {(engine === "pi" || engine === "omp") && (
+          <PiFamilyAuthSection engine={engine} openCustomEditorSignal={customEditorSignal} />
+        )}
+        {engine === "dsh" && <DshHostSection />}
+
+        <div className="flex w-full flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <SettingsSectionLabel>
+              {t("settings.cliChannels")}
+              <span className="ml-2 text-body-2-regular font-normal text-text-tertiary">
+                {t("settings.cliChannelsHint")}
+              </span>
+            </SettingsSectionLabel>
+            <div className="flex shrink-0 items-center gap-2">
+              {CCS_IMPORT_ENGINES.includes(engine) && (
+                <CliImportMenu
+                  busy={busy}
+                  onSyncAuto={() => void syncCcSwitch(engine)}
+                  onImportFile={() => void importCcSwitchFile()}
+                />
+              )}
+              <Button
+                size="small"
+                leadingIcon={Plus}
+                disabled={busy}
+                onClick={() => setDialog({})}
+              >
+                {t("settings.cliDialogAdd")}
+              </Button>
+            </div>
           </div>
-        </div>
 
-        <div className="relative">
           <SettingsCard>
             <WorkspaceSortableList
               items={entries}
@@ -106,13 +121,11 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
                   engine={engine}
                   entry={entry}
                   current={currentId === entry.id}
-                  health={health[`${engine}:${entry.id}`] ?? { state: "idle" }}
                   busy={busy}
                   drag={drag}
                   onToggle={(on) => requestActivate(on ? entry.id : PSEUDO_LOCAL)}
                   onEdit={() => setDialog({ entry })}
                   onDelete={() => setPendingDelete(entry)}
-                  onTest={() => void testConnection(entry)}
                 />
               )}
             />
@@ -128,15 +141,15 @@ export function CliConfigBody({ cli }: { cli: CliConfigState }) {
               </p>
             </div>
           )}
-
-          {!enabled && (
-            <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background-primary-default/70 backdrop-blur-[1px]">
-              <p className="rounded-xl border border-border-button-default bg-background-primary-default px-4 py-2 text-body-2-medium text-text-secondary shadow-sm">
-                {t("settings.cliDisabledOverlay")}
-              </p>
-            </div>
-          )}
         </div>
+
+        {!enabled && (
+          <div className="absolute inset-0 z-10 flex items-start justify-center rounded-2xl bg-background-primary-default/70 pt-10 backdrop-blur-[1px]">
+            <p className="rounded-xl border border-border-button-default bg-background-primary-default px-4 py-2 text-body-2-medium text-text-secondary shadow-sm">
+              {t("settings.cliDisabledOverlay")}
+            </p>
+          </div>
+        )}
       </div>
     </>
   );
