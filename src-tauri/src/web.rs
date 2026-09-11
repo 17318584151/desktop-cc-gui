@@ -259,19 +259,6 @@ enum Gate {
     Waiting(Response),
 }
 
-fn waiting_response(html: String, device: &str, first_seen: bool) -> Response {
-    let cookie = format!("{DEVICE_COOKIE}={device}; Path=/; Max-Age=31536000; SameSite=Lax");
-    let mut builder = Response::builder()
-        .status(StatusCode::FORBIDDEN)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8");
-    if first_seen {
-        builder = builder.header(header::SET_COOKIE, cookie);
-    }
-    builder
-        .body(axum::body::Body::from(html))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
 /// Every entry point asks this before doing work. With the switch off the
 /// LAN behaves as it always did (the token URL is the only thing needed);
 /// with it on, an unknown browser gets the key page and is remembered once
