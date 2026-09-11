@@ -11,14 +11,18 @@ import {
   moveStreamingFlag,
   patchSession,
   resolveSessionModel,
+  routeRun,
   runRouting,
   scheduleDeltaFlush,
   setStreamingFlag,
   settleLiveRows,
+  touchRun,
+  untrackRun,
   updatePendingStreamModel,
 } from "./stream";
 import type { ChatStore } from "../store";
-import { mergeUsage } from "../usage";
+import { mergeUsage, parseUsage, type ParsedUsage } from "../usage";
+import { usageTrackingEnabled } from "@/features/settings/usage-tracking";
 
 /**
  * Engine-event handling: the main loop resolves each event's session key and
@@ -260,7 +264,7 @@ function onSession(
   const workspacePath =
     tab?.workspacePath ?? deps.get().active?.workspacePath ?? "";
   const newKey = sessionKey(event.engine, nativeId, workspacePath);
-  runRouting.set(event.runId, newKey);
+  settleOrphanedRuns(deps.set, routeRun(event.runId, newKey));
   // Unflushed stream chunks sit under the pre-migration key; move them too.
   migratePendingStream(key, newKey);
   // Migrate pending key -> native key.
@@ -323,12 +327,129 @@ function onSession(
   );
 }
 
+/** Runs whose turn already wrote ledger rows report by report. Every report
+ *  is one model response, so each lands in the ledger the moment it arrives —
+ *  a codex turn that chats for an hour has to show up while it runs, not when
+ *  it ends — and `done` must not write the same tokens again. */
+const liveLedgerRuns = new Set<string>();
+
+/** Running token totals for the reply in flight, keyed by run. `usage` keeps
+ *  the newest report (the context meter needs occupancy, not a sum), while
+ *  the tail indicator and the settled row show this total: what the reply has
+ *  spent so far. Claude reports nothing until the end, so it never appears. */
+const turnUsageTotals = new Map<string, ParsedUsage>();
+/** Drop a run's usage bookkeeping (settled, interrupted, or swept). */
+export function dropRunUsage(runId: string) {
+  turnUsageTotals.delete(runId);
+  liveLedgerRuns.delete(runId);
+}
+
+/** Drop every trace of runs the orphan sweep reaped: their usage maps here
+ * and the session's stuck streaming state in the store — a dead run's
+ * done/error never arrives to clear them. */
+export function settleOrphanedRuns(
+  set: (fn: (s: ChatStore) => Partial<ChatStore>) => void,
+  orphaned: Array<[string, string]>,
+) {
+  if (orphaned.length === 0) return;
+  for (const [runId] of orphaned) dropRunUsage(runId);
+  set((s) => {
+    let streamingByKey = s.streamingByKey;
+    let bySession = s.bySession;
+    for (const [, key] of orphaned) {
+      streamingByKey = setStreamingFlag(streamingByKey, key, false);
+      const cur = bySession[key];
+      if (cur?.streaming) {
+        if (bySession === s.bySession) bySession = { ...s.bySession };
+        bySession[key] = { ...cur, streaming: false, turnStartedAt: null };
+      }
+    }
+    return { bySession, streamingByKey };
+  });
+}
+
 function onUsage(
   event: EngineEventPayload,
   key: string,
   deps: EngineEventDeps,
 ) {
-  patchSession(deps.set, key, { usage: event.data });
+  const parsed = parseUsage(event.data);
+  const totals = parsed ? addTurnUsage(event.runId, parsed) : null;
+  patchSession(deps.set, key, {
+    usage: event.data,
+    ...(totals ? { turnUsage: usageSnapshot(totals) } : {}),
+  });
+  if (parsed) recordUsageReport(deps, event, key, parsed);
+}
+
+/** Fold one report into its run's running total. */
+function addTurnUsage(runId: string, parsed: ParsedUsage): ParsedUsage {
+  const prev = turnUsageTotals.get(runId);
+  const totals: ParsedUsage = {
+    input: (prev?.input ?? 0) + parsed.input,
+    output: (prev?.output ?? 0) + parsed.output,
+    cacheRead: (prev?.cacheRead ?? 0) + parsed.cacheRead,
+    cacheWrite: (prev?.cacheWrite ?? 0) + parsed.cacheWrite,
+    total: 0,
+    // A later report may omit the window; the last one that reported it wins.
+    contextWindow: parsed.contextWindow ?? prev?.contextWindow,
+  };
+  totals.total = totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
+  turnUsageTotals.set(runId, totals);
+  return totals;
+}
+
+/** Engine-shaped snapshot of a running total: parseUsage reads it back, and
+ *  every consumer downstream (strip, row, breakdown) stays engine-agnostic. */
+function usageSnapshot(totals: ParsedUsage): Record<string, number> {
+  return {
+    input_tokens: totals.input,
+    output_tokens: totals.output,
+    cache_read_input_tokens: totals.cacheRead,
+    cache_creation_input_tokens: totals.cacheWrite,
+    ...(totals.contextWindow ? { model_context_window: totals.contextWindow } : {}),
+  };
+}
+
+/** Ledger one engine report (one request) as it arrives. */
+function recordUsageReport(
+  deps: EngineEventDeps,
+  event: EngineEventPayload,
+  key: string,
+  parsed: ParsedUsage,
+) {
+  if (!usageTrackingEnabled()) return;
+  liveLedgerRuns.add(event.runId);
+  writeUsageRow(deps, event, key, parsed, 1);
+}
+
+/** Shared writer: one ledger row for the run's model and session. */
+function writeUsageRow(
+  deps: EngineEventDeps,
+  event: EngineEventPayload,
+  key: string,
+  parsed: ParsedUsage,
+  reports: number,
+) {
+  const state = deps.get();
+  const tab = state.openTabs.find(
+    (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
+  );
+  void ipc
+    .usageRecord({
+      ts: Date.now(),
+      engine: event.engine,
+      model: stampedModel(deps, event.engine, key),
+      sessionId: event.sessionId ?? tab?.sessionId ?? null,
+      workspacePath: tab?.workspacePath ?? state.active?.workspacePath ?? null,
+      input: parsed.input,
+      output: parsed.output,
+      cacheRead: parsed.cacheRead,
+      cacheWrite: parsed.cacheWrite,
+      reports,
+      durationMs: null,
+    })
+    .catch(() => {});
 }
 
 function onError(
@@ -375,13 +496,17 @@ function onError(
           error: event.data as string,
           streaming: false,
           turnStartedAt: null,
+          turnUsage: null,
         },
       },
       streamingByKey: setStreamingFlag(s.streamingByKey, key, false),
     };
   });
-  // The run is over: drop its routing entry so the map cannot grow forever.
+  // The run is over: drop its routing entry and usage bookkeeping so the
+  // maps cannot grow forever.
   runRouting.delete(event.runId);
+  untrackRun(event.runId);
+  dropRunUsage(event.runId);
   deps.markUnseenIfBackground(key);
 }
 
@@ -486,7 +611,16 @@ function onWarn(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
 function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   const prev = deps.get().bySession[key] ?? EMPTY_SESSION;
   const data = event.data as { usage: unknown };
-  const finalUsage = mergeUsage(data.usage, prev.usage);
+  // Occupancy for the context meter: the newest single report (claude's one
+  // payload already carries the turn's totals).
+  const settledUsage = mergeUsage(data.usage, prev.usage);
+  // The row tells the reader what the reply cost: every report of this run
+  // summed, which for a multi-request reply is more than its last request.
+  const turnTotals = turnUsageTotals.get(event.runId);
+  turnUsageTotals.delete(event.runId);
+  const finalUsage = turnTotals
+    ? mergeUsage(usageSnapshot(turnTotals), settledUsage)
+    : settledUsage;
   // Fold the turn's last unflushed chunks (the final sink batch can arrive
   // in the same frame as done), then settle every live row: the streamed
   // text the user watched arrive *is* the final message.
@@ -532,7 +666,8 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
           error: null,
           streaming: false,
           turnStartedAt: null,
-          usage: finalUsage,
+          usage: settledUsage,
+          turnUsage: null,
           interrupted: false,
         },
       },
@@ -541,6 +676,11 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   });
   // The run is over: drop its routing entry so the map cannot grow forever.
   runRouting.delete(event.runId);
+  untrackRun(event.runId);
+  // Ledger the turn's tokens now that it is settled: the same report that
+  // stamps the row above, so the usage page counts real engine numbers. The
+  // feature's own switch gates it (localStorage-backed, see usage-tracking.ts).
+  recordTurnUsage(deps, event, key, finalUsage);
   // Native file changed; refresh list cache in background.
   ipc.rescanSessions().catch(() => {});
   deps.markUnseenIfBackground(key);
@@ -559,6 +699,22 @@ function onDone(event: EngineEventPayload, key: string, deps: EngineEventDeps) {
   }
 }
 
+/** Ledger the turn's own report when it never reported live (claude sends one
+ *  usage payload, the turn's totals, on its result line). Turns that streamed
+ *  reports already have their rows. */
+function recordTurnUsage(
+  deps: EngineEventDeps,
+  event: EngineEventPayload,
+  key: string,
+  usage: unknown,
+) {
+  if (!usageTrackingEnabled()) return;
+  if (liveLedgerRuns.delete(event.runId)) return;
+  const parsed = parseUsage(usage);
+  if (!parsed) return;
+  writeUsageRow(deps, event, key, parsed, 1);
+}
+
 /** Resolve an event's session key (run routing, then session-id match) and
  * dispatch to the per-kind handler. */
 export function handleEngineEvents(
@@ -568,6 +724,7 @@ export function handleEngineEvents(
   for (const event of events) {
     const state = deps.get();
     let key = runRouting.get(event.runId);
+    if (key) touchRun(event.runId);
     if (!key && event.sessionId) {
       key = sessionKey(event.engine, event.sessionId, "");
       // sessionId-only key lacks workspace; find active match

@@ -18,6 +18,7 @@ import {
   type ActiveSession,
   type QueuedMessage,
 } from "../store";
+
 import { MessageTimeline } from "./MessageTimeline";
 import { ConversationFooter } from "./ConversationFooter";
 import { useBranchSwitcher } from "./use-branch-switcher";
@@ -108,6 +109,7 @@ function useConversationMenus({
   setOmpServiceTier,
   setCodexServiceTier,
   refreshModels,
+  loadingEngines,
 }: {
   engines: EngineInfo[];
   engineInfo: EngineInfo | undefined;
@@ -128,6 +130,7 @@ function useConversationMenus({
   setOmpServiceTier: (tier: OmpServiceTier) => Promise<void>;
   setCodexServiceTier: (tier: OmpServiceTier) => Promise<void>;
   refreshModels: () => Promise<void>;
+  loadingEngines: readonly string[];
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -195,6 +198,7 @@ function useConversationMenus({
           codexServiceTier={codexServiceTier}
           onCodexServiceTierChange={setCodexServiceTier}
           onRefreshModels={refreshModels}
+          loadingEngines={loadingEngines}
         />
       ),
     [
@@ -214,6 +218,7 @@ function useConversationMenus({
       codexServiceTier,
       setCodexServiceTier,
       refreshModels,
+      loadingEngines,
     ],
   );
   const permissionMenu = useMemo(
@@ -327,11 +332,6 @@ export const ChatConversation = memo(function ChatConversation({
     importImageFiles,
     dismissImageError,
   } = useComposerImages();
-  const {
-    catalogs,
-    modelsByEngine,
-    refresh: refreshModels,
-  } = useEngineModels(engines, models, pinModels);
 
   const { displayModels, displayEfforts } = useTabModelDisplay({
     active,
@@ -340,6 +340,17 @@ export const ChatConversation = memo(function ChatConversation({
     models,
     efforts,
   });
+
+  const {
+    catalogs,
+    modelsByEngine,
+    refresh: refreshModels,
+    pendingEngines,
+  } = useEngineModels(engines, models, pinModels);
+  const loadingEngines = useMemo(
+    () => Object.keys(pendingEngines),
+    [pendingEngines],
+  );
 
   // Conversation-reported window (Codex token_count) wins; catalog is only
   // a fallback for engines that never send one.
@@ -394,6 +405,7 @@ export const ChatConversation = memo(function ChatConversation({
       setOmpServiceTier,
       setCodexServiceTier,
       refreshModels,
+      loadingEngines,
     });
 
   return (

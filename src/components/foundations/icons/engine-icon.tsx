@@ -2,6 +2,18 @@ import { useId, type CSSProperties } from "react";
 import SquareTerminal from "lucide-react/dist/esm/icons/square-terminal";
 import claudeIcon from "@/assets/model-icons/claude.svg";
 import deepseekIcon from "@/assets/model-icons/deepseek.svg";
+import chatglmIcon from "@/assets/model-icons/chatglm.svg";
+import qwenIcon from "@/assets/model-icons/qwen.svg";
+import doubaoIcon from "@/assets/model-icons/doubao.svg";
+import minimaxIcon from "@/assets/model-icons/minimax.svg";
+import yiIcon from "@/assets/model-icons/yi.svg";
+import baichuanIcon from "@/assets/model-icons/baichuan.svg";
+import hunyuanIcon from "@/assets/model-icons/hunyuan.svg";
+import stepfunIcon from "@/assets/model-icons/stepfun.svg";
+import geminiIcon from "@/assets/model-icons/gemini.svg";
+import mistralIcon from "@/assets/model-icons/mistral.svg";
+import cohereIcon from "@/assets/model-icons/cohere.svg";
+import perplexityIcon from "@/assets/model-icons/perplexity.svg";
 
 /**
  * Per-CLI brand marks for the engine picker (ported from the previous
@@ -11,6 +23,21 @@ import deepseekIcon from "@/assets/model-icons/deepseek.svg";
  */
 
 export type EngineIconId =
+  /** Model vendors as well as CLIs: the picker and the usage page badge a
+   *  model with its vendor mark (GLM, Qwen, ...), falling back to a
+   *  monogram for vendors we ship no art for. */
+  | "chatglm"
+  | "qwen"
+  | "doubao"
+  | "minimax"
+  | "yi"
+  | "baichuan"
+  | "hunyuan"
+  | "stepfun"
+  | "gemini"
+  | "mistral"
+  | "cohere"
+  | "perplexity"
   | "claude"
   | "codex"
   | "grok"
@@ -102,6 +129,32 @@ function MonochromeGlyph({
   );
 }
 
+/** Static brand marks rendered as <img> (engine → asset + accessible label). */
+const RASTER_ICONS: Partial<Record<EngineIconId, { src: string; alt: string }>> = {
+  claude: { src: claudeIcon, alt: "Claude" },
+  chatglm: { src: chatglmIcon, alt: "GLM" },
+  qwen: { src: qwenIcon, alt: "Qwen" },
+  doubao: { src: doubaoIcon, alt: "Doubao" },
+  minimax: { src: minimaxIcon, alt: "MiniMax" },
+  yi: { src: yiIcon, alt: "Yi" },
+  baichuan: { src: baichuanIcon, alt: "Baichuan" },
+  hunyuan: { src: hunyuanIcon, alt: "Hunyuan" },
+  stepfun: { src: stepfunIcon, alt: "StepFun" },
+  gemini: { src: geminiIcon, alt: "Gemini" },
+  mistral: { src: mistralIcon, alt: "Mistral" },
+  cohere: { src: cohereIcon, alt: "Cohere" },
+  perplexity: { src: perplexityIcon, alt: "Perplexity" },
+  dsh: { src: deepseekIcon, alt: "DeepSeek Harness" },
+};
+
+/** Monochrome glyphs drawn from path data, following `currentColor`. */
+const MONOCHROME_ICONS: Partial<Record<EngineIconId, readonly string[]>> = {
+  codex: [OPENAI_ICON_PATH],
+  grok: GROK_ICON_PATHS,
+  kimi: KIMI_ICON_PATHS,
+  pi: PI_ICON_PATHS,
+};
+
 export function EngineIcon({ engine, size = 14, className, style }: EngineIconProps) {
   const iconStyle: CSSProperties = {
     width: size,
@@ -110,38 +163,21 @@ export function EngineIcon({ engine, size = 14, className, style }: EngineIconPr
     ...style,
   };
 
-  switch (engine) {
-    case "claude":
-      return (
-        <img src={claudeIcon} alt="Claude" className={className} style={iconStyle} aria-hidden />
-      );
-    case "codex":
-      return <MonochromeGlyph paths={[OPENAI_ICON_PATH]} size={size} className={className} style={style} />;
-    case "grok":
-      return <MonochromeGlyph paths={GROK_ICON_PATHS} size={size} className={className} style={style} />;
-    case "kimi":
-      return <MonochromeGlyph paths={KIMI_ICON_PATHS} size={size} className={className} style={style} />;
-    case "pi":
-      return <MonochromeGlyph paths={PI_ICON_PATHS} size={size} className={className} style={style} />;
-    case "omp":
-      return <OmpGlyph size={size} className={className} style={style} />;
-    case "dsh":
-      return (
-        <img
-          src={deepseekIcon}
-          alt="DeepSeek Harness"
-          className={className}
-          style={iconStyle}
-          aria-hidden
-        />
-      );
-    default:
-      return (
-        <SquareTerminal
-          className={className}
-          style={iconStyle}
-          aria-hidden
-        />
-      );
+  if (engine === "omp") {
+    return <OmpGlyph size={size} className={className} style={style} />;
   }
+
+  const raster = RASTER_ICONS[engine as EngineIconId];
+  if (raster) {
+    return (
+      <img src={raster.src} alt={raster.alt} className={className} style={iconStyle} aria-hidden />
+    );
+  }
+
+  const paths = MONOCHROME_ICONS[engine as EngineIconId];
+  if (paths) {
+    return <MonochromeGlyph paths={paths} size={size} className={className} style={style} />;
+  }
+
+  return <SquareTerminal className={className} style={iconStyle} aria-hidden />;
 }

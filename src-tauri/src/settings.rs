@@ -406,14 +406,23 @@ fn import_legacy_groups_from(
     Ok(())
 }
 
+use tauri::Emitter;
+
 #[tauri::command]
 pub fn get_app_settings() -> Result<AppSettings, String> {
     read_settings()
 }
 
 #[tauri::command]
-pub fn update_app_settings(mut settings: AppSettings) -> Result<(), String> {
-    persist_settings(&mut settings)
+pub fn update_app_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    mut settings: AppSettings,
+) -> Result<(), String> {
+    let result = persist_settings(&mut settings);
+    // Other surfaces (the composer's proxy toggle) follow along without
+    // re-reading settings.json.
+    let _ = app.emit("settings://changed", ());
+    result
 }
 
 /// Validate + persist + apply. Shared by the UI command and internal writers
@@ -685,4 +694,22 @@ mod tests {
         .unwrap();
         assert!(!scratch.path("settings.json").exists());
     }
+}
+#[tauri::command]
+pub fn set_window_theme(
+    app: tauri::AppHandle,
+    dark: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::{Manager, Theme};
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_theme(Some(if dark {
+                Theme::Dark
+            } else {
+                Theme::Light
+            }));
+        }
+    }
+    Ok(())
 }

@@ -30,6 +30,11 @@ export function listenEngineEvents(
 export function listenSessionsChanged(cb: () => void): Promise<UnlistenFn> {
   return listen("sessions://changed", () => cb());
 }
+
+/** Fired after a turn lands in the usage ledger; the page re-reads on it. */
+export function listenUsageChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("usage://changed", () => cb());
+}
 export interface ScanProgress {
   done: number;
   total: number;
@@ -51,7 +56,6 @@ export function listenRelay(cb: () => void): Promise<UnlistenFn> {
 export function listenWebDevices(cb: () => void): Promise<UnlistenFn> {
   return listen("web://devices", () => cb());
 }
-
 /** History-scan progress, throttled by the scanner (~50 updates per run). */
 export function listenScanProgress(cb: (p: ScanProgress) => void): Promise<UnlistenFn> {
   return listen<ScanProgress>("scan://progress", (e) => cb(e.payload));

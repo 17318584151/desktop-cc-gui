@@ -18,6 +18,7 @@ pub mod proxy;
 pub mod provider_files;
 pub mod provider_models;
 pub mod settings;
+pub mod usage;
 pub mod slash_commands;
 pub mod terminal;
 pub mod relay;
@@ -179,6 +180,7 @@ pub fn run() {
             // settings
             settings::get_app_settings,
             settings::update_app_settings,
+            settings::set_window_theme,
             // plugins
             plugins::plugin_list,
             plugins::plugin_install_from_path,
@@ -203,6 +205,9 @@ pub fn run() {
             engine::images::import_attachments,
             // history
             history::reader::list_sessions,
+            usage::usage_record,
+            usage::usage_summary,
+            usage::usage_clear,
             history::reader::load_session_page,
             history::reader::delete_session,
             history::reader::pin_session,

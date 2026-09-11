@@ -405,6 +405,21 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             last_seen_at INTEGER NOT NULL,
             approved_at INTEGER
         );
+        CREATE TABLE IF NOT EXISTS usage_ledger(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            engine TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            session_id TEXT,
+            workspace_path TEXT,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read INTEGER NOT NULL DEFAULT 0,
+            cache_write INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER,
+            reports INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_ledger_ts ON usage_ledger(ts);
         CREATE TABLE IF NOT EXISTS plugin_kv(
             plugin_id TEXT NOT NULL,
             key TEXT NOT NULL,
@@ -415,6 +430,18 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     // NB: no `cache_version` meta row — it was written but never read; cache
     // freshness is carried by the scanner's stat signature (see CACHE_VERSION).
+    // Additive migration: usage rows gained a per-turn request count.
+    let has_reports = conn
+        .prepare("PRAGMA table_info(usage_ledger)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name == "reports");
+    if !has_reports {
+        conn.execute(
+            "ALTER TABLE usage_ledger ADD COLUMN reports INTEGER NOT NULL DEFAULT 1",
+            [],
+        )?;
+    }
     // Additive migration: user-defined workspace order (drag reorder).
     let has_sort_order = conn
         .prepare("PRAGMA table_info(workspaces)")?
