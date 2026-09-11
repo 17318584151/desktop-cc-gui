@@ -344,6 +344,7 @@ fn unlock_page(device: &str, error: Option<&str>) -> String {
 <title>CC GUI 需要配对密钥</title>
 <style>
 :root{{color-scheme:dark}}
+*{{box-sizing:border-box}}
 body{{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
 background:#141414;color:#ebebeb;font:15px/1.6 -apple-system,system-ui,"Segoe UI",sans-serif}}
 .card{{width:320px;padding:26px 24px;border:1px solid #2c2c2c;border-radius:16px;background:#1b1b1b}}
@@ -385,6 +386,7 @@ fn waiting_page() -> String {
 <title>CC GUI 等待授权</title>
 <style>
 :root{color-scheme:dark}
+*{box-sizing:border-box}
 body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
 background:#141414;color:#ebebeb;font:15px/1.6 -apple-system,system-ui,"Segoe UI",sans-serif}
 .card{width:320px;padding:26px 24px;border:1px solid #2c2c2c;border-radius:16px;background:#1b1b1b}

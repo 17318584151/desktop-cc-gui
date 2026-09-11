@@ -102,6 +102,10 @@ enum AgentFrame {
     Data {
         id: u64,
         b64: String,
+        /// Lets the Worker hand the phone a text frame instead of bytes: the
+        /// app's JS client reads JSON, and a Blob used to be dropped.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<bool>,
     },
     Close {
         id: u64,
@@ -119,6 +123,11 @@ enum ClientFrame {
     Data {
         id: u64,
         b64: String,
+        /// Worker-side frame type. Absent from older Workers, which sent
+        /// everything as bytes; the bridge's protocol is JSON text, so an
+        /// absent flag is read as text.
+        #[serde(default)]
+        text: Option<bool>,
     },
     Close {
         id: u64,
@@ -139,7 +148,8 @@ struct PendingHttp {
 
 /// A live socket stream, with the handle needed to drop it on `close`.
 struct LiveSocket {
-    frames: mpsc::Sender<Vec<u8>>,
+    /// Frame bytes plus whether they are a text frame (see `spawn_socket`).
+    frames: mpsc::Sender<(Vec<u8>, bool)>,
     task: tokio::task::AbortHandle,
 }
 
@@ -809,10 +819,10 @@ async fn serve(
                     spawn_http(id, pending, port, out_tx.clone(), client.clone());
                 }
             }
-            AgentFrame::Data { id, b64 } => {
+            AgentFrame::Data { id, b64, text } => {
                 let sender = sockets.lock().unwrap().get(&id).map(|s| s.frames.clone());
                 if let Some(sender) = sender {
-                    let _ = sender.send(b64_to_bytes(&b64)).await;
+                    let _ = sender.send((b64_to_bytes(&b64), text.unwrap_or(true))).await;
                 }
             }
             AgentFrame::Close { id } => {
@@ -893,6 +903,7 @@ fn spawn_http(
                         &ClientFrame::Data {
                             id,
                             b64: bytes_to_b64(&bytes),
+                            text: None,
                         },
                     )
                     .await
@@ -926,7 +937,7 @@ fn spawn_socket(
     port: u16,
     out: mpsc::Sender<String>,
 ) -> LiveSocket {
-    let (frames_tx, mut frames_rx) = mpsc::channel::<Vec<u8>>(256);
+    let (frames_tx, mut frames_rx) = mpsc::channel::<(Vec<u8>, bool)>(256);
     let handle = tokio::spawn(async move {
         let target = format!("ws://127.0.0.1:{port}{path}");
         let Ok(mut request) = target.into_client_request() else {
@@ -980,8 +991,16 @@ fn spawn_socket(
         loop {
             tokio::select! {
                 frame = frames_rx.recv() => match frame {
-                    Some(bytes) => {
-                        if ws_tx.send(Message::Binary(bytes.into())).await.is_err() {
+                    Some((bytes, as_text)) => {
+                        // The bridge speaks JSON text; sending the phone's
+                        // frames as binary made its handler ignore every one of
+                        // them, which is why the web UI stayed empty.
+                        let message = if as_text {
+                            Message::Text(String::from_utf8_lossy(&bytes).into_owned().into())
+                        } else {
+                            Message::Binary(bytes.into())
+                        };
+                        if ws_tx.send(message).await.is_err() {
                             break;
                         }
                     }
@@ -994,7 +1013,7 @@ fn spawn_socket(
                     Some(Ok(Message::Binary(bytes))) => {
                         if send(
                             &out,
-                            &ClientFrame::Data { id, b64: bytes_to_b64(&bytes) },
+                            &ClientFrame::Data { id, b64: bytes_to_b64(&bytes), text: Some(false) },
                         )
                         .await
                         .is_err()
@@ -1005,7 +1024,7 @@ fn spawn_socket(
                     Some(Ok(Message::Text(text))) => {
                         if send(
                             &out,
-                            &ClientFrame::Data { id, b64: bytes_to_b64(text.as_bytes()) },
+                            &ClientFrame::Data { id, b64: bytes_to_b64(text.as_bytes()), text: Some(true) },
                         )
                         .await
                         .is_err()

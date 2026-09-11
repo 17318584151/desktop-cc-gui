@@ -159,7 +159,12 @@ export class Relay {
     this.streams.set(id, (kind, frame) => {
       if (kind === "data") {
         try {
-          server.send(bytesFromBase64(frame.b64));
+          // The app's client reads JSON; a frame the desktop sent as text must
+          // not turn into a Blob on the way (it used to, and every response was
+          // dropped).
+          const bytes = bytesFromBase64(frame.b64);
+          if (frame.text === false) server.send(bytes);
+          else server.send(new TextDecoder().decode(bytes));
         } catch {}
         return;
       }
@@ -175,8 +180,9 @@ export class Relay {
     this.send({ t: "open", id, ws: true, path, headers });
 
     server.addEventListener("message", (event) => {
-      const bytes = typeof event.data === "string" ? new TextEncoder().encode(event.data) : new Uint8Array(event.data);
-      this.send({ t: "data", id, b64: base64FromBytes(bytes) });
+      const isText = typeof event.data === "string";
+      const bytes = isText ? new TextEncoder().encode(event.data) : new Uint8Array(event.data);
+      this.send({ t: "data", id, b64: base64FromBytes(bytes), text: isText });
     });
     server.addEventListener("close", () => {
       this.streams.delete(id);

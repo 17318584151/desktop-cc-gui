@@ -130,7 +130,8 @@ Bun.serve({
       }
       // Phone socket: hand the desktop an open for it.
       streams.set(data.id, {
-        push: (bytes) => socket.send(bytes),
+        push: (bytes, asText) =>
+          socket.send(asText === false ? bytes : Buffer.from(bytes).toString("utf8")),
         ws: socket,
         end: () => socket.close(1012),
         fail: () => socket.close(1012),
@@ -146,15 +147,16 @@ Bun.serve({
         const stream = streams.get(frame.id);
         if (!stream) return;
         if (frame.t === "head") stream.head?.({ status: frame.status, headers: frame.headers ?? {} });
-        if (frame.t === "data") stream.push(bytesFromBase64(frame.b64));
+        if (frame.t === "data") stream.push(bytesFromBase64(frame.b64), frame.text);
         if (frame.t === "close") stream.end();
         if (frame.t === "error") stream.fail(frame.message ?? "relay error");
         return;
       }
       if (socket.readyState !== WebSocket.OPEN) return;
       // Phone → desktop.
-      const bytes = typeof message === "string" ? Buffer.from(message) : message;
-      send({ t: "data", id: data.id, b64: base64FromBytes(bytes) });
+      const isText = typeof message === "string";
+      const bytes = isText ? Buffer.from(message) : message;
+      send({ t: "data", id: data.id, b64: base64FromBytes(bytes), text: isText });
     },
     close(socket) {
       const data = socket.data;
