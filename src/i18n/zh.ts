@@ -298,7 +298,6 @@ export const zh = {
     webRelayStart: "连接中转",
     webRelayStateIdle: "未连接",
     webRelayStateLive: "已连接",
-    webRelayStateFailed: "连接失败",
     webRelayStop: "断开中转",
     webRelayUrl: "中转地址",
     webRelayKey: "中转密钥",

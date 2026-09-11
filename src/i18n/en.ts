@@ -313,7 +313,6 @@ export const en: Messages = {
     webRelayStart: "Connect relay",
     webRelayStateIdle: "Not connected",
     webRelayStateLive: "Connected",
-    webRelayStateFailed: "Connection failed",
     webRelayStop: "Disconnect relay",
     webRelayUrl: "Relay address",
     webRelayKey: "Relay key",

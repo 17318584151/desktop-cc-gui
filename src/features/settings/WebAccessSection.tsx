@@ -304,13 +304,25 @@ export function WebAccessSection() {
   }, [relayKey, t]);
 
   // Relay state dot: driven by the backend's own state, so a reconnect clears
-  // it by itself. (`relayError` is a local, sticky flag — folding it in here
-  // kept the dot red long after the relay had reconnected.)
+  // it by itself. (`relayError` is a local, sticky flag — folding it into the
+  // colour kept the dot red long after the relay had reconnected; it only
+  // serves as fallback text now.)
+  //
+  // The dot doubles as the error surface: relay failures run long ("IO error:
+  // 由于目标计算机积极拒绝，无法连接。 (os error 10061)") and an inline line
+  // would shove the whole card row up and down on every reconnect. Same
+  // pattern as the deploy status icon.
   const relayState = relay?.error
-    ? { dot: "bg-text-error-primary", label: t("settings.webRelayStateFailed") }
+    ? {
+        dot: "bg-text-error-primary",
+        text: `${t("settings.webRelayFailed")}: ${relay.error}`,
+      }
     : relay?.connected
-      ? { dot: "bg-[var(--color-status-unseen)]", label: t("settings.webRelayStateLive") }
-      : { dot: "bg-foreground-icon-tertiary", label: t("settings.webRelayStateIdle") };
+      ? { dot: "bg-[var(--color-status-unseen)]", text: t("settings.webRelayStateLive") }
+      : {
+          dot: "bg-foreground-icon-tertiary",
+          text: relayError || t("settings.webRelayStateIdle"),
+        };
 
   return (
     <div className="flex w-full flex-col gap-2">
@@ -464,14 +476,20 @@ export function WebAccessSection() {
           <SettingsRow
             label={t("settings.webRelay")}
             labelAdornment={
-              <span
-                role="status"
-                aria-label={relayState.label}
-                title={relayState.label}
-                className="flex size-3.5 shrink-0 items-center justify-center"
-              >
-                <span className={cx("size-2 rounded-full", relayState.dot)} />
-              </span>
+              <Tooltip delay={150}>
+                <Focusable>
+                  <button
+                    type="button"
+                    aria-label={relayState.text}
+                    className="flex size-3.5 shrink-0 cursor-help items-center justify-center"
+                  >
+                    <span className={cx("size-2 rounded-full", relayState.dot)} aria-hidden />
+                  </button>
+                </Focusable>
+                <TooltipContent className="max-w-[320px] whitespace-pre-line">
+                  {relayState.text}
+                </TooltipContent>
+              </Tooltip>
             }
           >
             <Button
@@ -499,20 +517,9 @@ export function WebAccessSection() {
               value={relayKey}
               onChange={setRelayKey}
             />
-            {relayError && (
-              <p role="alert" className="text-body-2-regular text-text-error-primary">
-                {relayError}
-              </p>
-            )}
-            {/* No connected badge: the running task pushes a state event on
-                every dial and drop, so a text line would flash and shove the
-                page around on each reconnect. The button already carries the
-                state (连接中转 / 断开中转); only failures earn a line. */}
-            {relay?.error && (
-              <p role="alert" className="text-body-2-regular text-text-error-primary">
-                {t("settings.webRelayFailed")}: {relay.error}
-              </p>
-            )}
+            {/* No inline error line: the state dot's tooltip carries the full
+                message, so a failure (or its disappearance on reconnect) never
+                changes the card's height. */}
           </div>
         </SettingsCard>
         </div>
