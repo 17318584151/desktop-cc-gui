@@ -21,7 +21,7 @@ pub mod settings;
 pub mod slash_commands;
 pub mod terminal;
 pub mod relay;
-mod web;
+pub mod web;
 
 use std::sync::Arc;
 use tauri::Manager;
@@ -104,6 +104,19 @@ pub fn run() {
             app.manage(config::ConfigStore::default());
             app.manage(metrics::MetricsState::new());
             app.manage(baidu_tongji::BaiduTongjiState::load());
+            // Keep the pairing key from lingering: while the switch is on, a
+            // fresh code is minted every ten minutes and broadcast.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(600));
+                    loop {
+                        interval.tick().await;
+                        let _ = crate::settings::rotate_web_auth_key(&handle);
+                    }
+                });
+            }
             // Initial history scan, non-blocking.
             history::scanner::spawn_scan(scan_db, scan_sink);
             // DSH host autostart: adopt-or-spawn in the background when
@@ -145,19 +158,6 @@ pub fn run() {
                     tauri::async_runtime::block_on(terminal::kill_all(&state.terminals));
                 }
             }
-        })
-        .setup(|app| {
-            // Keep the pairing key from lingering: every ten minutes, when the
-            // switch is on, a fresh code is minted and broadcast.
-            let app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
-                loop {
-                    interval.tick().await;
-                    let _ = crate::settings::rotate_web_auth_key(&app);
-                }
-            });
-            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             // config

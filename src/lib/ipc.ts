@@ -385,6 +385,15 @@ export interface CliUpdatePlan {
 // Shared in-flight/cached app-settings promise: startup, the settings page
 // and the chat store all read the same settings, so fetch once.
 let settingsPromise: Promise<AppSettings> | null = null;
+
+function fetchAppSettings(): Promise<AppSettings> {
+  return (settingsPromise ??= invoke<AppSettings>("get_app_settings").catch((e) => {
+    // Allow retry after a failed fetch instead of caching the rejection.
+    settingsPromise = null;
+    throw e;
+  }));
+}
+
 // ---- pi-family (pi/omp) provider auth & custom providers (供应商认证) ----
 
 export type PiFamilyAuthState = "configured" | "none";
@@ -503,16 +512,21 @@ export const ipc = {
   fetchProviderModels: (baseUrl: string, apiKey: string) =>
     invoke<ProviderModelList>("fetch_provider_models", { baseUrl, apiKey }),
   // settings
-  getAppSettings: () =>
-    (settingsPromise ??= invoke<AppSettings>("get_app_settings").catch((e) => {
-      // Allow retry after a failed fetch instead of caching the rejection.
-      settingsPromise = null;
-      throw e;
-    })),
+  getAppSettings: fetchAppSettings,
+  /** De-cached read: settings the backend changed on its own (the pairing key
+   *  rotates after a pairing and on a timer) never pass through a write here,
+   *  so the cached copy would keep showing the retired code. */
+  refreshAppSettings: () => {
+    settingsPromise = null;
+    return fetchAppSettings();
+  },
   updateAppSettings: async (settings: AppSettings) => {
     await invoke<void>("update_app_settings", { settings });
-    // Keep the cache in sync with the authoritative value just persisted.
-    settingsPromise = Promise.resolve(settings);
+    // Drop the cache instead of caching `settings`: the backend adjusts what
+    // it stores (it mints the pairing key, drops rejected bin paths), and a
+    // write must never seed the shared copy with something the backend did
+    // not answer — one bad value here blanks every settings page.
+    settingsPromise = null;
   },
   // engine
   sendMessage: (args: {

@@ -37,6 +37,11 @@ export interface ScanProgress {
   finished: boolean;
 }
 
+/** App settings were persisted (any page, any surface, any rotation). */
+export function listenSettingsChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("settings://changed", () => cb());
+}
+
 /** The outbound relay's connection state changed. */
 export function listenRelay(cb: () => void): Promise<UnlistenFn> {
   return listen("web://relay", () => cb());

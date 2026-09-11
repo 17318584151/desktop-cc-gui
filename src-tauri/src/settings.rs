@@ -487,14 +487,19 @@ pub fn persist_settings(settings: &mut AppSettings) -> Result<(), String> {
 /// that settings moved. Used after a successful unlock and on a timer, so a
 /// code is good for exactly one device and never lingers.
 pub fn rotate_web_auth_key(app: &tauri::AppHandle) -> Result<(), String> {
-    use tauri::Emitter;
+    use crate::event_sink::Emit;
+    use tauri::Manager;
     let mut settings = read_settings()?;
     if !settings.web_auth_enabled {
         return Ok(());
     }
     settings.web_auth_key = Some(generate_pair_key());
     persist_settings(&mut settings)?;
-    let _ = app.emit("settings://changed", ());
+    // Through the sink: the webview *and* every browser attached over the
+    // bridge must see the new code, or a phone would keep showing the old one.
+    app.state::<crate::AppState>()
+        .emitters
+        .emit_json("settings://changed", "null");
     Ok(())
 }
 
