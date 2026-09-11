@@ -580,6 +580,41 @@ fn map_remote_error(e: git2::Error) -> String {
     }
     message
 }
+/// Credentials for network remotes, resolved the way the git CLI resolves
+/// them: gitconfig credential helpers first (HTTPS: osxkeychain / manager /
+/// store…), then ssh-agent, then libgit2's defaults (agent + ~/.ssh key
+/// paths). Without this callback libgit2 fails every auth-required remote
+/// with "remote authentication required but no callback set".
+fn remote_callbacks(config: git2::Config) -> git2::RemoteCallbacks<'static> {
+    let mut callbacks = git2::RemoteCallbacks::new();
+    callbacks.credentials(move |url, username_from_url, allowed| {
+        if allowed.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+            if let Ok(cred) = git2::Cred::credential_helper(&config, url, username_from_url) {
+                return Ok(cred);
+            }
+        }
+        if allowed.contains(git2::CredentialType::SSH_KEY) {
+            let username = username_from_url.unwrap_or("git");
+            if let Ok(cred) = git2::Cred::ssh_key_from_agent(username) {
+                return Ok(cred);
+            }
+        }
+        git2::Cred::default()
+    });
+    callbacks
+}
+
+fn push_options(config: git2::Config) -> git2::PushOptions<'static> {
+    let mut opts = git2::PushOptions::new();
+    opts.remote_callbacks(remote_callbacks(config));
+    opts
+}
+
+fn fetch_options(config: git2::Config) -> git2::FetchOptions<'static> {
+    let mut opts = git2::FetchOptions::new();
+    opts.remote_callbacks(remote_callbacks(config));
+    opts
+}
 
 #[tauri::command]
 pub async fn git_push(path: String) -> Result<(), String> {
@@ -589,8 +624,13 @@ pub async fn git_push(path: String) -> Result<(), String> {
         let mut remote = repo
             .find_remote("origin")
             .map_err(|e| format!("no origin remote: {e}"))?;
+        let config = repo.config().map_err(|e| e.to_string())?;
+        let mut opts = push_options(config);
         remote
-            .push(&[format!("refs/heads/{branch}:refs/heads/{branch}")], None)
+            .push(
+                &[format!("refs/heads/{branch}:refs/heads/{branch}")],
+                Some(&mut opts),
+            )
             .map_err(map_remote_error)
     })
     .await
@@ -648,8 +688,10 @@ fn git_pull_blocking(path: &str) -> Result<(), String> {
     let mut remote = repo
         .find_remote("origin")
         .map_err(|e| format!("no origin remote: {e}"))?;
+    let config = repo.config().map_err(|e| e.to_string())?;
+    let mut opts = fetch_options(config);
     remote
-        .fetch(std::slice::from_ref(&branch), None, None)
+        .fetch(std::slice::from_ref(&branch), Some(&mut opts), None)
         .map_err(map_remote_error)?;
     let fetch_head = repo
         .find_reference("FETCH_HEAD")

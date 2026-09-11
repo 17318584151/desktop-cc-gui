@@ -80,6 +80,7 @@ export function ChangesPanelHeader({
             icon={RefreshCw}
             size="small"
             aria-label={t("common.refresh")}
+            title={t("common.refresh")}
             disabled={pending.refresh === true}
             onClick={() =>
               run("refresh", () => useGitStore.getState().refresh(workspacePath, true))
@@ -89,6 +90,7 @@ export function ChangesPanelHeader({
             icon={CloudDownload}
             size="small"
             aria-label={t("git.pull")}
+            title={t("git.pull")}
             disabled={notRepo || pending.pull === true}
             onClick={() => run("pull", () => useGitStore.getState().pull(workspacePath))}
           />
@@ -96,6 +98,7 @@ export function ChangesPanelHeader({
             icon={CloudUpload}
             size="small"
             aria-label={t("git.push")}
+            title={t("git.push")}
             disabled={notRepo || pending.push === true}
             onClick={() => run("push", () => useGitStore.getState().push(workspacePath))}
           />
