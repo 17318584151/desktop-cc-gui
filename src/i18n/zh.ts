@@ -125,6 +125,8 @@ export const zh = {
     editedPill: "已编辑",
     runStatusExpand: "展开运行状态",
     runStatusCollapse: "收起运行状态",
+    messageExpand: "展开完整消息",
+    messageCollapse: "收起消息",
     agentStatusRunning: "运行中",
     agentStatusDone: "已完成",
     editedFiles: "已编辑 {{count}} 个文件",

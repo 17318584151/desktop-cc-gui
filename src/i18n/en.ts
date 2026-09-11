@@ -135,6 +135,8 @@ export const en: Messages = {
     editedPill: "Edited",
     runStatusExpand: "Expand run status",
     runStatusCollapse: "Collapse run status",
+    messageExpand: "Expand full message",
+    messageCollapse: "Collapse message",
     agentStatusRunning: "Running",
     agentStatusDone: "Done",
     editedFiles: "Edited {{count}} files",
