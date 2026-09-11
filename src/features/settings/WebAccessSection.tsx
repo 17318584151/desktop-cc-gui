@@ -12,7 +12,7 @@ import {
 } from "@/components/application/settings/settings-rows";
 import { ipc, type RelayInfo, type WebAccessInfo, type WebDevice } from "@/lib/ipc";
 import { Input } from "@/components/base/input/input";
-import { listenRelay, listenWebDevices } from "@/lib/events";
+import { listenRelay, listenSettingsChanged, listenWebDevices } from "@/lib/events";
 import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { isWeb } from "@/lib/platform";
 import { cx } from "@/utils/cx";
@@ -96,6 +96,9 @@ export function WebAccessSection() {
   useEffect(() => refreshDevices(), [refreshDevices]);
   useTauriEvent(() => listenWebDevices(refreshDevices));
   useTauriEvent(() => listenRelay(refreshRelay));
+  // The pairing key rotates by itself (after a pairing, and on a timer), so
+  // this page re-reads settings whenever anything writes them.
+  useTauriEvent(() => listenSettingsChanged(refreshAuth));
 
   const refreshRelay = useCallback(() => {
     void ipc.webRelayStatus().then(setRelay).catch(() => {});
@@ -114,33 +117,40 @@ export function WebAccessSection() {
       .catch(() => {});
   }, [refreshRelay]);
 
-  /** Unambiguous 8 characters: no vowels, no look-alikes in a phone font. */
-  const newPairKey = useCallback(() => {
-    const alphabet = "23456789BCDFGHJKLMNPQRSTVWXZ";
-    const bytes = crypto.getRandomValues(new Uint8Array(8));
-    return [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
-  }, []);
+  /** Re-read the switch and the code from the backend: it rotates the key on
+   *  its own (after a pairing, and on a timer), so the cached copy is exactly
+   *  what must not be trusted here. */
+  const refreshAuth = useCallback(
+    () =>
+      ipc
+        .refreshAppSettings()
+        .then((s) => {
+          setAuthEnabled(s.webAuthEnabled ?? false);
+          setAuthKey(s.webAuthKey ?? "");
+        })
+        .catch(() => {}),
+    [],
+  );
 
-  /** Turning the switch on mints a fresh key and drops stored approvals:
-   *  the key is the only way in from then on. */
+  /** Turning the switch on drops stored approvals and lets the backend mint
+   *  the key (web_auth_key: null); the code is read back afterwards, so the
+   *  screen always shows the one a phone has to type. */
   const setAuth = useCallback(
     async (enabled: boolean) => {
       setAuthBusy(true);
       try {
         const latest = await ipc.getAppSettings();
-        const key = enabled ? newPairKey() : authKey;
         await ipc.updateAppSettings({
           ...latest,
           webAuthEnabled: enabled,
-          webAuthKey: key || null,
+          webAuthKey: null,
         });
-        setAuthEnabled(enabled);
-        setAuthKey(key);
+        await refreshAuth();
       } finally {
         setAuthBusy(false);
       }
     },
-    [authKey, newPairKey],
+    [refreshAuth],
   );
 
   const saveRelayFields = useCallback(async (url: string, key: string) => {
@@ -306,7 +316,6 @@ export function WebAccessSection() {
         <SettingsCard>
           <SettingsRow
             label={t("settings.webRelay")}
-            description={t("settings.webRelayDesc")}
           >
             {(
               <Button
@@ -339,33 +348,14 @@ export function WebAccessSection() {
                 {relayError}
               </p>
             )}
-            {relay && (
-              <div className="flex flex-col gap-1">
-                <span className="text-body-2-regular text-text-secondary">
-                  {relay.error
-                    ? `${t("settings.webRelayFailed")}: ${relay.error}`
-                    : relay.connected
-                      ? t("settings.webRelayConnected")
-                      : t("settings.webRelayConnecting")}
-                </span>
-                <div className="flex h-8 w-full items-center gap-1 rounded-2lg bg-background-tertiary-default pr-1 pl-2">
-                  <span className="min-w-0 flex-1 truncate text-body-regular text-text-primary" title={relay.url}>
-                    {relay.url}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={t("settings.webAccessCopy")}
-                    title={t("settings.webAccessCopy")}
-                    onClick={() => void navigator.clipboard.writeText(relay.url)}
-                    className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
-                  >
-                    <Copy className="size-4" aria-hidden />
-                  </button>
-                </div>
-                <span className="text-body-2-regular text-text-secondary">
-                  {t("settings.webRelayPhoneHint")}
-                </span>
-              </div>
+            {/* No connected badge: the running task pushes a state event on
+                every dial and drop, so a text line would flash and shove the
+                page around on each reconnect. The button already carries the
+                state (连接中转 / 断开中转); only failures earn a line. */}
+            {relay?.error && (
+              <p role="alert" className="text-body-2-regular text-text-error-primary">
+                {t("settings.webRelayFailed")}: {relay.error}
+              </p>
             )}
           </div>
         </SettingsCard>
@@ -373,7 +363,6 @@ export function WebAccessSection() {
           <SettingsCard>
             <SettingsRow
               label={t("settings.webAuth")}
-              description={t("settings.webAuthDesc")}
             >
               <Button
                 size="small"
@@ -395,8 +384,8 @@ export function WebAccessSection() {
                   </span>
                   <button
                     type="button"
-                    aria-label={t("settings.webAccessCopy")}
-                    title={t("settings.webAccessCopy")}
+                    aria-label={t("settings.webAuthCopy")}
+                    title={t("settings.webAuthCopy")}
                     onClick={() => void navigator.clipboard.writeText(authKey)}
                     className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-icon-secondary transition-colors hover:bg-background-secondary-hover hover:text-foreground-icon-primary"
                   >
@@ -407,7 +396,6 @@ export function WebAccessSection() {
             )}
             <SettingsRow
               label={t("settings.webDevices")}
-              description={t("settings.webDevicesDesc")}
             />
             {devices.length === 0 ? (
               <p className="px-3 pb-3 text-body-2-regular text-text-secondary">
@@ -438,9 +426,6 @@ export function WebAccessSection() {
             )}
           </SettingsCard>
         )}
-          <p className="px-3 text-body-2-regular text-text-secondary">
-            {t("settings.webRelayDeployHint")}
-          </p>
         </>
       )}
     </div>
