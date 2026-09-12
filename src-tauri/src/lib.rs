@@ -35,7 +35,7 @@ pub struct AppState {
     pub terminals: terminal::TerminalRegistry,
     pub processes: Arc<engine::ProcessRegistry>,
     pub web: web::WebAccessState,
-    pub dsh_host: dsh_host::DshHostState,
+    pub dsh_host: std::sync::Arc<dsh_host::DshHostState>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -89,7 +89,7 @@ pub fn run() {
                 terminals: terminal::TerminalRegistry::default(),
                 processes: Arc::new(engine::ProcessRegistry::default()),
                 web: web::WebAccessState::default(),
-                dsh_host: dsh_host::DshHostState::default(),
+                dsh_host: std::sync::Arc::new(dsh_host::DshHostState::default()),
             };
             // Clone what the initial scan needs before state moves into manage.
             let scan_db = Arc::clone(&state.db);

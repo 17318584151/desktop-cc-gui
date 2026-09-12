@@ -49,6 +49,8 @@ libc = "0.2"
 # surface over a token-authenticated WebSocket (see src/web.rs).
 axum = { version = "0.8", features = ["ws"] }
 futures-util = "0.3"
+# DSH host session streams (ws:// loopback mux only; no TLS feature needed).
+tokio-tungstenite = "0.26"
 serde_yaml = "0.9"
 # Linux-native Baidu Tongji transport: fixed hm.js fetch + hm.gif beacon with
 # rustls so it never touches the vendored-openssl stack or WebKit networking.
