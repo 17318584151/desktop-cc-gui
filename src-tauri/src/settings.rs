@@ -78,6 +78,11 @@ pub struct AppSettings {
     /// "cmdEnter" (Cmd/Ctrl+Enter sends, Enter newline).
     #[serde(default = "default_composer_send_shortcut")]
     pub composer_send_shortcut: String,
+    /// Thinking-process row behavior once its thinking stream settles:
+    /// None/Some(true) = auto-fold (default), Some(false) = stay expanded
+    /// until the user folds it (设置 → 通用 → 行为 → 思考过程).
+    #[serde(default)]
+    pub thinking_auto_collapse: Option<bool>,
     /// Terminal shell override; None/empty = auto-detect from $SHELL/COMSPEC.
     /// Validated with the same spawn-target rules as bin overrides.
     #[serde(default)]
@@ -151,6 +156,7 @@ impl Default for AppSettings {
             codex_service_tier: None,
             sidebar_thread_limit: default_sidebar_thread_limit(),
             composer_send_shortcut: default_composer_send_shortcut(),
+            thinking_auto_collapse: None,
             terminal_shell_path: None,
             dsh_host: None,
             dsh_port: None,

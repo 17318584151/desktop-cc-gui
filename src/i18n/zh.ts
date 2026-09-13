@@ -228,6 +228,9 @@ export const zh = {
     sendShortcutEnter: "Enter",
     sendShortcutCmdEnter: "Cmd+Enter",
     sendShortcutCmdEnterCtrl: "Ctrl+Enter",
+    thinkingAutoCollapse: "思考结束后自动收起",
+    thinkingAutoCollapseDesc:
+      "关闭后，思考结束时思考过程保持展开（界面不再跳动），可点击标题手动收起",
     promptHistory: "历史输入补全",
     promptHistoryDesc:
       "输入时按 Tab 接受历史补全建议；输入框为空时按 ↑↓ 翻阅历史",

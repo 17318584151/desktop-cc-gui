@@ -439,6 +439,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
     workspaceAliases: {},
     archivedWorkspaces: [],
     sendShortcut: "enter",
+    thinkingAutoCollapse: true,
     bySession: {},
     streamingByKey: {},
     unseen: {},
@@ -532,6 +533,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
             workspaceAliases: settings.workspaceAliases ?? {},
             archivedWorkspaces: settings.archivedWorkspaces ?? [],
             sendShortcut: settings.composerSendShortcut ?? "enter",
+            thinkingAutoCollapse: settings.thinkingAutoCollapse ?? true,
           }),
         )
         .catch(() => {});
@@ -1046,6 +1048,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
     },
     setSendShortcut: (shortcut) => {
       set({ sendShortcut: shortcut });
+    },
+    setThinkingAutoCollapse: (autoCollapse) => {
+      set({ thinkingAutoCollapse: autoCollapse });
     },
 
     setDraft: (key, text) => {

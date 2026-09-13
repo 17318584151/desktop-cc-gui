@@ -206,6 +206,9 @@ export interface AppSettings {
   sidebarThreadLimit: number;
   /** Composer send gesture: "enter" (Enter sends) or "cmdEnter" (⌘/Ctrl+Enter sends). */
   composerSendShortcut: string;
+  /** Thinking-process row behavior once its thinking settles: true/absent =
+   *  auto-fold (default), false = stay expanded until the user folds it. */
+  thinkingAutoCollapse?: boolean | null;
   /** Terminal shell override; null/empty = auto-detect. */
   terminalShellPath: string | null;
   /** DSH host address (default "127.0.0.1"). */

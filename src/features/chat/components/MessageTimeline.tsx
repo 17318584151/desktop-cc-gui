@@ -4,7 +4,9 @@ import { useTranslation } from "react-i18next";
 import Copy from "lucide-react/dist/esm/icons/copy";
 import Check from "lucide-react/dist/esm/icons/check";
 import type { Message } from "@/lib/ipc";
+
 import type { SessionState } from "../store";
+import { useChatStore } from "../store";
 import { parseUsage } from "../usage";
 import { formatTokens } from "@/utils/format-tokens";
 import { AgentThinking } from "@/components/application/agent-thinking/agent-thinking";
@@ -30,6 +32,7 @@ const TimelineRowView = memo(function TimelineRowView({
   workspacePath,
   turnLive,
   autoExpand,
+  thinkingAutoCollapse,
   seenTools,
 }: {
   row: TimelineRow;
@@ -39,6 +42,8 @@ const TimelineRowView = memo(function TimelineRowView({
   /** True on the timeline's last process row: it rides open until a newer
    * one appears, and stays open once the turn settles. */
   autoExpand: boolean;
+  /** False keeps a settled thinking row expanded (设置 → 通用 → 行为). */
+  thinkingAutoCollapse: boolean;
   seenTools: Set<string>;
 }) {
   // Plugin-defined row kinds (plan §4.2 #5) dispatch to the registered
@@ -64,6 +69,7 @@ const TimelineRowView = memo(function TimelineRowView({
         items={row.items}
         autoExpand={autoExpand}
         turnLive={turnLive}
+        thinkingAutoCollapse={thinkingAutoCollapse}
         processId={row.firstSeq}
         seenTools={seenTools}
       />
@@ -272,7 +278,9 @@ export const MessageTimeline = memo(function MessageTimeline({
   onLoadEarlier: () => void;
   workspacePath: string;
 }) {
+
   const { t } = useTranslation();
+  const thinkingAutoCollapse = useChatStore((s) => s.thinkingAutoCollapse);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const items = session.messages;
   const rows = useMemo(() => buildRows(items), [items]);
@@ -435,6 +443,7 @@ export const MessageTimeline = memo(function MessageTimeline({
                     workspacePath={workspacePath}
                     turnLive={turnLive}
                     autoExpand={rowKey(rows[item.index]) === lastProcessKey}
+                    thinkingAutoCollapse={thinkingAutoCollapse}
                     seenTools={seenTools}
                   />
                 )}
