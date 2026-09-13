@@ -1,3 +1,4 @@
+pub mod agy;
 pub mod claude;
 pub mod codex;
 mod codex_provider_env;
@@ -438,6 +439,7 @@ pub fn engine_by_id(id: &str) -> Option<Box<dyn Engine>> {
         "pi" => Some(Box::new(pi_family::pi())),
         "omp" => Some(Box::new(pi_family::omp())),
         "dsh" => Some(Box::new(dsh::DshEngine)),
+        "agy" => Some(Box::new(agy::AgyEngine)),
         _ => None,
     }
 }
@@ -1244,11 +1246,16 @@ enum LineRead {
 /// only await is `fill_buf`, so a `tokio::select!` tick landing mid-line
 /// consumes and drops nothing — the property the old code relied on
 /// `next_line` for (a cancelled `read_line` would lose the partial bytes).
+/// Resuming the buffer is the whole point: a `line.clear()` here wiped the
+/// bytes a cancelled call had already consumed from the reader, so a tick
+/// landing mid-line truncated that line (a long `item.completed` parsed as
+/// broken JSON and was dropped). The caller hands back the same buffer every
+/// call, and `mem::take` empties it on a complete line while Eof/TooLong end
+/// the run, so this only ever appends.
 async fn read_line_capped(
     reader: &mut BufReader<ChildStdout>,
     line: &mut Vec<u8>,
 ) -> std::io::Result<LineRead> {
-    line.clear();
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
@@ -1466,6 +1473,35 @@ pub async fn send_message(
     effort: Option<String>,
     permission: Option<String>,
 ) -> Result<SendResult, String> {
+    send_message_inner(
+        &state,
+        engine,
+        workspace_path,
+        session_id,
+        prompt,
+        image_paths,
+        model,
+        effort,
+        permission,
+    )
+    .await
+}
+
+/// Body of the `send_message` command, taking the state directly: integration
+/// tests drive the real spawn/read pipeline without a Tauri app (the mock
+/// runtime links the GUI crates into the test exe, which then cannot load
+/// without a comctl32 v6 manifest).
+pub async fn send_message_inner(
+    state: &crate::AppState,
+    engine: String,
+    workspace_path: String,
+    session_id: Option<String>,
+    prompt: String,
+    image_paths: Option<Vec<String>>,
+    model: Option<String>,
+    effort: Option<String>,
+    permission: Option<String>,
+) -> Result<SendResult, String> {
     if state.processes.len() >= MAX_CONCURRENT_RUNS {
         return Err(format!(
             "too many concurrent runs ({MAX_CONCURRENT_RUNS}); wait for one to finish"
@@ -1622,7 +1658,7 @@ fn next_virtual_pid() -> u32 {
 /// then detach it. The task dispatches the same event kinds as `run_reader`
 /// and settles the turn itself (done/error + registry cleanup).
 async fn send_host_stream(
-    state: tauri::State<'_, crate::AppState>,
+    state: &crate::AppState,
     launch: Launch,
     engine: String,
 ) -> Result<SendResult, String> {
@@ -1683,6 +1719,13 @@ pub async fn interrupt_session(
 mod permission_tests {
     use super::*;
 
+    #[test]
+    fn every_registered_engine_has_an_adapter() {
+        for id in crate::config::ENGINES {
+            assert!(engine_by_id(id).is_some(), "{id}");
+        }
+    }
+
     fn req(permission: Option<&str>) -> SendRequest {
         SendRequest {
             session_id: None,
@@ -1705,6 +1748,30 @@ mod permission_tests {
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect()
+    }
+
+    #[test]
+    fn pi_prompt_goes_through_stdin_not_argv() {
+        // Windows resolves the pi install to a `.cmd` shim spawned via `cmd /c`;
+        // cmd.exe cuts a multiline argument at the first newline, so only line 1
+        // ever reached the model. The prompt must ride stdin verbatim, and the
+        // `@<abs path>` image refs must stay in argv.
+        let mut request = req(None);
+        request.prompt = "first line\nsecond line\n%PATH%".to_string();
+        request.images = vec!["C:/tmp/paste.png".to_string()];
+        let engines: [&dyn Engine; 2] = [&pi_family::pi(), &pi_family::omp()];
+        for engine in engines {
+            let built = engine.build_command(&request, "fake-bin").unwrap();
+            let args: Vec<String> = built
+                .command
+                .as_std()
+                .get_args()
+                .map(|a| a.to_string_lossy().to_string())
+                .collect();
+            assert!(!args.iter().any(|a| a.contains("first line")), "{args:?}");
+            assert!(args.iter().any(|a| a.contains("paste.png")), "{args:?}");
+            assert_eq!(built.stdin_payload.as_deref(), Some(request.prompt.as_str()));
+        }
     }
 
     #[test]

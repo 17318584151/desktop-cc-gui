@@ -2,7 +2,7 @@
  * 引擎设置 rows under the enable switch, one SettingsCard with
  * hairline-separated rows:
  *   官方配置 — the CLI's own config files: 使用 (radio-style switch) + 编辑
- *     (claude/codex/kimi/grok open the multi-file editor, gated on 官方配置
+ *     (claude/codex/kimi/grok/agy open the multi-file editor, gated on 官方配置
  *     being active; pi/omp hand off to their models.json/models.yml editor;
  *     dsh has no native config file and hides the row).
  *   自定义 CLI 路径 — AppSettings.<engine>Bin override (dsh keeps its own
@@ -35,7 +35,7 @@ import type { CliConfigState } from "./useCliConfig";
 
 /** Engines whose official config the generic file editor covers. pi/omp edit
  *  their models config in the auth section; dsh has no config files at all. */
-const FILE_MANAGED_ENGINES: readonly EngineId[] = ["claude", "codex", "kimi", "grok"];
+const FILE_MANAGED_ENGINES: readonly EngineId[] = ["claude", "codex", "kimi", "grok", "agy"];
 /** AppSettings bin-override field per engine (dsh's picker stays in
  *  DshConnectionCard, next to the host settings it interacts with). */
 const BIN_FIELDS = {
@@ -45,6 +45,7 @@ const BIN_FIELDS = {
   codex: "codexBin",
   pi: "piBin",
   omp: "ompBin",
+  agy: "agyBin",
 } as const;
 type BinEngine = keyof typeof BIN_FIELDS;
 

@@ -21,6 +21,9 @@ export interface SessionMeta {
   /** Model this app last sent for the session ("provider/model"), absent when
    * it never sent one — see ipc.rememberSessionModel. */
   model?: string | null;
+  /** Reasoning effort this app last sent for the session, absent when it never
+   * recorded one — see ipc.rememberSessionEffort. */
+  effort?: string | null;
 }
 
 export type TodoStatus = "pending" | "active" | "complete" | "blocked" | "dropped";
@@ -171,6 +174,7 @@ export interface CliConfig {
   pi: ProviderSection;
   omp: ProviderSection;
   dsh: ProviderSection;
+  agy: ProviderSection;
 }
 
 export interface AppSettings {
@@ -190,6 +194,7 @@ export interface AppSettings {
   piBin: string | null;
   ompBin: string | null;
   dshBin: string | null;
+  agyBin: string | null;
   defaultModels: Record<string, string>;
   /** Per-engine user-added custom model ids (设置 → CLI → 自定义模型). */
   customModels: Record<string, string[]>;
@@ -648,6 +653,10 @@ export const ipc = {
    * this is what survives a restart or another client. */
   rememberSessionModel: (engine: string, sessionId: string, model: string) =>
     invoke<void>("remember_session_model", { engine, sessionId, model }),
+  /** Remember the reasoning level a session ran, so reopening it — here, in
+   *  another window, or on the phone — keeps that level. */
+  rememberSessionEffort: (engine: string, sessionId: string, effort: string) =>
+    invoke<void>("remember_session_effort", { engine, sessionId, effort }),
   rescanSessions: () => invoke<void>("rescan_sessions"),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   addWorkspace: (path: string) => invoke<Workspace>("add_workspace", { path }),

@@ -106,7 +106,7 @@ function ShareBar({ pct }: { pct: number }) {
   );
 }
 
-const ENGINE_ICON_IDS: readonly EngineIconId[] = ["claude", "codex", "grok", "kimi", "pi", "omp", "dsh"];
+const ENGINE_ICON_IDS: readonly EngineIconId[] = ["claude", "codex", "grok", "kimi", "pi", "omp", "dsh", "agy"];
 const isEngineIcon = (engine: string): engine is EngineIconId =>
   ENGINE_ICON_IDS.includes(engine as EngineIconId);
 
@@ -294,7 +294,12 @@ export function UsageSection() {
               {t("usage.chartTotal", { tokens: formatTokens(tokensOf(totals)) })}
             </span>
           </div>
-          <UsageChart rows={scoped} days={perDay.map((point) => point.day)} formatTokens={formatTokens} />
+          <UsageChart
+            rows={scoped}
+            days={perDay.map((point) => point.day)}
+            formatTokens={formatTokens}
+            axisLabel={t(RANGES.find((item) => item.id === range)?.labelKey ?? "usage.rangeToday")}
+          />
         </div>
       </SettingsCard>
 

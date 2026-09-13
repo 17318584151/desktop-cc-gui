@@ -179,6 +179,8 @@ export default function ChatPage() {
         // where it kept disappearing (Chrome for iOS especially). Zero on
         // desktop, so this only moves pixels on a notched device.
         "pt-[env(safe-area-inset-top)]",
+        // Same for the home indicator: it overlays AppStatusBar otherwise.
+        "pb-[env(safe-area-inset-bottom)]",
         NEEDS_TITLEBAR_HAIRLINE && "border-t border-separator-border",
         dragging && "cursor-col-resize select-none",
       )}

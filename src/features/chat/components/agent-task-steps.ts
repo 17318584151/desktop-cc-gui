@@ -138,7 +138,8 @@ export function subagentRefsFromArgs(args: unknown): {
   }
   for (const entry of array(record.ids)) {
     const id = text(entry);
-    if (id) refs.push({ id });
+    // hub background job handles are processes/waits, not delegated agents.
+    if (id && !/^bg_/i.test(id)) refs.push({ id });
   }
   return refs;
 }
@@ -200,7 +201,9 @@ function isCompleteJobsRoster(message: Message): boolean {
     : {};
   const roster = details as Record<string, unknown>;
   return roster.op === "jobs" &&
-    !Object.prototype.hasOwnProperty.call(args, "ids") &&
+    // Any filter arg (`ids`, a future `status`, …) means a partial roster,
+    // not the complete one — only a bare `op`-only call qualifies.
+    Object.keys(args).every((key) => key === "op") &&
     Array.isArray(roster.jobs) &&
     roster.jobs.every((entry) => {
       if (!entry || typeof entry !== "object") return false;

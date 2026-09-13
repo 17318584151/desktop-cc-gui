@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cx } from "@/utils/cx";
 import { useGitStore } from "@/features/git/store";
@@ -305,10 +305,15 @@ function BackIcon() {
 function SubagentDetail({ step, onBack }: { step: AgentTaskStep; onBack: () => void }) {
   const { t } = useTranslation();
   const complete = step.state === "complete";
+  // The row that opened this overlay unmounted with the list; move focus
+  // into the overlay instead of dropping it on document.body.
+  const backRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => backRef.current?.focus(), []);
   return (
     <div data-testid="subagent-detail-overlay" className="flex flex-col gap-1 p-1">
       <div className="flex items-center gap-1.5 px-1">
         <button
+          ref={backRef}
           type="button"
           onClick={onBack}
           aria-label={t("chat.agentDetailBack")}
@@ -346,6 +351,24 @@ function SubagentRows({ steps }: { steps: AgentTaskStep[] }) {
   // Open detail lives here, not in the strip: closing the panel unmounts this
   // component, so reopening always starts on the list.
   const [openKey, setOpenKey] = useState<string | null>(null);
+  // Hand focus back to the row that opened the detail once the list returns.
+  const restoreKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (openKey !== null) {
+      restoreKey.current = openKey;
+      return;
+    }
+    const key = restoreKey.current;
+    if (key === null) return;
+    restoreKey.current = null;
+    // No CSS.escape in every webview/jsdom: match by dataset instead.
+    for (const button of document.querySelectorAll<HTMLButtonElement>("[data-agent-step-key]")) {
+      if (button.dataset.agentStepKey === key) {
+        button.focus();
+        break;
+      }
+    }
+  }, [openKey]);
   const open = openKey ? steps.find((step) => step.key === openKey) : undefined;
   if (open) return (
     <div data-testid="run-status-subagents">
@@ -363,7 +386,7 @@ function SubagentRows({ steps }: { steps: AgentTaskStep[] }) {
                 type="button"
                 data-agent-step-key={step.key}
                 onClick={() => setOpenKey(step.key)}
-                title={step.detail ? `${step.label}\n${step.detail}` : step.label}
+                title={step.label}
                 className="grid w-full cursor-pointer grid-cols-[14px_minmax(0,1fr)_auto] items-center gap-2 rounded px-2 py-1.5 text-left transition-colors hover:bg-background-tertiary-default/50"
               >
                 <div className="flex items-center justify-center">

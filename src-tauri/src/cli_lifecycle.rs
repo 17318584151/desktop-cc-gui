@@ -36,8 +36,8 @@ const PROGRESS_LINE_CAP: usize = 1000;
 /// stuck installer buffered unboundedly for up to INSTALL_TIMEOUT.
 const CAPTURE_CAP_BYTES: usize = 1024 * 1024;
 
-/// npm-distributed engines → registry package. Grok CLI ships via its own
-/// installer script (no npm distribution), so it gets a local-version probe
+/// npm-distributed engines → registry package. Grok / agy ship via their own
+/// installer scripts (no npm distribution), so they get a local-version probe
 /// only — no latest probe and no install/update action.
 fn npm_package(engine: &str) -> Option<&'static str> {
     match engine {
@@ -605,6 +605,7 @@ mod tests {
             assert!(npm_package(engine).is_some(), "{engine} missing package");
         }
         assert_eq!(npm_package("grok"), None);
+        assert_eq!(npm_package("agy"), None);
     }
 
     #[cfg(unix)]
@@ -675,6 +676,7 @@ mod tests {
         assert_eq!(update_kind("dsh", "/usr/local/bin/dsh"), Some("npm"));
         // grok has no lifecycle action.
         assert_eq!(update_kind("grok", "/usr/local/bin/grok"), None);
+        assert_eq!(update_kind("agy", "/usr/local/bin/agy"), None);
         // claude: a node_modules path means the npm distribution.
         assert_eq!(
             update_kind("claude", "/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"),

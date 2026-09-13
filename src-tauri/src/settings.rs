@@ -244,12 +244,17 @@ pub fn import_legacy_groups_once(db: &crate::db::Db) -> Result<(), String> {
             return Ok(());
         }
     }
-    import_legacy_groups_from(
-        db,
-        &crate::paths::settings_path(),
-        &crate::paths::legacy_settings_path(),
-        &crate::paths::legacy_workspaces_path(),
-    )?;
+    {
+        // Raw read-modify-write of settings.json: same write lock as every
+        // other writer, so a concurrent persist cannot be overwritten.
+        let _guard = settings_write_lock();
+        import_legacy_groups_from(
+            db,
+            &crate::paths::settings_path(),
+            &crate::paths::legacy_settings_path(),
+            &crate::paths::legacy_workspaces_path(),
+        )?;
+    }
     let conn = db.0.lock();
     conn.execute(
         "INSERT OR REPLACE INTO meta(key, value) VALUES('legacy_groups_import_v1', '1')",
@@ -433,6 +438,7 @@ pub fn update_app_settings<R: tauri::Runtime>(
 /// Validate + persist + apply. The public command keeps reporting rejected
 /// fields as an error, even though the sanitized snapshot was committed.
 pub fn persist_settings(settings: &mut AppSettings) -> Result<(), String> {
+    let _guard = settings_write_lock();
     match persist_settings_committed(settings)? {
         Some(warning) => Err(warning),
         None => Ok(()),
@@ -441,6 +447,9 @@ pub fn persist_settings(settings: &mut AppSettings) -> Result<(), String> {
 
 /// Persist a settings snapshot while distinguishing failures before the
 /// atomic write from warnings produced after the sanitized snapshot commits.
+///
+/// Callers doing a read→modify→write must hold [`settings_write_lock`]
+/// across the whole cycle; this function only performs the write half.
 pub(crate) fn persist_settings_committed(
     settings: &mut AppSettings,
 ) -> Result<Option<String>, String> {
@@ -526,10 +535,17 @@ pub(crate) fn pairing_key_matches(expected: &str, submitted: &str) -> bool {
     !expected.is_empty() && !submitted.is_empty() && submitted.eq_ignore_ascii_case(expected)
 }
 
-/// Serialises the read-modify-write of the pairing key. settings.json has no
-/// other guard, so without this two devices posting the same code both read it
-/// before either rotation lands, and one code pairs both of them.
-static PAIR_KEY_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+/// Serialises every read-modify-write of settings.json. Without it two
+/// writers — a timed key rotation and a relay-switch persist, say — can each
+/// read the other's pre-write snapshot and the later write silently drops the
+/// earlier one's field. It also keeps the pairing key's compare-and-rotate
+/// atomic: two devices posting the same code must not both be admitted.
+static SETTINGS_WRITE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Hold across a full read→modify→persist of settings.json.
+pub(crate) fn settings_write_lock() -> parking_lot::MutexGuard<'static, ()> {
+    SETTINGS_WRITE_LOCK.lock()
+}
 
 /// Spend the pairing key on one device: rotates `settings` in place and
 /// answers whether the browser may be admitted. Pure, so the property that
@@ -554,7 +570,7 @@ fn spend_pair_key(settings: &mut AppSettings, submitted: &str) -> bool {
 /// must not be admitted — wrong key, or the switch is off and there is nothing
 /// to pair with.
 pub fn consume_web_auth_key(app: &tauri::AppHandle, submitted: &str) -> Result<bool, String> {
-    let _guard = PAIR_KEY_LOCK.lock();
+    let _guard = settings_write_lock();
     let mut settings = read_settings()?;
     if !spend_pair_key(&mut settings, submitted) {
         return Ok(false);
@@ -571,7 +587,7 @@ pub fn consume_web_auth_key(app: &tauri::AppHandle, submitted: &str) -> Result<b
 /// that settings moved. Used on a timer and by the 换一个 button, so a code
 /// never lingers even when nobody pairs with it.
 pub fn rotate_web_auth_key(app: &tauri::AppHandle) -> Result<(), String> {
-    let _guard = PAIR_KEY_LOCK.lock();
+    let _guard = settings_write_lock();
     let mut settings = read_settings()?;
     if !settings.web_auth_enabled {
         return Ok(());
