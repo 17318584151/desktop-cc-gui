@@ -305,6 +305,30 @@ fn is_codex_subagent_file(path: &Path) -> bool {
         .any(is_codex_subagent_head)
 }
 
+/// DSH writes one session file per spawned child. The header stamps
+/// `origin: "subagent"` (and a positive `delegationDepth`); listing those
+/// next to the parent looks like leftover review chats. The live turn
+/// already surfaces them in the subagent strip.
+fn is_dsh_subagent_source(source: &serde_json::Value) -> bool {
+    if source.get("origin").and_then(|v| v.as_str()) == Some("subagent") {
+        return true;
+    }
+    source
+        .get("delegationDepth")
+        .and_then(|v| v.as_i64())
+        .is_some_and(|depth| depth > 0)
+}
+
+fn is_dsh_subagent_head(head: &serde_json::Value) -> bool {
+    head.get("type").and_then(|v| v.as_str()) == Some("session") && is_dsh_subagent_source(head)
+}
+
+fn is_dsh_subagent_file(path: &Path) -> bool {
+    peek_head_json_lines(path, true, 8)
+        .iter()
+        .any(is_dsh_subagent_head)
+}
+
 /// Engine file identity from the first JSON line (codex session_meta /
 /// pi-family & dsh session line). Returns (session_id, cwd).
 fn identify_head(engine: &str, path: &Path) -> Option<(String, String)> {
@@ -325,6 +349,9 @@ fn identify_head(engine: &str, path: &Path) -> Option<(String, String)> {
             &head
         };
         if engine == "codex" && source.get("source").is_some_and(is_codex_subagent_source) {
+            return None;
+        }
+        if engine == "dsh" && is_dsh_subagent_source(source) {
             return None;
         }
         let id = source.get("id").and_then(|v| v.as_str())?.trim();
@@ -387,6 +414,44 @@ fn pi_family_candidates(home_dir_name: &str) -> Vec<PathBuf> {
     out
 }
 
+/// Canonical compressed DSH log generation. v0 is `session.jsonl.zstd`;
+/// later formats are `session.vN.jsonl.zstd` (no leading zeros).
+fn dsh_log_generation(name: &str) -> Option<u32> {
+    const SUFFIX: &str = ".jsonl.zstd";
+    let stem = name.strip_suffix(SUFFIX)?;
+    if stem == "session" {
+        return Some(0);
+    }
+    let digits = stem.strip_prefix("session.v")?;
+    if digits.is_empty() || digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+fn dsh_session_log(dir: &Path) -> Option<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return None;
+    };
+    let mut best: Option<(u32, PathBuf)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(generation) = dsh_log_generation(name) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(current, _)| generation > *current) {
+            best = Some((generation, path));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
 fn dsh_candidates() -> Vec<PathBuf> {
     let root = crate::engine::engine_home(Some("DSH_HOME"), ".dsh").join("sessions");
     let mut out = Vec::new();
@@ -398,8 +463,7 @@ fn dsh_candidates() -> Vec<PathBuf> {
             continue;
         };
         for session_entry in session_dirs.flatten() {
-            let file = session_entry.path().join("session.jsonl.zstd");
-            if file.is_file() {
+            if let Some(file) = dsh_session_log(&session_entry.path()) {
                 out.push(file);
             }
         }
@@ -654,29 +718,39 @@ fn prepare_candidate(
     })
 }
 
-/// Drop Codex subagent rollouts that were indexed as top-level chats.
+/// Drop Codex / DSH subagent sessions that were indexed as top-level chats.
 /// Returns true when any row was removed.
-fn prune_codex_subagent_sessions(db: &crate::db::Db) -> Result<bool, String> {
+fn prune_hidden_subagent_sessions(db: &crate::db::Db) -> Result<bool, String> {
+    let a = prune_engine_subagent_sessions(db, "codex", is_codex_subagent_file)?;
+    let b = prune_engine_subagent_sessions(db, "dsh", is_dsh_subagent_file)?;
+    Ok(a || b)
+}
+
+fn prune_engine_subagent_sessions(
+    db: &crate::db::Db,
+    engine: &str,
+    is_subagent: fn(&Path) -> bool,
+) -> Result<bool, String> {
     let paths: Vec<(String, String)> = {
         let conn = db.0.lock();
         let mut stmt = conn
-            .prepare("SELECT session_id, file_path FROM sessions WHERE engine='codex'")
+            .prepare("SELECT session_id, file_path FROM sessions WHERE engine=?1")
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .query_map([engine], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?;
         let mut out = Vec::new();
         for row in rows {
             match row {
                 Ok(pair) => out.push(pair),
-                Err(e) => eprintln!("[scanner] skipping undecodable codex session row: {e}"),
+                Err(e) => eprintln!("[scanner] skipping undecodable {engine} session row: {e}"),
             }
         }
         out
     };
     let dead: Vec<String> = paths
         .into_iter()
-        .filter(|(_, path)| is_codex_subagent_file(Path::new(path)))
+        .filter(|(_, path)| is_subagent(Path::new(path)))
         .map(|(id, _)| id)
         .collect();
     if dead.is_empty() {
@@ -685,8 +759,8 @@ fn prune_codex_subagent_sessions(db: &crate::db::Db) -> Result<bool, String> {
     let conn = db.0.lock();
     for id in &dead {
         conn.execute(
-            "DELETE FROM sessions WHERE engine='codex' AND session_id=?1",
-            rusqlite::params![id],
+            "DELETE FROM sessions WHERE engine=?1 AND session_id=?2",
+            rusqlite::params![engine, id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -759,7 +833,7 @@ fn scan_inner(
     let candidates = gather_candidates(&workspaces);
     let (stats, signature) = stat_all(&workspaces, &candidates);
     let Some(tier1) = tier1_gate(db, signature)? else {
-        let pruned = prune_codex_subagent_sessions(db)?;
+        let pruned = prune_hidden_subagent_sessions(db)?;
         if super::codex_titles::sync(db)? || pruned {
             on_changed();
         }
@@ -808,7 +882,7 @@ fn scan_inner(
     // Phase B: the db lock is held only for the upsert transaction.
     let reparsed = rows.len();
     upsert_rows(db, &rows, &tier1)?;
-    prune_codex_subagent_sessions(db)?;
+    prune_hidden_subagent_sessions(db)?;
     super::codex_titles::sync(db)?;
     on_changed();
     if total > 0 {
@@ -939,6 +1013,74 @@ mod tests {
         .unwrap();
         assert_eq!(identify_head("codex", &path), None);
         assert!(is_codex_subagent_file(&path));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn write_zstd_jsonl(path: &Path, lines: &[&str]) {
+        use std::io::Write;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let file = std::fs::File::create(path).unwrap();
+        let mut encoder = zstd::stream::write::Encoder::new(file, 0).unwrap();
+        for line in lines {
+            encoder.write_all(line.as_bytes()).unwrap();
+            encoder.write_all(b"\n").unwrap();
+        }
+        encoder.finish().unwrap();
+    }
+
+    #[test]
+    fn dsh_log_generation_reads_v0_and_later() {
+        assert_eq!(dsh_log_generation("session.jsonl.zstd"), Some(0));
+        assert_eq!(dsh_log_generation("session.v3.jsonl.zstd"), Some(3));
+        assert_eq!(dsh_log_generation("session.v12.jsonl.zstd"), Some(12));
+        assert_eq!(dsh_log_generation("session.v03.jsonl.zstd"), None);
+        assert_eq!(dsh_log_generation("session.v0.jsonl.zstd"), None);
+        assert_eq!(dsh_log_generation("session.jsonl"), None);
+        assert_eq!(dsh_log_generation("session.lock"), None);
+    }
+
+    #[test]
+    fn dsh_session_log_picks_highest_generation() {
+        let dir = scratch_dir("dsh-gen");
+        write_zstd_jsonl(&dir.join("session.jsonl.zstd"), &[r#"{"type":"session","id":"old"}"#]);
+        write_zstd_jsonl(&dir.join("session.v3.jsonl.zstd"), &[r#"{"type":"session","id":"new"}"#]);
+        std::fs::write(dir.join("session.lock"), "").unwrap();
+        let picked = dsh_session_log(&dir).unwrap();
+        assert_eq!(picked.file_name().unwrap(), "session.v3.jsonl.zstd");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn identify_head_skips_dsh_subagent_session() {
+        let dir = scratch_dir("identify-dsh-subagent");
+        let path = dir.join("session.v3.jsonl.zstd");
+        write_zstd_jsonl(
+            &path,
+            &[
+                r#"{"type":"session","version":3,"id":"child","cwd":"/ws","createdAt":1,"isSeeded":false,"origin":"subagent","parentSession":"parent","delegationDepth":1}"#,
+                r#"{"type":"user/message","time":1,"data":{"content":[{"type":"text","text":"你是一名只读代码评审员"}]}}"#,
+            ],
+        );
+        assert_eq!(identify_head("dsh", &path), None);
+        assert!(is_dsh_subagent_file(&path));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn identify_head_keeps_top_level_dsh_session() {
+        let dir = scratch_dir("identify-dsh-parent");
+        let path = dir.join("session.v3.jsonl.zstd");
+        write_zstd_jsonl(
+            &path,
+            &[r#"{"type":"session","version":3,"id":"parent","cwd":"/ws","createdAt":1,"isSeeded":false,"delegationDepth":0}"#],
+        );
+        assert_eq!(
+            identify_head("dsh", &path),
+            Some(("parent".to_string(), "/ws".to_string()))
+        );
+        assert!(!is_dsh_subagent_file(&path));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1288,6 +1430,76 @@ mod tests {
             let conn = db.0.lock();
             let mut stmt = conn
                 .prepare("SELECT session_id FROM sessions WHERE engine='codex' ORDER BY session_id")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?
+        };
+        assert_eq!(ids, vec!["parent".to_string()]);
+        drop(db);
+        std::fs::remove_dir_all(&home).ok();
+        Ok(())
+    }
+
+    /// DSH writes one compressed log per spawned child. Those files must not
+    /// become extra sidebar rows, and a previously indexed child must be
+    /// pruned on the next scan.
+    #[test]
+    fn scan_skips_and_prunes_dsh_subagent_sessions() -> Result<(), String> {
+        let home = scratch_dir("scan-dsh-subagent");
+        let workspace = home.join("ws");
+        std::fs::create_dir_all(&workspace).map_err(|e| e.to_string())?;
+        let cwd = workspace.display().to_string();
+        let escaped = cwd.replace('\\', "\\\\");
+        let project = home
+            .join(".dsh")
+            .join("sessions")
+            .join("--ws--");
+        let parent_dir = project.join("parent");
+        let child_dir = project.join("child");
+        write_zstd_jsonl(
+            &parent_dir.join("session.v3.jsonl.zstd"),
+            &[
+                &format!(
+                    r#"{{"type":"session","version":3,"id":"parent","cwd":"{escaped}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+                ),
+                r#"{"type":"user/message","time":1,"data":{"content":[{"type":"text","text":"review"}]}}"#,
+            ],
+        );
+        let child_path = child_dir.join("session.v3.jsonl.zstd");
+        write_zstd_jsonl(
+            &child_path,
+            &[
+                &format!(
+                    r#"{{"type":"session","version":3,"id":"child","cwd":"{escaped}","createdAt":1,"isSeeded":false,"origin":"subagent","parentSession":"parent","delegationDepth":1}}"#
+                ),
+                r#"{"type":"user/message","time":1,"data":{"content":[{"type":"text","text":"你是一名只读代码评审员"}]}}"#,
+            ],
+        );
+
+        let _guard = HomeGuard::set(&home);
+        let db = crate::db::Db::open_at(&home.join("app.db")).map_err(|e| e.to_string())?;
+        {
+            let conn = db.0.lock();
+            conn.execute(
+                "INSERT INTO workspaces(id, path, name) VALUES('w1', ?1, 'ws')",
+                [workspace.to_string_lossy().to_string()],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO sessions(engine, session_id, workspace_path, file_path, file_size, file_mtime_ms, title) VALUES('dsh', 'child', ?1, ?2, 1, 1, '你是一名只读代码评审员')",
+                rusqlite::params![workspace.to_string_lossy().to_string(), child_path.to_string_lossy().to_string()],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let report = scan_with(&db, || {})?;
+        assert_eq!(report.reparsed, 1);
+        let ids: Vec<String> = {
+            let conn = db.0.lock();
+            let mut stmt = conn
+                .prepare("SELECT session_id FROM sessions WHERE engine='dsh' ORDER BY session_id")
                 .map_err(|e| e.to_string())?;
             let rows = stmt
                 .query_map([], |r| r.get::<_, String>(0))
