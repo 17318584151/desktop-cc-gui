@@ -221,10 +221,10 @@ type ExpansionProps = { auto: boolean; live: boolean; thinking: boolean };
 
 /** Pure transition table for the expanded-state machine: given the previous
  *  and current prop snapshot plus the user's override flag, decide the next
- *  expanded/overridden pair. Automation opens a row while its thinking is
- *  streaming and folds it the moment that thinking settles (the user asked
- *  for exactly that rhythm); a superseded or turn-settled row folds too,
- *  until the user's own click takes over. */
+ *  expanded/overridden pair. Automation opens a row while it is the latest
+ *  process row (or when thinking resumes) and keeps it open after thinking
+ *  settles so the stream does not jump shut; a superseded or turn-settled
+ *  historical row folds, until the user's own click takes over. */
 function expansionTransition(
   prev: ExpansionProps,
   next: ExpansionProps,
@@ -239,12 +239,6 @@ function expansionTransition(
     // Thinking resumed inside this row (extended thinking between tool
     // calls): show it again unless the user folded the row on purpose.
     return { expanded: true, overridden };
-  }
-  if (!next.thinking && prev.thinking && !overridden) {
-    // The thinking settled: fold immediately — expanded-on-demand shows
-    // the full text afterwards. A deliberate user click wins: it keeps
-    // its chosen state and stays sticky across thinking resume cycles.
-    return { expanded: false, overridden };
   }
   if (!next.auto && !next.live) {
     const superseded = prev.auto;
@@ -365,9 +359,8 @@ export const ProcessDisclosure = memo(function ProcessDisclosure({
 }: {
   items: ProcessItem[];
   autoExpand?: boolean;
-  /** True while the turn is still streaming. The row folds when its own
-   *  thinking settles even mid-turn; this only keeps pre-thinking content
-   *  (early tool rows) mounted until the turn ends. */
+  /** True while the turn is still streaming. Historical (superseded) rows
+   *  stay mounted until the turn ends, then fold. */
   turnLive?: boolean;
   processId: number;
   seenTools: Set<string>;
@@ -390,9 +383,8 @@ export const ProcessDisclosure = memo(function ProcessDisclosure({
   const singleThinking = items.length === 1 && items[0].type === "thinking";
   const label = processSummaryLabel(t, singleThinking, thinkingCount, toolCount);
   // Body stays mounted while expanded or while this row's own thinking is
-  // streaming (the auto-open above makes both true then); once the thinking
-  // settles the body unmounts, so expanding later re-renders the FULL
-  // settled text — the 2000-char live window only ever applies live.
+  // streaming. The 2000-char live window only applies while `live`; after
+  // settle the full text renders in place (no auto-fold).
   const showBody = expanded || hasLiveThinking;
   return (
     <div className="mb-1.5 flex flex-col">
