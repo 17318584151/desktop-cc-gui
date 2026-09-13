@@ -143,6 +143,7 @@ export const en: Messages = {
     messageCollapse: "Collapse message",
     agentStatusRunning: "Running",
     agentStatusDone: "Done",
+    agentDetailBack: "Back to subagents",
     editedFiles: "Edited {{count}} files",
     editedFiles_one: "Edited 1 file",
     toolTypeTool: "Tool",

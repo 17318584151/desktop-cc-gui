@@ -8,7 +8,7 @@ import { EMPTY_SESSION, resolveSessionModel, resolveSessionEffort, runRouting } 
 vi.mock("@/lib/ipc", () => ({
   ipc: {
     sendMessage: vi.fn(async () => ({ runId: "run-1", sessionId: null })),
-    loadSessionPage: vi.fn(async () => ({ messages: [], nextBefore: null })),
+    loadSessionPage: vi.fn(async () => ({ messages: [], nextBefore: null, subagentHistory: [] })),
     rememberSessionModel: vi.fn(async () => {}),
     rememberSessionEffort: vi.fn(async () => {}),
     listSessions: vi.fn(async () => []),

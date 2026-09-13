@@ -66,6 +66,10 @@ pub struct AppSettings {
     /// Shared key the relay worker checks.
     #[serde(default)]
     pub web_relay_key: Option<String>,
+    /// Relay switch position, remembered across launches: the tunnel is what
+    /// keeps the machine reachable unattended, so an app relaunch restores it.
+    #[serde(default)]
+    pub web_relay_on: Option<bool>,
     /// Max sessions shown per workspace in the sidebar before collapsing
     /// behind a "show more" row.
     #[serde(default = "default_sidebar_thread_limit")]
@@ -138,6 +142,7 @@ impl Default for AppSettings {
             web_auth_key: None,
             web_relay_url: None,
             web_relay_key: None,
+            web_relay_on: None,
             language: default_language(),
             default_models: HashMap::new(),
             custom_models: HashMap::new(),
@@ -239,12 +244,17 @@ pub fn import_legacy_groups_once(db: &crate::db::Db) -> Result<(), String> {
             return Ok(());
         }
     }
-    import_legacy_groups_from(
-        db,
-        &crate::paths::settings_path(),
-        &crate::paths::legacy_settings_path(),
-        &crate::paths::legacy_workspaces_path(),
-    )?;
+    {
+        // Raw read-modify-write of settings.json: same write lock as every
+        // other writer, so a concurrent persist cannot be overwritten.
+        let _guard = settings_write_lock();
+        import_legacy_groups_from(
+            db,
+            &crate::paths::settings_path(),
+            &crate::paths::legacy_settings_path(),
+            &crate::paths::legacy_workspaces_path(),
+        )?;
+    }
     let conn = db.0.lock();
     conn.execute(
         "INSERT OR REPLACE INTO meta(key, value) VALUES('legacy_groups_import_v1', '1')",
@@ -425,10 +435,32 @@ pub fn update_app_settings<R: tauri::Runtime>(
     result
 }
 
-/// Validate + persist + apply. Shared by the UI command and internal writers
-/// (key rotation); on Err the settings were still written, and the message
-/// names what was rejected.
+/// Validate + persist + apply. The public command keeps reporting rejected
+/// fields as an error, even though the sanitized snapshot was committed.
 pub fn persist_settings(settings: &mut AppSettings) -> Result<(), String> {
+    let _guard = settings_write_lock();
+    match persist_settings_committed(settings)? {
+        Some(warning) => Err(warning),
+        None => Ok(()),
+    }
+}
+
+/// Persist a settings snapshot while distinguishing failures before the
+/// atomic write from warnings produced after the sanitized snapshot commits.
+///
+/// Callers doing a read→modify→write must hold [`settings_write_lock`]
+/// across the whole cycle; this function only performs the write half.
+pub(crate) fn persist_settings_committed(
+    settings: &mut AppSettings,
+) -> Result<Option<String>, String> {
+    let path = crate::paths::settings_path();
+    persist_settings_to(settings, &path)
+}
+
+fn persist_settings_to(
+    settings: &mut AppSettings,
+    path: &std::path::Path,
+) -> Result<Option<String>, String> {
     if settings
         .omp_openai_service_tier
         .as_deref()
@@ -449,7 +481,7 @@ pub fn persist_settings(settings: &mut AppSettings) -> Result<(), String> {
         settings.web_auth_key = None;
     }
     // Reject only the offending bin-override fields: the rest of the settings
-    // still persist, and the error names what was dropped.
+    // still persist, and the warning names what was dropped.
     let mut rejected = Vec::new();
     settings.bin_overrides.retain(|key, value| {
         let Some(text) = value.as_str() else {
@@ -477,19 +509,22 @@ pub fn persist_settings(settings: &mut AppSettings) -> Result<(), String> {
             }
         }
     }
-    let path = crate::paths::settings_path();
     let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     // Reject before persisting: an invalid proxy URL must not be saved (the
     // frontend rolls its drafts back on this error).
     crate::proxy::validate_proxy_settings(&settings)?;
-    atomic_write(&path, &content)?;
-    // Apply to this process's env so the next spawned child inherits it.
-    crate::proxy::apply_app_proxy_settings(&settings)?;
-    if rejected.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("rejected settings: {}", rejected.join("; ")))
+    atomic_write(path, &content)?;
+
+    let mut warnings = Vec::new();
+    if !rejected.is_empty() {
+        warnings.push(format!("rejected settings: {}", rejected.join("; ")));
     }
+    // The snapshot is already durable here. Keep any future apply failure in
+    // the committed-warning channel rather than misreporting it as a rollback.
+    if let Err(error) = crate::proxy::apply_app_proxy_settings(&settings) {
+        warnings.push(error);
+    }
+    Ok((!warnings.is_empty()).then(|| warnings.join("; ")))
 }
 
 /// A submitted pairing key is accepted only when one is configured and the two
@@ -500,10 +535,17 @@ pub(crate) fn pairing_key_matches(expected: &str, submitted: &str) -> bool {
     !expected.is_empty() && !submitted.is_empty() && submitted.eq_ignore_ascii_case(expected)
 }
 
-/// Serialises the read-modify-write of the pairing key. settings.json has no
-/// other guard, so without this two devices posting the same code both read it
-/// before either rotation lands, and one code pairs both of them.
-static PAIR_KEY_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+/// Serialises every read-modify-write of settings.json. Without it two
+/// writers — a timed key rotation and a relay-switch persist, say — can each
+/// read the other's pre-write snapshot and the later write silently drops the
+/// earlier one's field. It also keeps the pairing key's compare-and-rotate
+/// atomic: two devices posting the same code must not both be admitted.
+static SETTINGS_WRITE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+/// Hold across a full read→modify→persist of settings.json.
+pub(crate) fn settings_write_lock() -> parking_lot::MutexGuard<'static, ()> {
+    SETTINGS_WRITE_LOCK.lock()
+}
 
 /// Spend the pairing key on one device: rotates `settings` in place and
 /// answers whether the browser may be admitted. Pure, so the property that
@@ -528,13 +570,16 @@ fn spend_pair_key(settings: &mut AppSettings, submitted: &str) -> bool {
 /// must not be admitted — wrong key, or the switch is off and there is nothing
 /// to pair with.
 pub fn consume_web_auth_key(app: &tauri::AppHandle, submitted: &str) -> Result<bool, String> {
-    let _guard = PAIR_KEY_LOCK.lock();
+    let _guard = settings_write_lock();
     let mut settings = read_settings()?;
     if !spend_pair_key(&mut settings, submitted) {
         return Ok(false);
     }
-    persist_settings(&mut settings)?;
+    let warning = persist_settings_committed(&mut settings)?;
     announce_settings(app);
+    if let Some(warning) = warning {
+        eprintln!("[settings] pairing key committed with warning: {warning}");
+    }
     Ok(true)
 }
 
@@ -542,14 +587,17 @@ pub fn consume_web_auth_key(app: &tauri::AppHandle, submitted: &str) -> Result<b
 /// that settings moved. Used on a timer and by the 换一个 button, so a code
 /// never lingers even when nobody pairs with it.
 pub fn rotate_web_auth_key(app: &tauri::AppHandle) -> Result<(), String> {
-    let _guard = PAIR_KEY_LOCK.lock();
+    let _guard = settings_write_lock();
     let mut settings = read_settings()?;
     if !settings.web_auth_enabled {
         return Ok(());
     }
     settings.web_auth_key = Some(generate_pair_key());
-    persist_settings(&mut settings)?;
+    let warning = persist_settings_committed(&mut settings)?;
     announce_settings(app);
+    if let Some(warning) = warning {
+        eprintln!("[settings] pairing key rotation committed with warning: {warning}");
+    }
     Ok(())
 }
 
@@ -744,6 +792,54 @@ mod tests {
         )
         .unwrap();
         assert!(!scratch.path("settings.json").exists());
+    }
+
+    #[test]
+    fn committed_settings_warning_is_distinct_from_precommit_failure() {
+        let scratch = Scratch::new();
+        let path = scratch.path("settings.json");
+        let missing_bin = scratch.path("missing-claude");
+        let mut settings = AppSettings {
+            web_relay_on: Some(true),
+            web_relay_url: Some("https://relay.example".to_string()),
+            web_relay_key: Some("SAVED_KEY".to_string()),
+            ..AppSettings::default()
+        };
+        settings.bin_overrides.insert(
+            "claudeBin".to_string(),
+            Value::String(missing_bin.to_string_lossy().into_owned()),
+        );
+
+        let warning = persist_settings_to(&mut settings, &path)
+            .expect("a rejected binary is a committed warning")
+            .expect("the rejected field is reported");
+        assert!(warning.contains("claudeBin"));
+        let saved: AppSettings =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(!saved.bin_overrides.contains_key("claudeBin"));
+        assert_eq!(
+            crate::relay::autostart_target(&saved),
+            Some(("https://relay.example".to_string(), "SAVED_KEY".to_string())),
+            "the committed target and enabled switch survive the warning"
+        );
+    }
+
+    #[test]
+    fn invalid_proxy_is_reported_before_settings_are_committed() {
+        let scratch = Scratch::new();
+        let path = scratch.path("settings.json");
+        let mut settings = AppSettings {
+            system_proxy_enabled: true,
+            system_proxy_url: Some("file:///not-a-network-proxy".to_string()),
+            ..AppSettings::default()
+        };
+
+        let error = persist_settings_to(&mut settings, &path).unwrap_err();
+        assert!(error.contains("unsupported scheme"));
+        assert!(
+            !path.exists(),
+            "pre-commit validation must not write settings"
+        );
     }
 
     /// The key box shows `--------` while authorization is off; a placeholder
