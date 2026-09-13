@@ -10,6 +10,7 @@ import {
   migratePendingStream,
   moveStreamingFlag,
   patchSession,
+  resolveSessionEffort,
   resolveSessionModel,
   routeRun,
   runRouting,
@@ -110,20 +111,18 @@ function stampedModel(
   );
 }
 
-/** Effective reasoning effort for event-stamped rows: the session's activeEffort wins,
- * followed by the owning tab's per-tab override, then engine default. */
+/** Effective reasoning effort for event-stamped rows. Native-session state
+ * wins; a tab override is only valid before that session receives its id. */
 function stampedEffort(
   deps: EngineEventDeps,
   engine: string,
   key: string,
 ): string | null {
   const s = deps.get();
-  const sessionActive = s.bySession[key]?.activeEffort;
-  if (sessionActive) return sessionActive;
   const tab = s.openTabs.find(
     (t) => sessionKey(t.engine, t.sessionId, t.workspacePath) === key,
   );
-  return (tab?.effort ?? s.efforts[engine]) || null;
+  return resolveSessionEffort(tab, s.bySession[key], s.efforts[engine]) || null;
 }
 
 function onModel(
@@ -259,12 +258,23 @@ function onMessage(
  *  new session's id is not known before that event. Only local sends fill
  *  this: an observer must never write its own (bare) reading of a run. */
 const pendingSessionModels = new Map<string, string>();
+/** Same hand-off for the reasoning level: it is chosen before the first send
+ *  of a new session and can only be filed under the id the `session` event
+ *  carries. */
+const pendingSessionEfforts = new Map<string, string>();
 
 export function rememberModelForRun(
   key: string,
   model: string | null | undefined,
 ) {
   if (model) pendingSessionModels.set(key, model);
+}
+
+export function rememberEffortForRun(
+  key: string,
+  effort: string | null | undefined,
+) {
+  if (effort) pendingSessionEfforts.set(key, effort);
 }
 
 function onSession(
@@ -278,6 +288,13 @@ function onSession(
     pendingSessionModels.delete(key);
     void ipc
       .rememberSessionModel(event.engine, nativeId, sentModel)
+      .catch(() => {});
+  }
+  const sentEffort = pendingSessionEfforts.get(key);
+  if (sentEffort) {
+    pendingSessionEfforts.delete(key);
+    void ipc
+      .rememberSessionEffort(event.engine, nativeId, sentEffort)
       .catch(() => {});
   }
   // Resolve the workspace from the tab that owns this key — not from the
@@ -321,7 +338,7 @@ function onSession(
       s.active.engine === event.engine &&
       s.active.sessionId === null &&
       s.active.workspacePath === workspacePath
-        ? { ...s.active, sessionId: nativeId }
+        ? { ...s.active, sessionId: nativeId, effort: undefined }
         : s.active;
     return { bySession, drafts, streamingByKey, active: activeNext };
   });
@@ -343,7 +360,7 @@ function onSession(
           return t;
         }
         stamped = true;
-        return { ...t, sessionId: nativeId };
+        return { ...t, sessionId: nativeId, effort: undefined };
       }),
     );
     persistTabs(openTabs, s.active);
@@ -496,6 +513,7 @@ function onError(
 ) {
   // Fold unflushed chunks into rows and settle them: the turn stops here,
   // and the scheduled flush must not write them in after the fact.
+  const prev = deps.get().bySession[key] ?? EMPTY_SESSION;
   const pending = drainPending(key);
   deps.set((s) => {
     const cur = s.bySession[key] ?? EMPTY_SESSION;
@@ -545,6 +563,11 @@ function onError(
   untrackRun(event.runId);
   dropRunUsage(event.runId);
   deps.markUnseenIfBackground(key);
+  // An error settles the turn exactly like done does — the messages typed
+  // behind it are the user's next step, and parking them here left the queue
+  // stuck until it was sent or cleared by hand. A stop is still the user's
+  // own call: that queue stays parked.
+  if (!prev.interrupted) deps.drainQueue(key);
 }
 
 /** Patch the grant state of one card row, located by its message seq. */

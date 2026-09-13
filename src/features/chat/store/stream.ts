@@ -81,6 +81,28 @@ export function resolveSessionModel(
   return engineDefault;
 }
 
+/** The reasoning level one session runs with. A native session owns its level
+ * in SessionState/database; only a not-yet-created tab may carry a starting
+ * override. This prevents stale persisted tab fields from shadowing a newer
+ * level recorded by another client. */
+export function resolveSessionEffort(
+  tab: { engine: string; sessionId?: string | null; effort?: string | null } | null | undefined,
+  session: Pick<SessionState, "activeEffort" | "messages"> | undefined,
+  engineDefault?: string,
+): string | undefined {
+  if (!tab) return engineDefault;
+  if (tab.sessionId === null && tab.effort) return tab.effort;
+  if (session?.activeEffort) return session.activeEffort;
+  const messages = session?.messages;
+  if (messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const effort = messages[i].effort;
+      if (effort) return effort;
+    }
+  }
+  return engineDefault;
+}
+
 /** Minimal store shape these helpers touch. */
 export interface BySessionSlice {
   bySession: Record<string, SessionState>;

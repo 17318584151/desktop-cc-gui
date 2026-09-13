@@ -1011,6 +1011,13 @@ struct RememberModelArgs {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RememberEffortArgs {
+    engine: String,
+    session_id: String,
+    effort: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PathArgs {
     path: String,
 }
@@ -1319,6 +1326,15 @@ async fn dispatch(app: &tauri::AppHandle, cmd: &str, raw: Value) -> Result<Value
                 a.engine,
                 a.session_id,
                 a.model,
+            ))
+        }
+        "remember_session_effort" => {
+            let a: RememberEffortArgs = parse_args(&raw)?;
+            ser(crate::history::reader::remember_session_effort(
+                app.state(),
+                a.engine,
+                a.session_id,
+                a.effort,
             ))
         }
         "rescan_sessions" => {
