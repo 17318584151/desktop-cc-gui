@@ -316,7 +316,11 @@ export const useChatStore = create<ChatStore>((set, get) => {
             firstLineTitle(prompt),
           ),
         );
-      } else {
+      } else if (!runRouting.has(result.runId)) {
+        // The engine can announce its session id while the invoke is in
+        // flight; onSession rekeys the run to the native key then, and
+        // routing it back to the pre-send key would strand the live turn
+        // there while the tab renders the native key.
         settleOrphanedRuns(set, routeRun(result.runId, key));
       }
       // Stop pressed while this send was still in flight: interrupt() ran

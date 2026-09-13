@@ -1,6 +1,5 @@
 use super::{
-    command_for_binary, images, push_session_id, safe_prompt_arg, BuiltCommand, Engine,
-    EngineEvent, SendRequest,
+    command_for_binary, images, push_session_id, BuiltCommand, Engine, EngineEvent, SendRequest,
 };
 use serde_json::Value;
 
@@ -89,10 +88,15 @@ impl Engine for PiFamilyEngine {
                 cmd.arg(format!("@{}", absolute.display()));
             }
         }
-        cmd.arg(safe_prompt_arg(&req.prompt));
+        // Prompt travels through stdin, never argv: on Windows the pi shim is a
+        // `.cmd` batch file spawned via `cmd /c`, and cmd.exe cuts a multiline
+        // argument at the first newline - every line after the first was
+        // dropped. pi joins piped stdin into the initial message
+        // (`readPipedStdin` -> `buildInitialMessage`), so the prompt rides
+        // stdin verbatim, matching codex; `@<abs path>` image refs stay in argv.
         Ok(BuiltCommand {
             command: cmd,
-            stdin_payload: None,
+            stdin_payload: Some(req.prompt.clone()),
             cleanup_files: Vec::new(),
             preassigned_session_id: None,
         })
