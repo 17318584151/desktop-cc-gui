@@ -172,6 +172,7 @@ export interface CliConfig {
   pi: ProviderSection;
   omp: ProviderSection;
   dsh: ProviderSection;
+  agy: ProviderSection;
 }
 
 export interface AppSettings {
@@ -191,6 +192,7 @@ export interface AppSettings {
   piBin: string | null;
   ompBin: string | null;
   dshBin: string | null;
+  agyBin: string | null;
   defaultModels: Record<string, string>;
   /** Per-engine user-added custom model ids (设置 → CLI → 自定义模型). */
   customModels: Record<string, string[]>;

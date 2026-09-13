@@ -368,6 +368,7 @@ export const zh = {
       pi: "Pi",
       omp: "OMP",
       dsh: "DeepSeek Harness",
+      agy: "Antigravity",
     },
     cliManage: "CLI 管理",
     cliDocs: "官方文档",

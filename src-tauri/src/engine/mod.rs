@@ -1,3 +1,4 @@
+pub mod agy;
 pub mod claude;
 pub mod codex;
 mod codex_provider_env;
@@ -438,6 +439,7 @@ pub fn engine_by_id(id: &str) -> Option<Box<dyn Engine>> {
         "pi" => Some(Box::new(pi_family::pi())),
         "omp" => Some(Box::new(pi_family::omp())),
         "dsh" => Some(Box::new(dsh::DshEngine)),
+        "agy" => Some(Box::new(agy::AgyEngine)),
         _ => None,
     }
 }
@@ -1716,6 +1718,13 @@ pub async fn interrupt_session(
 #[cfg(test)]
 mod permission_tests {
     use super::*;
+
+    #[test]
+    fn every_registered_engine_has_an_adapter() {
+        for id in crate::config::ENGINES {
+            assert!(engine_by_id(id).is_some(), "{id}");
+        }
+    }
 
     fn req(permission: Option<&str>) -> SendRequest {
         SendRequest {
