@@ -386,6 +386,7 @@ export const en: Messages = {
       pi: "Pi",
       omp: "OMP",
       dsh: "DeepSeek Harness",
+      agy: "Antigravity",
     },
     cliManage: "CLI Management",
     cliDocs: "Official docs",

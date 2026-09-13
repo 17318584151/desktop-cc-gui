@@ -229,7 +229,7 @@ pub async fn load_session_page(
 /// "delete then resurrect" on the next scan.
 fn delete_session_disk(engine: &str, path: &Path) -> Result<(), String> {
     match engine {
-        "claude" | "codex" | "pi" | "omp" => match std::fs::remove_file(path) {
+        "claude" | "codex" | "pi" | "omp" | "agy" => match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(format!("remove {}: {e}", path.display())),

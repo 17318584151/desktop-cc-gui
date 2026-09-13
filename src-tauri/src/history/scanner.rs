@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Bump when title derivation changes so unchanged files still re-title.
-const TITLE_VERSION: &str = "7";
+const TITLE_VERSION: &str = "8";
 
 /// Titles matching these prefixes were derived before envelope stripping
 /// existed; one migration pass re-derives them even when files are unchanged.
@@ -260,6 +260,105 @@ fn discover_grok(workspace: &Path) -> Vec<SessionFile> {
     out
 }
 
+/// Antigravity conversations live under `~/.gemini/antigravity-cli/` as
+/// sqlite files, indexed by `conversation_summaries.db` (`workspace_uris`).
+fn discover_agy(workspace: &Path) -> Vec<SessionFile> {
+    let home = crate::engine::agy::agy_home();
+    let conv_dir = home.join("conversations");
+    let mut by_id: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+
+    if let Ok(conn) = rusqlite::Connection::open_with_flags(
+        home.join("conversation_summaries.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ) {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT conversation_id, workspace_uris FROM conversation_summaries",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for row in rows.flatten() {
+                    let (id, uris) = row;
+                    if id.trim().is_empty() {
+                        continue;
+                    }
+                    if agy_uris_match_workspace(&uris, workspace) {
+                        let path = conv_dir.join(format!("{id}.db"));
+                        by_id.entry(id).or_insert(path);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(text) = std::fs::read_to_string(home.join("cache").join("last_conversations.json")) {
+        if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text) {
+            for (cwd, id) in map {
+                let Some(id) = id.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                if same_or_child(Path::new(&cwd), workspace) {
+                    by_id
+                        .entry(id.to_string())
+                        .or_insert_with(|| conv_dir.join(format!("{id}.db")));
+                }
+            }
+        }
+    }
+
+    by_id
+        .into_iter()
+        .filter(|(_, path)| path.is_file())
+        .map(|(session_id, file_path)| SessionFile {
+            engine: "agy",
+            session_id,
+            workspace_path: workspace.to_string_lossy().to_string(),
+            file_path,
+        })
+        .collect()
+}
+
+fn agy_uris_match_workspace(uris_json: &str, workspace: &Path) -> bool {
+    let Ok(uris) = serde_json::from_str::<Vec<String>>(uris_json) else {
+        return false;
+    };
+    uris.iter().any(|uri| {
+        file_uri_path(uri).is_some_and(|path| same_or_child(&path, workspace))
+    })
+}
+
+fn file_uri_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    Some(PathBuf::from(percent_decode_path(rest)))
+}
+
+fn percent_decode_path(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn from_hex(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 // ==================== Scan ====================
 
 #[derive(Serialize)]
@@ -440,6 +539,7 @@ fn gather_candidates(workspaces: &[String]) -> Vec<Candidate> {
             .into_iter()
             .chain(discover_kimi(&workspace))
             .chain(discover_grok(&workspace))
+            .chain(discover_agy(&workspace))
         {
             if seen_paths.insert(file.file_path.clone()) {
                 candidates.push(Candidate {
