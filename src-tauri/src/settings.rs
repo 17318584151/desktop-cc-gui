@@ -797,6 +797,9 @@ pub fn set_window_theme(
     app: tauri::AppHandle,
     dark: bool,
 ) -> Result<(), String> {
+    // Only Windows consumes these; reference unconditionally so macOS/Linux
+    // builds don't warn.
+    let _ = (&app, dark);
     #[cfg(target_os = "windows")]
     {
         use tauri::{Manager, Theme};

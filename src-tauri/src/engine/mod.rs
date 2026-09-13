@@ -1658,7 +1658,7 @@ fn next_virtual_pid() -> u32 {
 /// then detach it. The task dispatches the same event kinds as `run_reader`
 /// and settles the turn itself (done/error + registry cleanup).
 async fn send_host_stream(
-    state: tauri::State<'_, crate::AppState>,
+    state: &crate::AppState,
     launch: Launch,
     engine: String,
 ) -> Result<SendResult, String> {
