@@ -31,15 +31,12 @@ describe("subagent counting", () => {
     expect(steps.every((s) => s.state === "active")).toBe(true);
   });
 
-  it("keeps the pill in step with a turn that reports four running", () => {
-    // The reported bug: a dispatch of three plus a wait on one more job is
-    // four in flight, while a per-call count showed two.
+  it("does not promote background jobs to subagents", () => {
     const steps = deriveAgentTaskSteps([DISPATCH, WAIT_EXTRA], true, "omp");
     expect(steps.map((s) => s.key)).toEqual([
       "2:CoreInvokeFilterParse",
       "2:IdolLiveDemosaic",
       "2:IdolLiveTranslate",
-      "5:bg_4",
     ]);
   });
 
@@ -58,8 +55,161 @@ describe("subagent counting", () => {
     expect(deriveAgentTaskSteps([tool(2, "hub · Checking background job roster", { op: "jobs" })], true, "omp")).toHaveLength(0);
   });
 
-  it("reads ids off both spellings", () => {
-    expect(subagentRefsFromArgs({ ids: ["bg_1", "bg_2"] }).map((r) => r.id)).toEqual(["bg_1", "bg_2"]);
+  it("keeps agents named by a running hub snapshot active even when the host is not streaming", () => {
+    const snapshot = tool(6, "hub · Waiting for workers", { op: "wait" }, {
+      details: {
+        op: "wait",
+        jobs: [
+          { id: "CoreInvokeFilterParse", type: "task", status: "running" },
+          { id: "IdolLiveTranslate", type: "task", status: "running" },
+        ],
+      },
+    });
+    const steps = deriveAgentTaskSteps([DISPATCH, snapshot], false, "omp");
+    expect(steps.map(({ label, state }) => ({ label, state }))).toEqual([
+      { label: "CoreInvokeFilterParse", state: "active" },
+      { label: "IdolLiveDemosaic", state: "complete" },
+      { label: "IdolLiveTranslate", state: "active" },
+    ]);
+  });
+
+  it("retains the complete delegated task as its clickable detail", () => {
+    const dispatch = tool(2, "task · Dispatching worker", {
+      tasks: [{
+        agent: "task",
+        name: "Worker",
+        task: "# Target\nOwn relay.rs only.\n# Acceptance\nOutages recover without toggling.",
+      }],
+    });
+    expect(deriveAgentTaskSteps([dispatch], true, "omp")[0].detail).toBe(
+      "# Target\nOwn relay.rs only.\n# Acceptance\nOutages recover without toggling.",
+    );
+  });
+
+  it("tags every row: the agent kind when the harness names one, else the tool", () => {
+    // The harness writes `agent` only for some dispatches (scout batches carry
+    // it, task batches do not); a row without a tag loses the only hint of
+    // where it came from.
+    const kindless = tool(2, "task · Dispatching workers", {
+      tasks: [{ name: "RelayWorker", task: "# Target\nOwn relay.rs." }],
+    });
+    const kinded = tool(3, "task · Dispatching scouts", {
+      tasks: [{ agent: "scout", name: "RepoMap", task: "# Target\nMap the repo." }],
+    });
+    expect(deriveAgentTaskSteps([kindless, kinded], true, "omp").map((s) => s.subagentType)).toEqual([
+      "task",
+      "scout",
+    ]);
+  });
+
+  it("normalizes stringified task arrays before later hub references", () => {
+    const encodedDispatch = tool(2, "task · Marking dual-arch regression done", {
+      tasks: JSON.stringify([
+        { name: "IdolLiveBackstage", task: "# Target\nVerify IdolLive." },
+        { name: "AfterstoryCgScene", task: "# Target\nVerify Afterstory." },
+      ]),
+    });
+    const wait = tool(3, "hub · Waiting for live demosaic subagents", {
+      ids: ["IdolLiveBackstage", "AfterstoryCgScene"],
+      op: "wait",
+    });
+
+    expect(
+      deriveAgentTaskSteps([encodedDispatch, wait], true, "omp").map(
+        ({ label, subagentType }) => ({ label, subagentType }),
+      ),
+    ).toEqual([
+      { label: "IdolLiveBackstage", subagentType: "task" },
+      { label: "AfterstoryCgScene", subagentType: "task" },
+    ]);
+  });
+
+  it("ignores malformed task arrays instead of rendering the dispatch as an agent", () => {
+    const malformed = tool(2, "task · Dispatching demosaic evidence tasks", {
+      tasks: '[{"name":"IdolLiveSceneDemosaic","task":"unterminated}]',
+    });
+    const retry = tool(3, "task · Dispatching demosaic evidence tasks", {
+      tasks: [
+        { name: "IdolLiveSceneDemosaic", task: "# Target\nVerify IdolLive." },
+        { name: "AfterstoryMosaicScene", task: "# Target\nVerify Afterstory." },
+      ],
+    });
+
+    expect(
+      deriveAgentTaskSteps([malformed, retry], true, "omp").map(
+        ({ label, subagentType }) => ({ label, subagentType }),
+      ),
+    ).toEqual([
+      { label: "IdolLiveSceneDemosaic", subagentType: "task" },
+      { label: "AfterstoryMosaicScene", subagentType: "task" },
+    ]);
+  });
+
+  it("keeps pending and queued dispatch progress active", () => {
+    const dispatch = tool(2, "task · Dispatching workers", {
+      tasks: [
+        { name: "PendingWorker", task: "# Target\nWait for a worker slot." },
+        { name: "QueuedWorker", task: "# Target\nWait behind PendingWorker." },
+      ],
+    }, {
+      details: {
+        progress: [
+          { id: "PendingWorker", status: "pending" },
+          { id: "QueuedWorker", status: "queued" },
+        ],
+      },
+    });
+
+    expect(deriveAgentTaskSteps([dispatch], false, "omp").map((step) => step.state)).toEqual([
+      "active",
+      "active",
+    ]);
+  });
+
+  it("settles running agents omitted by a later complete jobs roster", () => {
+    const running = tool(3, "hub · Waiting for workers", { op: "wait" }, {
+      details: {
+        op: "wait",
+        jobs: [{ id: "CoreInvokeFilterParse", status: "running" }],
+      },
+    });
+    const emptyRoster = tool(4, "hub · Checking background jobs", { op: "jobs" }, {
+      details: { op: "jobs", jobs: [] },
+    });
+
+    const steps = deriveAgentTaskSteps([DISPATCH, running, emptyRoster], false, "omp");
+    expect(steps.every((step) => step.state === "complete")).toBe(true);
+  });
+
+  it("does not settle agents from malformed or unknown roster entries", () => {
+    const running = tool(3, "hub", { op: "wait" }, {
+      details: { jobs: [{ id: "CoreInvokeFilterParse", status: "running" }] },
+    });
+    const malformed = tool(4, "hub", { op: "jobs" }, {
+      details: { op: "jobs", jobs: null },
+    });
+    const unknown = tool(5, "hub", { op: "jobs" }, {
+      details: { op: "jobs", jobs: [{ id: "CoreInvokeFilterParse", status: "unknown" }] },
+    });
+    expect(deriveAgentTaskSteps([DISPATCH, running, malformed], false, "omp")[0].state).toBe("active");
+    expect(deriveAgentTaskSteps([DISPATCH, running, unknown], false, "omp")[0].state).toBe("active");
+  });
+
+  it("does not settle agents from a filtered (partial) jobs roster", () => {
+    const running = tool(3, "hub", { op: "wait" }, {
+      details: { jobs: [{ id: "CoreInvokeFilterParse", status: "running" }] },
+    });
+    const filtered = tool(4, "hub", { op: "jobs", status: "running" }, {
+      details: { op: "jobs", jobs: [] },
+    });
+    expect(deriveAgentTaskSteps([DISPATCH, running, filtered], false, "omp")[0].state).toBe("active");
+  });
+
+  it("reads named agents but ignores background-job ids", () => {
+    expect(subagentRefsFromArgs({ ids: ["bg_1", "bg_2"] })).toEqual([]);
+    expect(subagentRefsFromArgs({ ids: ["CoreInvokeFilterParse"] })).toEqual([
+      { id: "CoreInvokeFilterParse" },
+    ]);
     expect(subagentRefsFromArgs({ tasks: [{ id: "alpha" }] })[0]).toMatchObject({ id: "alpha", label: "alpha" });
     expect(subagentRefsFromArgs({ op: "jobs" })).toEqual([]);
   });

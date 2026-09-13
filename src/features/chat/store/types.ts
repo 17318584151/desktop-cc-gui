@@ -42,6 +42,10 @@ export interface ChatStore {
   archivedWorkspaces: string[];
   /** Composer send gesture ("enter" | "cmdEnter"), persisted in app settings. */
   sendShortcut: string;
+  /** Thinking-process row behavior once its thinking settles: true = auto-fold
+   *  (default), false = stay expanded until the user folds it. Persisted in
+   *  app settings. */
+  thinkingAutoCollapse: boolean;
   bySession: Record<string, SessionState>;
   /** Flat sessionKey -> streaming map, written only when a flag flips. The
    * tab strip and sidebar select this instead of scanning bySession on every
@@ -127,6 +131,7 @@ export interface ChatStore {
     archived: boolean,
   ) => Promise<void>;
   setSendShortcut: (shortcut: string) => void;
+  setThinkingAutoCollapse: (autoCollapse: boolean) => void;
   setDraft: (key: string, text: string) => void;
   /** Ask the active composer to insert an @path mention at the caret. */
   requestMention: (path: string) => void;
@@ -146,6 +151,9 @@ export interface ChatStore {
   queueMessage: (text: string, images: string[]) => void;
   /** Drop a queued message from the active session. */
   removeQueued: (id: string) => void;
+  /** Send one queued message now: it takes the head of the queue, and a
+   *  running turn is stopped so the send is not left behind it. */
+  sendQueuedNow: (id: string) => Promise<void>;
   /** Drop every queued message from the active session. */
   clearQueue: () => void;
   interrupt: () => Promise<void>;

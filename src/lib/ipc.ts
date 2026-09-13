@@ -21,6 +21,9 @@ export interface SessionMeta {
   /** Model this app last sent for the session ("provider/model"), absent when
    * it never sent one — see ipc.rememberSessionModel. */
   model?: string | null;
+  /** Reasoning effort this app last sent for the session, absent when it never
+   * recorded one — see ipc.rememberSessionEffort. */
+  effort?: string | null;
 }
 
 export type TodoStatus = "pending" | "active" | "complete" | "blocked" | "dropped";
@@ -73,6 +76,8 @@ export interface Message {
 export interface SessionPage {
   messages: Message[];
   nextBefore: number | null;
+  /** Delegation metadata before this page, restored from the session file. */
+  subagentHistory: Message[];
 }
 
 export interface Workspace {
@@ -169,6 +174,7 @@ export interface CliConfig {
   pi: ProviderSection;
   omp: ProviderSection;
   dsh: ProviderSection;
+  agy: ProviderSection;
 }
 
 export interface AppSettings {
@@ -188,6 +194,7 @@ export interface AppSettings {
   piBin: string | null;
   ompBin: string | null;
   dshBin: string | null;
+  agyBin: string | null;
   defaultModels: Record<string, string>;
   /** Per-engine user-added custom model ids (设置 → CLI → 自定义模型). */
   customModels: Record<string, string[]>;
@@ -201,6 +208,9 @@ export interface AppSettings {
   sidebarThreadLimit: number;
   /** Composer send gesture: "enter" (Enter sends) or "cmdEnter" (⌘/Ctrl+Enter sends). */
   composerSendShortcut: string;
+  /** Thinking-process row behavior once its thinking settles: true/absent =
+   *  auto-fold (default), false = stay expanded until the user folds it. */
+  thinkingAutoCollapse?: boolean | null;
   /** Terminal shell override; null/empty = auto-detect. */
   terminalShellPath: string | null;
   /** DSH host address (default "127.0.0.1"). */
@@ -503,6 +513,27 @@ export interface PluginInfo {
   installedAt: number;
   minAppVersion: string | null;
 }
+/** Marketplace listing row (plan §6.1): community-plugins.json merged with
+ *  plugins/<id>.json — the fields the market UI renders. */
+export interface MarketPlugin {
+  id: string;
+  repo: string;
+  name: string;
+  description: string;
+  author: string;
+  tier: "declarative" | "js";
+  version: string;
+  minAppVersion: string | null;
+  sdkVersion: string | null;
+  permissions: string[];
+}
+
+/** One installed marketplace plugin with a newer indexed version. */
+export interface PluginUpdate {
+  id: string;
+  currentVersion: string;
+  latestVersion: string;
+}
 
 export interface OfficialConfigFile {
   /** Absolute path — the pane label, and the write-back key. */
@@ -627,6 +658,10 @@ export const ipc = {
    * this is what survives a restart or another client. */
   rememberSessionModel: (engine: string, sessionId: string, model: string) =>
     invoke<void>("remember_session_model", { engine, sessionId, model }),
+  /** Remember the reasoning level a session ran, so reopening it — here, in
+   *  another window, or on the phone — keeps that level. */
+  rememberSessionEffort: (engine: string, sessionId: string, effort: string) =>
+    invoke<void>("remember_session_effort", { engine, sessionId, effort }),
   rescanSessions: () => invoke<void>("rescan_sessions"),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   addWorkspace: (path: string) => invoke<Workspace>("add_workspace", { path }),
@@ -733,6 +768,13 @@ export const ipc = {
     invoke<void>("plugin_storage_set", { id, key, value }),
   pluginStorageDelete: (id: string, key: string) =>
     invoke<void>("plugin_storage_delete", { id, key }),
+  // plugin marketplace (Phase 3, plan §6) — install is desktop-only on the
+  // web bridge; fetch/checkUpdates ride the read-only whitelist.
+  pluginFetchIndex: (force = false) =>
+    invoke<MarketPlugin[]>("plugin_fetch_index", { force }),
+  pluginInstallFromMarketplace: (id: string) =>
+    invoke<PluginInfo>("plugin_install_from_marketplace", { id }),
+  pluginCheckUpdates: () => invoke<PluginUpdate[]>("plugin_check_updates"),
   // web access (start/stop are desktop-only; the bridge answers status too)
   webDevices: () => invoke<WebDevice[]>("web_devices"),
   webDeviceApprove: (id: string) => invoke<boolean>("web_device_approve", { id }),

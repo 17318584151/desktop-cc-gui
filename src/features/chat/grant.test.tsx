@@ -13,7 +13,8 @@ vi.mock("@/lib/ipc", () => ({
   ipc: {
     sendMessage: vi.fn(async () => ({ runId: "run-1", sessionId: null })),
     rememberSessionModel: vi.fn(async () => {}),
-    loadSessionPage: vi.fn(async () => ({ messages: [], nextBefore: null })),
+    rememberSessionEffort: vi.fn(async () => {}),
+    loadSessionPage: vi.fn(async () => ({ messages: [], nextBefore: null, subagentHistory: [] })),
     getAppSettings: vi.fn(async () => ({})),
     updateAppSettings: vi.fn(async () => {}),
     grantScope: vi.fn(async () => "/data"),

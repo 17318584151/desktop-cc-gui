@@ -9,6 +9,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 pub struct SessionPage {
     pub messages: Vec<Message>,
     pub next_before: Option<i64>,
+    /// Earlier delegation rows and turn boundaries, independent of paging.
+    pub subagent_history: Vec<Message>,
 }
 
 /// Lock the db, run a parameterless query, and collect rows through `map_row`.
@@ -49,9 +51,10 @@ pub fn list_sessions(state: tauri::State<'_, crate::AppState>) -> Result<Vec<Ses
         &state,
         "SELECT s.engine, s.session_id, s.workspace_path, s.file_path, s.file_size, s.file_mtime_ms,
                 s.title, s.preview, s.created_at, s.updated_at, s.message_count, s.pinned, s.custom_title,
-                m.model
+                m.model, e.effort
          FROM sessions s
          LEFT JOIN session_models m ON m.engine = s.engine AND m.session_id = s.session_id
+         LEFT JOIN session_efforts e ON e.engine = s.engine AND e.session_id = s.session_id
          ORDER BY COALESCE(s.updated_at, 0) DESC",
         |r| {
             Ok(SessionMeta {
@@ -69,6 +72,7 @@ pub fn list_sessions(state: tauri::State<'_, crate::AppState>) -> Result<Vec<Ses
                 pinned: r.get::<_, i64>(11)? != 0,
                 custom_title: r.get(12)?,
                 model: r.get(13)?,
+                effort: r.get(14)?,
             })
         },
     )
@@ -99,6 +103,29 @@ pub fn remember_session_model(
     Ok(())
 }
 
+/// Remember the reasoning effort a session ran, beside its model and for the
+/// same reason — see [`SessionMeta::effort`].
+#[tauri::command]
+pub fn remember_session_effort(
+    state: tauri::State<'_, crate::AppState>,
+    engine: String,
+    session_id: String,
+    effort: String,
+) -> Result<(), String> {
+    if effort.trim().is_empty() {
+        return Ok(());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    state
+        .db
+        .remember_session_effort(&engine, &session_id, &effort, now)?;
+    state.sink.emit_sessions_changed();
+    Ok(())
+}
+
 fn session_file_path(
     db: &crate::db::Db,
     engine: &str,
@@ -114,10 +141,19 @@ fn session_file_path(
     .map_err(|_| format!("session not found: {engine}/{session_id}"))
 }
 
+/// One cache entry: the parse plus the subagent fold over all its messages,
+/// so paging cuts the fold at the page start instead of refolding the whole
+/// prefix on every turn of the page. The fold derives from `parsed.messages`
+/// alone, so it invalidates with the same stat key.
+struct CachedSession {
+    parsed: ParsedSession,
+    fold: SubagentFold,
+}
+
 /// Parsed sessions keyed by (path, size, mtime_ms): paging re-slices a cached
 /// parse instead of re-reading the file. Bounded two ways: 32 entries and a
 /// ~128MB byte budget (image data URLs make entries heavy).
-static PARSED_CACHE: LazyLock<Mutex<HashMap<(PathBuf, i64, i64), Arc<ParsedSession>>>> =
+static PARSED_CACHE: LazyLock<Mutex<HashMap<(PathBuf, i64, i64), Arc<CachedSession>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static PARSED_CACHE_BYTES: LazyLock<Mutex<usize>> = LazyLock::new(|| Mutex::new(0));
 
@@ -138,17 +174,23 @@ fn parsed_footprint(parsed: &ParsedSession) -> usize {
         .sum()
 }
 
-fn cached_parse_session(engine: &str, path: &Path) -> Result<Arc<ParsedSession>, String> {
+fn cached_session(engine: &str, path: &Path) -> Result<Arc<CachedSession>, String> {
     let Some((size, mtime_ms)) = super::stat_signature(path) else {
         // Unstattable file: let the parse produce the real error.
-        return parse_session_file(engine, path).map(Arc::new);
+        let parsed = parse_session_file(engine, path)?;
+        let fold = subagent_fold(&parsed.messages);
+        return Ok(Arc::new(CachedSession { parsed, fold }));
     };
     let key = (path.to_path_buf(), size, mtime_ms);
     if let Some(hit) = PARSED_CACHE.lock().map_err(|e| e.to_string())?.get(&key) {
         return Ok(Arc::clone(hit));
     }
-    let parsed = Arc::new(parse_session_file(engine, path)?);
-    let footprint = parsed_footprint(&parsed);
+    let parsed = parse_session_file(engine, path)?;
+    let fold = subagent_fold(&parsed.messages);
+    // The fold's cloned delegation rows count toward the budget too.
+    let footprint = parsed_footprint(&parsed)
+        + fold.iter().map(|(_, row)| row.text.len() + 128).sum::<usize>();
+    let cached = Arc::new(CachedSession { parsed, fold });
     let mut cache = PARSED_CACHE.lock().map_err(|e| e.to_string())?;
     let mut bytes = PARSED_CACHE_BYTES.lock().map_err(|e| e.to_string())?;
     // Over budget or capacity: drop everything rather than evicting entries
@@ -158,8 +200,124 @@ fn cached_parse_session(engine: &str, path: &Path) -> Result<Arc<ParsedSession>,
         *bytes = 0;
     }
     *bytes += footprint;
-    cache.insert(key, Arc::clone(&parsed));
-    Ok(parsed)
+    cache.insert(key, Arc::clone(&cached));
+    Ok(cached)
+}
+
+/// The fold over a whole session, each row tagged with the index of the
+/// message whose processing emitted it: a delegation or boundary row tags its
+/// own index, a user row tags the index of the delegation or boundary that
+/// closes its turn, and the trailing unclosed user tags `usize::MAX`. Paging
+/// cuts this at the page start — see `subagent_history_until`.
+type SubagentFold = Vec<(usize, Message)>;
+
+/// Keep the inputs the subagent fold consumes, not old chat bodies or tool output.
+/// Turn boundaries remain so a reopened session never treats an old spawn as new.
+fn subagent_fold(messages: &[Message]) -> SubagentFold {
+    let mut rows = SubagentFold::new();
+    let mut last_user = None;
+    let mut needs_boundary = false;
+    for (index, message) in messages.iter().enumerate() {
+        if message.role == "user" {
+            last_user = Some(message);
+            continue;
+        }
+        let delegation = message.role == "tool" && is_subagent_history_tool(message);
+        let boundary = needs_boundary && matches!(message.role.as_str(), "assistant" | "thinking");
+        if !delegation && !boundary {
+            continue;
+        }
+        if let Some(user) = last_user.take() {
+            rows.push((index, subagent_history_row(user, false)));
+        }
+        rows.push((index, subagent_history_row(message, delegation)));
+        needs_boundary = delegation;
+    }
+    if !rows.is_empty() {
+        if let Some(user) = last_user {
+            rows.push((usize::MAX, subagent_history_row(user, false)));
+        }
+    }
+    rows
+}
+
+/// The fold of one prefix, kept for tests as the reference the cached
+/// truncation is pinned against.
+#[cfg(test)]
+fn subagent_history(messages: &[Message]) -> Vec<Message> {
+    subagent_fold(messages).into_iter().map(|(_, row)| row).collect()
+}
+
+/// Cut a full-session fold at `start`, byte-identical to folding
+/// `messages[..start]` directly. Rows triggered before the cut keep the order
+/// the prefix fold emits them in; the pending user at the cut is appended
+/// exactly when the prefix fold would — its turn was never closed inside the
+/// prefix (even when the full fold spends it on a delegation past the cut, or
+/// a newer user replaces it and it never appears there at all).
+fn subagent_history_until(messages: &[Message], fold: &SubagentFold, start: usize) -> Vec<Message> {
+    let mut rows: Vec<Message> = fold
+        .iter()
+        .take_while(|(trigger, _)| *trigger < start)
+        .map(|(_, row)| row.clone())
+        .collect();
+    if rows.is_empty() {
+        return rows;
+    }
+    let Some(user_index) = messages[..start].iter().rposition(|m| m.role == "user") else {
+        return rows;
+    };
+    // The pending user was already spent if a delegation or boundary closed
+    // its turn inside the prefix; as the last user before the cut, any row
+    // triggered between it and the cut closed its turn.
+    let closed = fold
+        .iter()
+        .any(|(trigger, _)| user_index < *trigger && *trigger < start);
+    if !closed {
+        rows.push(subagent_history_row(&messages[user_index], false));
+    }
+    rows
+}
+
+fn is_subagent_history_tool(message: &Message) -> bool {
+    if message.args.as_ref().is_some_and(|args| args.get("tasks").is_some() || args.get("ids").is_some()) {
+        return true;
+    }
+    if message.result.as_ref().and_then(|result| result.get("details")).is_some_and(|details| {
+        ["jobs", "peers", "progress"].iter().any(|key| details.get(key).is_some())
+            || details.get("op").and_then(serde_json::Value::as_str) == Some("jobs")
+    }) {
+        return true;
+    }
+    let head = message.text.split('·').next().unwrap_or_default().trim().to_ascii_lowercase();
+    let first = head.split(|c: char| c.is_whitespace() || c == '/' || c == '\\').next().unwrap_or_default().replace('-', "_");
+    matches!(first.as_str(), "task" | "agent" | "spawn" | "spawn_agent" | "spawn_subagent"
+        | "workflow" | "run_workflow" | "pipeline" | "dispatch" | "dispatch_agent" | "delegate")
+        || ["spawn agent", "agent swarm", "agent_swarm", "workflow", "subagent"].iter().any(|name| head.contains(name))
+}
+
+fn subagent_history_row(message: &Message, delegation: bool) -> Message {
+    Message {
+        seq: message.seq,
+        role: message.role.clone(),
+        text: if delegation { message.text.clone() } else { String::new() },
+        ts: None,
+        path: None,
+        args: if delegation { message.args.clone() } else { None },
+        // Status snapshots and result presence matter; the full output still
+        // lives in the paginated timeline and need not cross IPC twice.
+        result: if delegation {
+            message.result.as_ref().map(|result| match result.get("details") {
+                Some(details) => serde_json::json!({ "details": details }),
+                None => serde_json::Value::Bool(true),
+            })
+        } else { None },
+        todos: None,
+        usage: None,
+        model: None,
+        effort: None,
+        duration_ms: None,
+        images: Vec::new(),
+    }
 }
 
 /// Sync body of `load_session_page` (parsing multi-MB session files must not
@@ -172,10 +330,10 @@ fn load_session_page_blocking(
     before_seq: Option<i64>,
 ) -> Result<SessionPage, String> {
     let path = session_file_path(db, engine, session_id)?;
-    let parsed = cached_parse_session(engine, &path)?;
+    let cached = cached_session(engine, &path)?;
     let limit = limit.unwrap_or(100).clamp(1, 500);
-    let messages = &parsed.messages;
-    let (page, next_before) = match before_seq {
+    let messages = &cached.parsed.messages;
+    let (page, next_before, start) = match before_seq {
         Some(before) => {
             let end = messages
                 .iter()
@@ -187,7 +345,7 @@ fn load_session_page_blocking(
             } else {
                 None
             };
-            (messages[start..end].to_vec(), next)
+            (messages[start..end].to_vec(), next, start)
         }
         None => {
             let start = messages.len().saturating_sub(limit);
@@ -196,12 +354,13 @@ fn load_session_page_blocking(
             } else {
                 None
             };
-            (messages[start..].to_vec(), next)
+            (messages[start..].to_vec(), next, start)
         }
     };
     Ok(SessionPage {
         messages: page,
         next_before,
+        subagent_history: subagent_history_until(messages, &cached.fold, start),
     })
 }
 
@@ -229,7 +388,7 @@ pub async fn load_session_page(
 /// "delete then resurrect" on the next scan.
 fn delete_session_disk(engine: &str, path: &Path) -> Result<(), String> {
     match engine {
-        "claude" | "codex" | "pi" | "omp" => match std::fs::remove_file(path) {
+        "claude" | "codex" | "pi" | "omp" | "agy" => match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(format!("remove {}: {e}", path.display())),
@@ -503,4 +662,126 @@ pub fn remove_workspace(
     drop(conn);
     state.sink.emit_sessions_changed();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("ccgui-history-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn session_page_restores_subagents_older_than_the_visible_page() {
+        let scratch = Scratch::new();
+        let path = scratch.0.join("session.jsonl");
+        let db_path = scratch.0.join("app.db");
+        let brief = "# Target\nReview the relay.\n# Acceptance\nRecover without toggling.";
+        let mut lines = vec![
+            json!({"type":"message","message":{"role":"user","content":"Review"}}),
+            json!({"type":"message","message":{"role":"assistant","content":[{
+                "type":"toolCall","id":"dispatch","name":"task",
+                "arguments":{"tasks":[{"name":"SavedReviewer","agent":"reviewer","task":brief}]}
+            }]}}),
+            json!({"type":"message","message":{"role":"toolResult","toolCallId":"dispatch",
+                "content":[{"type":"text","text":"Spawned"}],
+                "details":{"progress":[{"id":"SavedReviewer","status":"pending"}]}
+            }}),
+            json!({"type":"message","message":{"role":"assistant","content":[{
+                "type":"toolCall","id":"roster","name":"hub","arguments":{"op":"jobs"}
+            }]}}),
+            json!({"type":"message","message":{"role":"toolResult","toolCallId":"roster",
+                "content":[{"type":"text","text":"Review complete"}],
+                "details":{"op":"jobs","jobs":[{"id":"SavedReviewer","status":"completed"}]}
+            }}),
+        ];
+        for i in 0..120 {
+            lines.push(json!({"type":"message","message":{"role":"assistant","content":format!("later {i}")}}));
+        }
+        std::fs::write(&path, lines.iter().map(serde_json::Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+        {
+            let db = crate::db::Db::open_at(&db_path).unwrap();
+            db.0.lock().execute(
+                "INSERT INTO sessions(engine,session_id,workspace_path,file_path,file_size,file_mtime_ms,title) VALUES('omp','saved','/ws',?1,1,1,'Review')",
+                rusqlite::params![path.to_string_lossy().as_ref()],
+            ).unwrap();
+        }
+        // Reopen the DB as a fresh process would, with no frontend roster cache.
+        let db = crate::db::Db::open_at(&db_path).unwrap();
+        let page = load_session_page_blocking(&db, "omp", "saved", Some(100), None).unwrap();
+        assert_eq!(page.messages.len(), 100);
+        assert!(page.messages.iter().all(|message| message.text.starts_with("later")));
+        let wire = serde_json::to_value(&page).unwrap();
+        let history = wire["subagentHistory"].as_array().expect("session history is independent of pagination");
+        let task = history.iter().find(|row| row["text"] == "task").unwrap();
+        assert_eq!(task["args"]["tasks"][0]["name"], "SavedReviewer");
+        assert_eq!(task["args"]["tasks"][0]["task"], brief);
+        let roster = history.iter().find(|row| row["text"] == "hub").unwrap();
+        assert_eq!(roster["result"]["details"]["jobs"][0]["status"], "completed");
+        let older = load_session_page_blocking(&db, "omp", "saved", Some(100), page.next_before).unwrap();
+        assert!(older.messages.iter().any(|row| row.text == "task"));
+    }
+
+    fn plain(seq: i64, role: &str) -> Message {
+        Message {
+            seq,
+            role: role.into(),
+            text: String::new(),
+            ts: None,
+            path: None,
+            args: None,
+            result: None,
+            todos: None,
+            usage: None,
+            model: None,
+            effort: None,
+            duration_ms: None,
+            images: Vec::new(),
+        }
+    }
+
+    fn delegation(seq: i64) -> Message {
+        let mut message = plain(seq, "tool");
+        message.text = "task · worker".into();
+        message.args = Some(json!({"tasks": []}));
+        message
+    }
+
+    /// Cutting the cached full fold at a page start must reproduce a fresh
+    /// fold of that prefix byte for byte — including the pending-user row
+    /// that the full fold spends past the cut, and one a newer user replaces
+    /// so it never appears in the full fold at all.
+    #[test]
+    fn truncated_fold_matches_a_fresh_prefix_fold() {
+        let messages = vec![
+            plain(0, "user"),       // closed by the delegation at 1
+            delegation(1),          // emits user 0 + itself
+            plain(2, "assistant"),  // turn boundary
+            plain(3, "user"),       // replaced by user 4: absent from the full fold
+            plain(4, "user"),       // closed by the delegation at 5
+            delegation(5),
+            plain(6, "user"),       // spent past the cut by the boundary at 7
+            plain(7, "thinking"),   // turn boundary, emits user 6
+            plain(8, "user"),       // trailing unclosed user
+            plain(9, "assistant"),  // no boundary: follows a boundary, not a delegation
+        ];
+        let fold = subagent_fold(&messages);
+        for start in 0..=messages.len() {
+            let cut = serde_json::to_value(subagent_history_until(&messages, &fold, start)).unwrap();
+            let fresh = serde_json::to_value(subagent_history(&messages[..start])).unwrap();
+            assert_eq!(cut, fresh, "start={start}");
+        }
+    }
 }
