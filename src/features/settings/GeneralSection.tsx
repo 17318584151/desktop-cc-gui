@@ -215,6 +215,12 @@ function useGeneralSettingsState() {
     useChatStore.getState().setThinkingAutoCollapse(autoCollapse);
     void save({ thinkingAutoCollapse: autoCollapse });
   };
+  const onWideLayoutChange = (wide: boolean) => {
+    if (!settings) return;
+    setSettings({ ...settings, chatWideLayout: wide });
+    useChatStore.getState().setWideLayout(wide);
+    void save({ chatWideLayout: wide });
+  };
   /** Font mode commits (默认 / 系统 / 自定义): apply to the document root at
    *  once (bootstrap re-reads the mirror on the next launch) and persist.
    *  Entering 自定义 with an uploaded file re-applies that file right away;
@@ -287,6 +293,7 @@ function useGeneralSettingsState() {
     onThinkingAutoCollapseChange,
     typographyBusy,
     onTypographyChange,
+    onWideLayoutChange,
     onFontModeChange,
     onFontFilePick,
   };
@@ -308,6 +315,7 @@ function AppearanceCard({
   onThreadLimitChange,
   onThreadLimitCommit,
   onThreadLimitKeyDown,
+  onWideLayoutChange,
 }: {
   settings: AppSettings;
   limitText: string | null;
@@ -323,6 +331,7 @@ function AppearanceCard({
   onThreadLimitChange: (value: string) => void;
   onThreadLimitCommit: () => void;
   onThreadLimitKeyDown: (event: KeyboardEvent) => void;
+  onWideLayoutChange: (wide: boolean) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -382,6 +391,18 @@ function AppearanceCard({
           </Select>
         </SettingsRow>
         <ZoomRow />
+        <SettingsRow
+          anchor="chatWideLayout"
+          label={t("settings.chatWideLayout")}
+          description={t("settings.chatWideLayoutDesc")}
+        >
+          <Switch
+            size="sm"
+            aria-label={t("settings.chatWideLayout")}
+            isSelected={settings.chatWideLayout === true}
+            onChange={onWideLayoutChange}
+          />
+        </SettingsRow>
         <FontFamilyRow
           anchor="fontFamily"
           label={t("settings.fontFamily")}
@@ -936,6 +957,7 @@ export function GeneralSection() {
     onThreadLimitKeyDown,
     onSendShortcutChange,
     onThinkingAutoCollapseChange,
+    onWideLayoutChange,
     fontBusy,
     typographyBusy,
     onTypographyChange,
@@ -969,6 +991,7 @@ export function GeneralSection() {
           onThreadLimitChange={onThreadLimitChange}
           onThreadLimitCommit={commitThreadLimitText}
           onThreadLimitKeyDown={onThreadLimitKeyDown}
+          onWideLayoutChange={onWideLayoutChange}
         />
       )}
       {settings && (

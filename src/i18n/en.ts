@@ -733,6 +733,9 @@ export const en: Messages = {
     uiFontWeight_standard: "Standard",
     uiFontWeight_medium: "Medium",
     uiFontWeight_bold: "Bold",
+    chatWideLayout: "Wide canvas",
+    chatWideLayoutDesc:
+      "Let chat content fill the window width instead of the centered column; off keeps the current default width",
     fontFamily: "Interface font",
     codeFontFamily: "Code font",
     codeFontFamilyDesc: "Chat code blocks and the built-in terminal",
@@ -934,6 +937,9 @@ export const en: Messages = {
     webRelayStateIdle: "Not connected",
     webRelayStateLive: "Connected",
     webRelayStop: "Disconnect relay",
+    webRelayUnattended: "Unattended mode",
+    webRelayUnattendedHint:
+      "Unattended: reconnect the relay automatically when CC GUI restarts, and keep redialing while it is up; off means connecting by hand after every launch (this does not disconnect now).",
     webRelayUrl: "Relay address",
     webRelayKey: "Relay key",
     webRelayKeyHint: "Must match RELAY_KEY set when the relay was deployed",
